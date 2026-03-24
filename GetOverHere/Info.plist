@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>GetOverHere uses your local network to discover and communicate with nearby devices without WiFi or cellular.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_goh-chat._tcp</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>GetOverHere needs microphone access for the walkie-talkie feature.</string>
+</dict>
+</plist>
