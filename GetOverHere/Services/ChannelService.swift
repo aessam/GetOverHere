@@ -59,6 +59,7 @@ final class ChannelService {
     // MARK: - Channel Management
 
     /// Create a megaphone channel — you become the speaker.
+    /// Auto-enables BLE so Android devices can discover and listen.
     func createChannel(name: String) {
         let channel = Channel(
             id: UUID().uuidString,
@@ -69,6 +70,13 @@ final class ChannelService {
         channels.append(channel)
         activeChannelID = channel.id
         listenState = .broadcasting
+
+        // Auto-enable BLE when hosting — Android devices can now discover us
+        if let composite = transport as? CompositeTransport, !composite.isBridgeEnabled {
+            composite.enableBridge()
+            Logger.channel.info("Auto-enabled BLE for cross-platform discovery")
+        }
+
         broadcastChannelAnnounce(channel)
         startBroadcasting()
         Logger.channel.info("Created megaphone: \(name)")

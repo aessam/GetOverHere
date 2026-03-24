@@ -39,14 +39,10 @@ struct ChannelSidebar: View {
                 }
             }
             ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    coordinator.toggleBridge()
-                } label: {
-                    Image(systemName: coordinator.transport.isBridgeEnabled
-                        ? "antenna.radiowaves.left.and.right.circle.fill"
-                        : "antenna.radiowaves.left.and.right.circle")
+                if coordinator.transport.isBridgeEnabled {
+                    Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
+                        .foregroundStyle(.green)
                 }
-                .tint(coordinator.transport.isBridgeEnabled ? .green : .secondary)
             }
         }
     }
