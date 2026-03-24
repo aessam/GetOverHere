@@ -9,4 +9,5 @@ extension Logger {
     static let audio = Logger(subsystem: subsystem, category: "Audio")
     static let fileShare = Logger(subsystem: subsystem, category: "FileShare")
     static let walkieTalkie = Logger(subsystem: subsystem, category: "WalkieTalkie")
+    static let channel = Logger(subsystem: subsystem, category: "Channel")
 }

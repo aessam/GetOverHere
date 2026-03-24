@@ -56,13 +56,8 @@ final class AudioEngine {
 
         let inputNode = engine.inputNode
 
-        // Enable Apple's voice processing: AEC + noise suppression + AGC
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            Logger.audio.info("Voice processing enabled (AEC + noise suppression)")
-        } catch {
-            Logger.audio.error("Voice processing failed: \(error.localizedDescription)")
-        }
+        // Voice processing disabled — crashes with Bluetooth HFP (render err: -1).
+        // The noise gate handles echo suppression instead.
 
         let hwFormat = inputNode.outputFormat(forBus: 0)
         Logger.audio.info("Hardware input: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch")
@@ -83,8 +78,8 @@ final class AudioEngine {
 
         inputNode.installTap(
             onBus: 0,
-            bufferSize: 4096,
-            format: nil // MUST be nil — requesting a different sample rate crashes
+            bufferSize: 960, // ~20ms at 48kHz → ~320 frames at 16kHz → ~1.3KB per packet
+            format: nil
         ) { @Sendable [converterRef, continuationLock] buffer, _ in
             // Noise gate: compute RMS and drop quiet buffers (echo, background noise)
             if gateThreshold > 0, let rms = AudioEngine.rms(of: buffer), rms < gateThreshold {

@@ -11,6 +11,9 @@ final class MultipeerTransport: NSObject, TransportProtocol {
 
     let textMessages: AsyncStream<(TransportMessage.TextPayload, PeerInfo)>
     let controlMessages: AsyncStream<(TransportMessage.WalkieTalkieControl, PeerInfo)>
+    let channelAnnouncements: AsyncStream<(TransportMessage.ChannelAnnounce, PeerInfo)>
+    let fileHeaders: AsyncStream<(TransportMessage.FileHeader, PeerInfo)>
+    let fileChunks: AsyncStream<(TransportMessage.FileChunk, PeerInfo)>
     let audioData: AsyncStream<(Data, PeerInfo)>
     let fileTransfers: AsyncStream<FileTransferEvent>
     let peerEvents: AsyncStream<PeerEvent>
@@ -25,6 +28,9 @@ final class MultipeerTransport: NSObject, TransportProtocol {
 
     private let textContinuation: AsyncStream<(TransportMessage.TextPayload, PeerInfo)>.Continuation
     private let controlContinuation: AsyncStream<(TransportMessage.WalkieTalkieControl, PeerInfo)>.Continuation
+    private let announceContinuation: AsyncStream<(TransportMessage.ChannelAnnounce, PeerInfo)>.Continuation
+    private let fileHeaderContinuation: AsyncStream<(TransportMessage.FileHeader, PeerInfo)>.Continuation
+    private let fileChunkContinuation: AsyncStream<(TransportMessage.FileChunk, PeerInfo)>.Continuation
     private let audioContinuation: AsyncStream<(Data, PeerInfo)>.Continuation
     private let fileContinuation: AsyncStream<FileTransferEvent>.Continuation
     private let peerContinuation: AsyncStream<PeerEvent>.Continuation
@@ -34,14 +40,24 @@ final class MultipeerTransport: NSObject, TransportProtocol {
     // MARK: - Init
 
     init(displayName: String) {
-        self.mcPeerID = MCPeerID(displayName: displayName)
-        self.localPeer = PeerInfo(id: displayName, displayName: displayName)
-        self.session = MCSession(peer: mcPeerID, securityIdentity: nil, encryptionPreference: .required)
-        self.advertiser = MCNearbyServiceAdvertiser(peer: mcPeerID, discoveryInfo: nil, serviceType: Self.serviceType)
+        // Unique MCPeerID (tiebreaker needs unique names), but localPeer keeps clean device name
+        let shortID = String(UUID().uuidString.prefix(4))
+        self.mcPeerID = MCPeerID(displayName: "\(displayName)_\(shortID)")
+        self.localPeer = PeerInfo(id: "\(displayName)_\(shortID)", displayName: displayName)
+        self.session = MCSession(peer: mcPeerID, securityIdentity: nil, encryptionPreference: .none)
+        // Pass real device name in discoveryInfo so peers show "iPhone" not "iPhone_A3F2"
+        self.advertiser = MCNearbyServiceAdvertiser(
+            peer: mcPeerID,
+            discoveryInfo: ["name": displayName],
+            serviceType: Self.serviceType
+        )
         self.browser = MCNearbyServiceBrowser(peer: mcPeerID, serviceType: Self.serviceType)
 
         (self.textMessages, self.textContinuation) = AsyncStream.makeStream()
         (self.controlMessages, self.controlContinuation) = AsyncStream.makeStream()
+        (self.channelAnnouncements, self.announceContinuation) = AsyncStream.makeStream()
+        (self.fileHeaders, self.fileHeaderContinuation) = AsyncStream.makeStream()
+        (self.fileChunks, self.fileChunkContinuation) = AsyncStream.makeStream()
         (self.audioData, self.audioContinuation) = AsyncStream.makeStream()
         (self.fileTransfers, self.fileContinuation) = AsyncStream.makeStream()
         (self.peerEvents, self.peerContinuation) = AsyncStream.makeStream()
@@ -57,6 +73,9 @@ final class MultipeerTransport: NSObject, TransportProtocol {
         stop()
         textContinuation.finish()
         controlContinuation.finish()
+        announceContinuation.finish()
+        fileHeaderContinuation.finish()
+        fileChunkContinuation.finish()
         audioContinuation.finish()
         fileContinuation.finish()
         peerContinuation.finish()
@@ -144,7 +163,16 @@ final class MultipeerTransport: NSObject, TransportProtocol {
         if let existing = peerIDMap[mcPeer] {
             return existing
         }
-        let info = PeerInfo(id: mcPeer.displayName, displayName: mcPeer.displayName)
+        // Strip the _XXXX unique suffix to get clean device name
+        let fullID = mcPeer.displayName
+        let cleanName: String
+        if let lastUnderscore = fullID.lastIndex(of: "_"),
+           fullID.distance(from: lastUnderscore, to: fullID.endIndex) == 5 {
+            cleanName = String(fullID[fullID.startIndex..<lastUnderscore])
+        } else {
+            cleanName = fullID
+        }
+        let info = PeerInfo(id: fullID, displayName: cleanName)
         peerIDMap[mcPeer] = info
         return info
     }
@@ -180,6 +208,12 @@ extension MultipeerTransport: MCSessionDelegate {
                     self.textContinuation.yield((textPayload, peer))
                 case .walkieTalkieControl(let control):
                     self.controlContinuation.yield((control, peer))
+                case .channelAnnounce(let announce):
+                    self.announceContinuation.yield((announce, peer))
+                case .fileHeader(let header):
+                    self.fileHeaderContinuation.yield((header, peer))
+                case .fileChunk(let chunk):
+                    self.fileChunkContinuation.yield((chunk, peer))
                 }
             case .audio:
                 self.audioContinuation.yield((payload, peer))
@@ -275,12 +309,25 @@ extension MultipeerTransport: MCNearbyServiceBrowserDelegate {
     ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let peer = self.peerInfo(for: peerID)
+            // Use real device name from discoveryInfo, not the unique MCPeerID
+            let realName = info?["name"] ?? peerID.displayName
+            let peer = PeerInfo(id: peerID.displayName, displayName: realName)
+            self.peerIDMap[peerID] = peer
             if !self.discoveredPeers.contains(peer) && !self.connectedPeers.contains(peer) {
                 self.discoveredPeers.append(peer)
             }
             self.peerContinuation.yield(.discovered(peer))
-            Logger.transport.info("Discovered peer: \(peer.displayName)")
+            Logger.transport.info("Discovered peer: \(realName)")
+
+            // Auto-connect with tiebreaker: only the device with the
+            // lexicographically smaller displayName invites.
+            // This prevents both sides inviting simultaneously which kills MCSession.
+            if self.mcPeerID.displayName < peerID.displayName {
+                self.browser.invitePeer(peerID, to: self.session, withContext: nil, timeout: 30)
+                Logger.transport.info("Auto-inviting peer: \(peer.displayName) (we are smaller)")
+            } else {
+                Logger.transport.info("Waiting for invite from: \(peer.displayName) (they are smaller)")
+            }
         }
     }
 

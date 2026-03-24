@@ -46,6 +46,9 @@ protocol TransportProtocol: AnyObject {
 
     var textMessages: AsyncStream<(TransportMessage.TextPayload, PeerInfo)> { get }
     var controlMessages: AsyncStream<(TransportMessage.WalkieTalkieControl, PeerInfo)> { get }
+    var channelAnnouncements: AsyncStream<(TransportMessage.ChannelAnnounce, PeerInfo)> { get }
+    var fileHeaders: AsyncStream<(TransportMessage.FileHeader, PeerInfo)> { get }
+    var fileChunks: AsyncStream<(TransportMessage.FileChunk, PeerInfo)> { get }
     var audioData: AsyncStream<(Data, PeerInfo)> { get }
     var fileTransfers: AsyncStream<FileTransferEvent> { get }
     var peerEvents: AsyncStream<PeerEvent> { get }

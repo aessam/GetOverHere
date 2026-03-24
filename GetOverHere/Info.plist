@@ -10,5 +10,7 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>GetOverHere needs microphone access for the walkie-talkie feature.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>GetOverHere uses Bluetooth to discover and communicate with nearby Android and iOS devices.</string>
 </dict>
 </plist>

@@ -1,49 +1,54 @@
 import Foundation
 import SwiftUI
-import SwiftData
 
 @Observable
 final class AppCoordinator {
-    var selectedTab: AppTab = .nearby
-    var chatPath = NavigationPath()
-    var walkieTalkiePath = NavigationPath()
-
-    let transport: MultipeerTransport
-    let chatService: ChatService
-    let fileShareService: FileShareService
-    let walkieTalkieService: WalkieTalkieService
+    let transport: CompositeTransport
+    let channelService: ChannelService
     let audioEngine: AudioEngine
 
+    // UI state
+    var showSidebar = false
+    var showCreateChannel = false
+    var showMemberList = false
+    var newChannelName = ""
+
     init(displayName: String) {
-        let transport = MultipeerTransport(displayName: displayName)
+        let transport = CompositeTransport(displayName: displayName)
         let audioEngine = AudioEngine()
 
         self.transport = transport
         self.audioEngine = audioEngine
-        self.chatService = ChatService(transport: transport)
-        self.fileShareService = FileShareService(transport: transport)
-        self.walkieTalkieService = WalkieTalkieService(transport: transport, audioEngine: audioEngine)
+        self.channelService = ChannelService(transport: transport, audioEngine: audioEngine)
     }
 
-    func start(modelContext: ModelContext) {
-        chatService.configure(modelContext: modelContext)
+    func start() {
         transport.start()
-        walkieTalkieService.startListening()
+        channelService.startListening()
     }
 
     func stop() {
         transport.stop()
     }
 
-    // MARK: - Navigation
+    // MARK: - Bridge
 
-    func navigateToChat(with peer: PeerInfo) {
-        selectedTab = .chats
-        chatPath.append(ChatRoute.room(peer))
+    func toggleBridge() {
+        if transport.isBridgeEnabled {
+            transport.disableBridge()
+        } else {
+            transport.enableBridge()
+        }
     }
 
-    func navigateToWalkieTalkie(channel: Channel) {
-        selectedTab = .walkieTalkie
-        walkieTalkiePath.append(WalkieTalkieRoute.channel(channel.id))
+    // MARK: - Channel Actions
+
+    func createChannel() {
+        let name = newChannelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 32 else { return }
+        channelService.createChannel(name: name)
+        newChannelName = ""
+        showCreateChannel = false
+        showSidebar = false
     }
 }
