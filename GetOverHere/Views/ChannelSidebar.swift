@@ -2,15 +2,14 @@ import SwiftUI
 
 struct ChannelSidebar: View {
     @Environment(AppCoordinator.self) private var coordinator
-
     private var service: ChannelService { coordinator.channelService }
 
     var body: some View {
         List(selection: Binding(
             get: { service.activeChannelID },
-            set: { newID in
-                if let id = newID {
-                    service.switchChannel(to: id)
+            set: { id in
+                if let id, let ch = service.channels.first(where: { $0.id == id }) {
+                    service.joinChannel(ch)
                 }
             }
         )) {
@@ -19,41 +18,43 @@ struct ChannelSidebar: View {
                 bridgeBanner
             }
 
-            // Townsquare (pinned)
-            if let townsquare = service.channels.first(where: { $0.id == Channel.townsquare.id }) {
-                channelRow(townsquare, icon: "star.circle.fill")
-                    .tag(townsquare.id)
-            }
-
-            // User-created channels sorted by name
-            let userChannels = service.channels
-                .filter { $0.id != Channel.townsquare.id }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-            ForEach(userChannels) { channel in
-                channelRow(channel, icon: "number.circle.fill")
-                    .tag(channel.id)
-            }
-
-            // Empty state
-            if userChannels.isEmpty {
+            // Available megaphones
+            if service.channels.isEmpty {
                 emptyState
+            } else {
+                Section("Live Megaphones") {
+                    ForEach(service.channels) { channel in
+                        channelRow(channel)
+                            .tag(channel.id)
+                    }
+                }
             }
-
-            // Create channel button
-            Button {
-                coordinator.showCreateChannel = true
-            } label: {
-                Label("New Channel", systemImage: "plus.circle")
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    coordinator.showCreateChannel = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                }
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    coordinator.toggleBridge()
+                } label: {
+                    Image(systemName: coordinator.transport.isBridgeEnabled
+                        ? "antenna.radiowaves.left.and.right.circle.fill"
+                        : "antenna.radiowaves.left.and.right.circle")
+                }
+                .tint(coordinator.transport.isBridgeEnabled ? .green : .secondary)
             }
         }
     }
 
-    // MARK: - Channel Row
-
-    private func channelRow(_ channel: Channel, icon: String) -> some View {
+    private func channelRow(_ channel: Channel) -> some View {
         HStack {
-            Image(systemName: icon)
+            Image(systemName: channel.createdBy == coordinator.transport.localPeer.id
+                ? "megaphone.fill" : "speaker.wave.2.fill")
                 .foregroundStyle(service.activeChannelID == channel.id ? .blue : .secondary)
                 .frame(width: 24)
 
@@ -61,60 +62,44 @@ struct ChannelSidebar: View {
                 Text(channel.name)
                     .font(.body.bold())
                     .lineLimit(1)
-
-                if let lastMessage = service.messagesByChannel[channel.id]?.last {
-                    Text(lastMessage.content.isEmpty ? lastMessage.fileName ?? "" : lastMessage.content)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(channel.createdBy == coordinator.transport.localPeer.id ? "Your megaphone" : "Live")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Text("(\(coordinator.transport.connectedPeers.count + 1))")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Circle()
+                .fill(.red)
+                .frame(width: 8, height: 8)
         }
     }
-
-    // MARK: - Bridge Banner
 
     private var bridgeBanner: some View {
         HStack {
             Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
                 .foregroundStyle(.green)
-            VStack(alignment: .leading) {
-                Text("Bridging")
-                    .font(.subheadline.bold())
-                // BLE peers can be counted from composite transport
-                Text("Listening for Android devices...")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Bridge ON")
+                .font(.subheadline.bold())
         }
         .padding(8)
         .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.green.opacity(0.3), lineWidth: 1))
         .listRowSeparator(.hidden)
     }
 
-    // MARK: - Empty State
-
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Image(systemName: "megaphone")
-                .font(.largeTitle)
+                .font(.system(size: 40))
                 .foregroundStyle(.secondary)
-            Text("Create a channel")
+            Text("No megaphones nearby")
                 .font(.headline)
-            Text("Organize your conversations by topic.")
+            Text("Create one to start broadcasting")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 40)
         .listRowSeparator(.hidden)
     }
 }

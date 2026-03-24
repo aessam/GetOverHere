@@ -5,32 +5,18 @@ struct ChannelRootView: View {
 
     var body: some View {
         @Bindable var coord = coordinator
-        NavigationSplitView(columnVisibility: .constant(.automatic)) {
+        NavigationSplitView {
             ChannelSidebar()
-                .navigationTitle("Channels")
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            coordinator.showCreateChannel = true
-                        } label: {
-                            Image(systemName: "plus.circle")
-                        }
-                    }
-                }
+                .navigationTitle("Megaphone")
         } detail: {
             ChannelDetailView()
         }
-        .alert("New Channel", isPresented: $coord.showCreateChannel) {
+        .alert("New Megaphone", isPresented: $coord.showCreateChannel) {
             TextField("Channel name", text: $coord.newChannelName)
-            Button("Cancel", role: .cancel) {
-                coordinator.newChannelName = ""
-            }
-            Button("Create") {
-                coordinator.createChannel()
-            }
-            .disabled(coordinator.newChannelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { coordinator.newChannelName = "" }
+            Button("Create") { coordinator.createChannel() }
         } message: {
-            Text("Enter a name for the new channel (max 32 characters).")
+            Text("Create a channel. You'll be the only speaker.")
         }
     }
 }
