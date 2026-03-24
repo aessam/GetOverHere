@@ -3,7 +3,7 @@ import SwiftUI
 
 @Observable
 final class AppCoordinator {
-    let transport: CompositeTransport
+    let transport: DualTransport
     let channelService: ChannelService
     let audioEngine: AudioEngine
 
@@ -11,7 +11,7 @@ final class AppCoordinator {
     var newChannelName = ""
 
     init(displayName: String) {
-        let transport = CompositeTransport(displayName: displayName)
+        let transport = DualTransport(displayName: displayName)
         let audioEngine = AudioEngine()
 
         self.transport = transport
@@ -26,14 +26,6 @@ final class AppCoordinator {
 
     func stop() {
         transport.stop()
-    }
-
-    func toggleBridge() {
-        if transport.isBridgeEnabled {
-            transport.disableBridge()
-        } else {
-            transport.enableBridge()
-        }
     }
 
     func createChannel() {

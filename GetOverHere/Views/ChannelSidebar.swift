@@ -13,11 +13,6 @@ struct ChannelSidebar: View {
                 }
             }
         )) {
-            // Bridge banner
-            if coordinator.transport.isBridgeEnabled {
-                bridgeBanner
-            }
-
             // Available megaphones
             if service.channels.isEmpty {
                 emptyState
@@ -39,9 +34,11 @@ struct ChannelSidebar: View {
                 }
             }
             ToolbarItem(placement: .topBarLeading) {
-                if coordinator.transport.isBridgeEnabled {
-                    Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
-                        .foregroundStyle(.green)
+                HStack(spacing: 4) {
+                    Circle().fill(coordinator.transport.connectedPeers.isEmpty ? .red : .green).frame(width: 8, height: 8)
+                    Text("\(coordinator.transport.connectedPeers.count)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -69,18 +66,6 @@ struct ChannelSidebar: View {
                 .fill(.red)
                 .frame(width: 8, height: 8)
         }
-    }
-
-    private var bridgeBanner: some View {
-        HStack {
-            Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
-                .foregroundStyle(.green)
-            Text("Bridge ON")
-                .font(.subheadline.bold())
-        }
-        .padding(8)
-        .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        .listRowSeparator(.hidden)
     }
 
     private var emptyState: some View {

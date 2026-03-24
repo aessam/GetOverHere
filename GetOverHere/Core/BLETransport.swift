@@ -289,9 +289,10 @@ extension BLETransport: CBPeripheralManagerDelegate {
         if let error { Logger.transport.error("Add service failed: \(error.localizedDescription)"); return }
         Task { @MainActor [weak self] in
             guard let self else { return }
+            // Only include service UUID — adding the name can overflow the 31-byte
+            // BLE advertisement and push the UUID to scan response where Android won't find it
             self.peripheralManager.startAdvertising([
-                CBAdvertisementDataServiceUUIDsKey: [BLEConstants.serviceUUID],
-                CBAdvertisementDataLocalNameKey: self.localPeer.displayName
+                CBAdvertisementDataServiceUUIDsKey: [BLEConstants.serviceUUID]
             ])
             Logger.transport.info("Advertising started")
         }
@@ -309,7 +310,17 @@ extension BLETransport: CBPeripheralManagerDelegate {
                 if let stableID = self.centralToStableID[centralUUID] {
                     self.handleReceivedData(data, from: stableID)
                 } else {
-                    Logger.transport.debug("Write from unknown central \(centralUUID.uuidString.prefix(8)), \(data.count) bytes")
+                    // Register this central immediately so its data isn't dropped
+                    let tempID = centralUUID.uuidString
+                    let peer = PeerInfo(id: tempID, displayName: "BLE-\(tempID.prefix(4))")
+                    self.centralToStableID[centralUUID] = tempID
+                    self.peersByStableID[tempID] = peer
+                    if !self.connectedPeers.contains(peer) {
+                        self.connectedPeers.append(peer)
+                        self.peerContinuation.yield(.connected(peer))
+                    }
+                    self.handleReceivedData(data, from: tempID)
+                    Logger.transport.info("Registered unknown central \(tempID.prefix(8)) and processed \(data.count) bytes")
                 }
                 self.peripheralManager.respond(to: request, withResult: .success)
             }
