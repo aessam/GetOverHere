@@ -174,10 +174,12 @@ final class AudioEngine {
     private func configureAudioSession(forCapture: Bool) {
         let session = AVAudioSession.sharedInstance()
         do {
+            // Deactivate first to cleanly switch categories
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
             if forCapture {
                 try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
             } else {
-                try session.setCategory(.playback, mode: .default, options: [.allowBluetoothA2DP])
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker])
             }
             try session.setActive(true)
             Logger.audio.info("Session: capture=\(forCapture), rate=\(session.sampleRate)Hz")

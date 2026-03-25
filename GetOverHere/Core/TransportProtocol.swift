@@ -42,7 +42,13 @@ enum BLECommand: Sendable {
     }
 }
 
-// Custom Codable — encodes channelAnnounce fields directly (no _0 wrapper).
+// Helper structs for cross-platform JSON (proper types, no string-encoding numbers)
+private struct ChannelEndedPayload: Codable { let channelID: String }
+private struct WiFiCredentialsPayload: Codable { let ssid: String; let password: String }
+private struct HeartbeatPayload: Codable { let term: Int; let leaderID: String }
+private struct VoteRequestPayload: Codable { let term: Int; let candidateID: String }
+private struct VoteResponsePayload: Codable { let term: Int; let granted: Bool }
+
 extension BLECommand: Codable {
     private enum CodingKeys: String, CodingKey {
         case channelAnnounce, channelEnded, becomeWiFiHost, wifiCredentials
@@ -53,12 +59,12 @@ extension BLECommand: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .channelAnnounce(let v): try container.encode(v, forKey: .channelAnnounce)
-        case .channelEnded(let id): try container.encode(["channelID": id], forKey: .channelEnded)
+        case .channelEnded(let id): try container.encode(ChannelEndedPayload(channelID: id), forKey: .channelEnded)
         case .becomeWiFiHost: try container.encode(true, forKey: .becomeWiFiHost)
-        case .wifiCredentials(let s, let p): try container.encode(["ssid": s, "password": p], forKey: .wifiCredentials)
-        case .heartbeat(let t, let l): try container.encode(["term": "\(t)", "leaderID": l], forKey: .heartbeat)
-        case .voteRequest(let t, let c): try container.encode(["term": "\(t)", "candidateID": c], forKey: .voteRequest)
-        case .voteResponse(let t, let g): try container.encode(["term": "\(t)", "granted": "\(g)"], forKey: .voteResponse)
+        case .wifiCredentials(let s, let p): try container.encode(WiFiCredentialsPayload(ssid: s, password: p), forKey: .wifiCredentials)
+        case .heartbeat(let t, let l): try container.encode(HeartbeatPayload(term: t, leaderID: l), forKey: .heartbeat)
+        case .voteRequest(let t, let c): try container.encode(VoteRequestPayload(term: t, candidateID: c), forKey: .voteRequest)
+        case .voteResponse(let t, let g): try container.encode(VoteResponsePayload(term: t, granted: g), forKey: .voteResponse)
         }
     }
 
@@ -66,18 +72,18 @@ extension BLECommand: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let v = try? container.decode(ChannelAnnounce.self, forKey: .channelAnnounce) {
             self = .channelAnnounce(announce: v)
-        } else if let v = try? container.decode([String: String].self, forKey: .channelEnded) {
-            self = .channelEnded(channelID: v["channelID"] ?? "")
+        } else if let v = try? container.decode(ChannelEndedPayload.self, forKey: .channelEnded) {
+            self = .channelEnded(channelID: v.channelID)
         } else if (try? container.decode(Bool.self, forKey: .becomeWiFiHost)) != nil {
             self = .becomeWiFiHost
-        } else if let v = try? container.decode([String: String].self, forKey: .wifiCredentials) {
-            self = .wifiCredentials(ssid: v["ssid"] ?? "", password: v["password"] ?? "")
-        } else if let v = try? container.decode([String: String].self, forKey: .heartbeat) {
-            self = .heartbeat(term: Int(v["term"] ?? "0") ?? 0, leaderID: v["leaderID"] ?? "")
-        } else if let v = try? container.decode([String: String].self, forKey: .voteRequest) {
-            self = .voteRequest(term: Int(v["term"] ?? "0") ?? 0, candidateID: v["candidateID"] ?? "")
-        } else if let v = try? container.decode([String: String].self, forKey: .voteResponse) {
-            self = .voteResponse(term: Int(v["term"] ?? "0") ?? 0, granted: v["granted"] == "true")
+        } else if let v = try? container.decode(WiFiCredentialsPayload.self, forKey: .wifiCredentials) {
+            self = .wifiCredentials(ssid: v.ssid, password: v.password)
+        } else if let v = try? container.decode(HeartbeatPayload.self, forKey: .heartbeat) {
+            self = .heartbeat(term: v.term, leaderID: v.leaderID)
+        } else if let v = try? container.decode(VoteRequestPayload.self, forKey: .voteRequest) {
+            self = .voteRequest(term: v.term, candidateID: v.candidateID)
+        } else if let v = try? container.decode(VoteResponsePayload.self, forKey: .voteResponse) {
+            self = .voteResponse(term: v.term, granted: v.granted)
         } else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown BLECommand"))
         }

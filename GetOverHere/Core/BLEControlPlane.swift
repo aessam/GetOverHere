@@ -179,6 +179,9 @@ extension BLEControlPlane: CBPeripheralManagerDelegate {
                 // Decode and dispatch command
                 if let cmd = self.decodeCommand(data) {
                     self.commandCont.yield((cmd, peer))
+                    Logger.transport.info("BLE cmd received from \(peer.displayName): \(String(data: data, encoding: .utf8)?.prefix(60) ?? "?")")
+                } else {
+                    Logger.transport.error("BLE cmd decode FAILED: \(String(data: data, encoding: .utf8)?.prefix(80) ?? "raw \(data.count) bytes")")
                 }
                 self.peripheralManager.respond(to: request, withResult: .success)
             }
