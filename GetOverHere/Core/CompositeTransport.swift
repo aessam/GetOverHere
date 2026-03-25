@@ -28,7 +28,7 @@ final class DualTransport: TransportProtocol {
     private let peerCont: AsyncStream<PeerEvent>.Continuation
 
     private let multipeer: MultipeerTransport
-    private let ble: BLETransport
+    let ble: BLETransport
     private var tasks: [Task<Void, Never>] = []
 
     init(displayName: String) {

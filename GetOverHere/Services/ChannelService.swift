@@ -72,6 +72,11 @@ final class ChannelService {
         activeChannelID = channel.id
         listenState = .broadcasting
 
+        // Start L2CAP audio publishing if BLE transport is available
+        if let dualTransport = transport as? DualTransport {
+            dualTransport.ble.l2capAudio.startPublishing(peripheralManager: dualTransport.ble.peripheralManager)
+        }
+
         broadcastChannelAnnounce(channel)
         startBroadcasting()
         Logger.channel.info("Created megaphone: \(name)")
@@ -79,12 +84,19 @@ final class ChannelService {
 
     /// Join a channel as a listener.
     func joinChannel(_ channel: Channel) {
-        // Stop current activity
         stopCurrentActivity()
 
         activeChannelID = channel.id
         listenState = .listening
         audioEngine.startPlayback()
+
+        // Set up L2CAP audio reception — audio comes directly from L2CAP stream
+        if let dualTransport = transport as? DualTransport {
+            dualTransport.ble.l2capAudio.onAudioReceived = { [weak self] data in
+                self?.audioEngine.enqueuePlayback(data)
+            }
+        }
+
         Logger.channel.info("Listening to: \(channel.name)")
     }
 
@@ -92,6 +104,16 @@ final class ChannelService {
     func leaveChannel() {
         guard let ch = activeChannel else { return }
         stopCurrentActivity()
+
+        // Stop L2CAP
+        if let dualTransport = transport as? DualTransport {
+            if ch.createdBy == transport.localPeer.id {
+                dualTransport.ble.l2capAudio.stopPublishing()
+            } else {
+                dualTransport.ble.l2capAudio.stopListening()
+            }
+        }
+
         activeChannelID = nil
         listenState = .idle
         Logger.channel.info("Left channel: \(ch.name)")

@@ -27,12 +27,16 @@ final class BLETransport: NSObject, TransportProtocol {
     private let peerContinuation: AsyncStream<PeerEvent>.Continuation
 
     // CoreBluetooth
-    private var peripheralManager: CBPeripheralManager!
+    var peripheralManager: CBPeripheralManager!
     private var centralManager: CBCentralManager!
     private var service: CBMutableService?
     private var writeCharacteristic: CBMutableCharacteristic?
     private var notifyCharacteristic: CBMutableCharacteristic?
     private var peerNameCharacteristic: CBMutableCharacteristic?
+    private var audioPSMCharacteristic: CBMutableCharacteristic?
+
+    /// L2CAP audio streaming (high bandwidth pipe for audio)
+    let l2capAudio = L2CAPAudioStream()
 
     // Peer tracking — keyed by STABLE peer ID (from peer name characteristic)
     private var bleToStableID: [String: String] = [:]
@@ -106,15 +110,18 @@ final class BLETransport: NSObject, TransportProtocol {
     }
 
     func sendAudioData(_ data: Data, to peers: [PeerInfo]) throws {
+        // Prefer L2CAP for audio (high bandwidth). Fall back to GATT if no L2CAP channels.
+        if l2capAudio.publishedPSM != 0 {
+            l2capAudio.writeAudio(data)
+            return
+        }
+        // GATT fallback (low bandwidth, choppy)
         var payload = Data([DataTag.audio.rawValue])
         payload.append(data)
         let targets = resolveTargets(peers)
-        if !targets.isEmpty {
-            for peripheral in targets {
-                writeDirect(payload, to: peripheral)
-            }
+        for peripheral in targets {
+            writeDirect(payload, to: peripheral)
         }
-        // Also notify — this is how audio reaches devices that connected to US
         notifySubscribers(payload)
     }
 
@@ -346,11 +353,18 @@ extension BLETransport: CBPeripheralManagerDelegate {
             properties: [.read],
             value: peerNameData, permissions: [.readable]
         )
+        let psmCh = CBMutableCharacteristic(
+            type: BLEConstants.audioPSMUUID,
+            properties: [.read],
+            value: nil, // Updated dynamically when L2CAP publishes
+            permissions: [.readable]
+        )
         let svc = CBMutableService(type: BLEConstants.serviceUUID, primary: true)
-        svc.characteristics = [writeCh, notifyCh, peerNameCh]
+        svc.characteristics = [writeCh, notifyCh, peerNameCh, psmCh]
         self.writeCharacteristic = writeCh
         self.notifyCharacteristic = notifyCh
         self.peerNameCharacteristic = peerNameCh
+        self.audioPSMCharacteristic = psmCh
         self.service = svc
         peripheralManager.add(svc)
     }
@@ -403,11 +417,35 @@ extension BLETransport: CBPeripheralManagerDelegate {
             if request.characteristic.uuid == BLEConstants.peerNameUUID {
                 request.value = self.peerNameData
                 self.peripheralManager.respond(to: request, withResult: .success)
-                let centralUUID = request.central.identifier
-                Logger.transport.info("Central \(centralUUID.uuidString.prefix(8)) read our peer name")
+                Logger.transport.info("Central \(request.central.identifier.uuidString.prefix(8)) read our peer name")
+            } else if request.characteristic.uuid == BLEConstants.audioPSMUUID {
+                // Return L2CAP PSM number as UInt16 little-endian
+                var psm = self.l2capAudio.publishedPSM
+                request.value = Data(bytes: &psm, count: 2)
+                self.peripheralManager.respond(to: request, withResult: .success)
+                Logger.transport.info("Central read audio PSM: \(psm)")
             } else {
                 self.peripheralManager.respond(to: request, withResult: .attributeNotFound)
             }
+        }
+    }
+
+    // L2CAP delegate hooks
+    nonisolated func peripheralManager(_ peripheral: CBPeripheralManager, didPublishL2CAPChannel PSM: CBL2CAPPSM, error: (any Error)?) {
+        Task { @MainActor [weak self] in
+            self?.l2capAudio.didPublishL2CAPChannel(psm: PSM, error: error)
+        }
+    }
+
+    nonisolated func peripheralManager(_ peripheral: CBPeripheralManager, didOpen channel: CBL2CAPChannel?, error: (any Error)?) {
+        if let error {
+            Logger.transport.error("L2CAP channel open error: \(error.localizedDescription)")
+            return
+        }
+        guard let channel else { return }
+        Task { @MainActor [weak self] in
+            self?.l2capAudio.handleChannelOpened(channel)
+            Logger.transport.info("L2CAP: incoming channel opened (PSM=\(channel.psm))")
         }
     }
 }
@@ -488,7 +526,7 @@ extension BLETransport: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         guard let services = peripheral.services else { return }
         for svc in services where svc.uuid == BLEConstants.serviceUUID {
-            peripheral.discoverCharacteristics([BLEConstants.dataWriteUUID, BLEConstants.peerNameUUID], for: svc)
+            peripheral.discoverCharacteristics([BLEConstants.dataWriteUUID, BLEConstants.peerNameUUID, BLEConstants.audioPSMUUID], for: svc)
         }
     }
 
@@ -501,12 +539,25 @@ extension BLETransport: CBPeripheralDelegate {
                     self.writeCharacteristics[peripheral] = ch
                 } else if ch.uuid == BLEConstants.peerNameUUID {
                     peripheral.readValue(for: ch)
+                } else if ch.uuid == BLEConstants.audioPSMUUID {
+                    peripheral.readValue(for: ch) // Read PSM for L2CAP audio
                 }
             }
         }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: (any Error)?) {
+        // Handle L2CAP PSM read
+        if characteristic.uuid == BLEConstants.audioPSMUUID, let data = characteristic.value, data.count >= 2 {
+            let psm = data.withUnsafeBytes { $0.load(as: UInt16.self) }
+            if psm > 0 {
+                Task { @MainActor [weak self] in
+                    self?.l2capAudio.connectToChannel(on: peripheral, psm: psm)
+                }
+            }
+            return
+        }
+
         guard characteristic.uuid == BLEConstants.peerNameUUID, let data = characteristic.value else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -522,5 +573,17 @@ extension BLETransport: CBPeripheralDelegate {
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: (any Error)?) {
         if let error { Logger.transport.error("Write failed: \(error.localizedDescription)") }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: (any Error)?) {
+        if let error {
+            Logger.transport.error("L2CAP open failed: \(error.localizedDescription)")
+            return
+        }
+        guard let channel else { return }
+        Task { @MainActor [weak self] in
+            self?.l2capAudio.handleChannelOpened(channel)
+            Logger.transport.info("L2CAP: outgoing channel opened to \(peripheral.identifier.uuidString.prefix(8))")
+        }
     }
 }
