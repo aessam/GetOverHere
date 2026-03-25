@@ -46,3 +46,21 @@
 **What happened**: Python script generating 1024x1024 PNGs produced garbage that broke the build.
 **Resolution**: User handles icons manually via Xcode asset catalog.
 **Decision**: Never script icon generation. Icons are a design task, not a code task.
+
+## 9. BLE is a control plane, not a data plane
+**What happened**: Spent hours trying to stream 64 KB/s audio over BLE GATT (~13 KB/s throughput). Then tried L2CAP — PSM sharing broke due to GATT operation sequencing. Every fix revealed another BLE edge case.
+**Root cause**: BLE was designed for small, infrequent data (sensor readings, notifications). Using it for continuous audio streaming is fighting the technology.
+**Resolution**: BLE demoted to control plane only (discovery, commands, metadata). WiFi hotspot + UDP for audio data plane.
+**Decision**: Never send continuous data over BLE. Use it for what it's good at: discovery and lightweight coordination.
+
+## 10. WiFi hotspot is the cross-platform data bridge
+**What happened**: Explored every Bluetooth option (GATT, L2CAP, Classic BT). All failed or were blocked on iOS.
+**Root cause**: iOS blocks Classic BT for third-party apps. BLE bandwidth is insufficient. WiFi Direct has no public iOS API.
+**Resolution**: Android creates WiFi hotspot (`startLocalOnlyHotspot`), iOS joins (`NEHotspotConfigurationManager`), audio over UDP multicast.
+**Decision**: For high-bandwidth cross-platform P2P, use WiFi as the data bridge, bootstrapped by BLE.
+
+## 11. Separate control plane from data plane
+**What happened**: Mixed BLE discovery, metadata, and audio in the same transport. Chunk framing conflicts, byte overlaps, notification queue overflows.
+**Root cause**: Single transport trying to handle both lightweight commands and heavy data. Different reliability requirements, different bandwidth needs.
+**Resolution**: Three-tier architecture — BLE control plane, Multipeer for iOS data, WiFi+UDP for cross-platform data.
+**Decision**: Always separate control plane (lightweight, reliable) from data plane (high bandwidth, can tolerate loss).

@@ -49,6 +49,7 @@ enum TransportMessage: Sendable {
         let channelName: String
         let createdAt: Date
         let createdBy: String
+        var l2capPSM: Int? // L2CAP PSM for audio streaming (nil = no audio available yet)
     }
 
     struct FileHeader: Codable, Sendable {

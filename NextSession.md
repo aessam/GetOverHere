@@ -1,130 +1,210 @@
-# Next Session: L2CAP Audio Streaming
+# Next Session: Clean-Room Rewrite — BLE Control Plane + WiFi Audio
 
 ## What We Did This Session
 
-Built a cross-platform P2P megaphone app from scratch — iOS (GetOverHere) and Android (ComeOverHere). One speaker per channel, everyone else listens. No WiFi/cellular needed.
+Built a cross-platform P2P megaphone app (iOS: GetOverHere, Android: ComeOverHere). Went through multiple architecture iterations:
 
-### Journey:
-1. Started with iOS-only: Multipeer Connectivity for chat, file sharing, walkie-talkie
-2. Added Android with BLE transport + Nearby Connections
-3. Attempted BLE bridge for cross-platform — many reliability issues
-4. Stripped to audio-only megaphone (dramatically simpler)
-5. Fixed wire format mismatch (Swift Codable `_0` wrapper vs Android manual JSON)
-6. Fixed BLE chunk framing protocol (byte overlap between DataTag and ChunkFlags)
-7. Added BLE notifications for bidirectional data (central writes + peripheral notifications)
-8. **Hit BLE bandwidth wall**: GATT can only do ~13 KB/s, audio needs 64 KB/s
+1. **v1**: Full chat/file/walkie-talkie with MultipeerConnectivity (iOS only)
+2. **v2**: Added BLE transport for cross-platform, complex bridge/relay system
+3. **v3**: Stripped to audio-only megaphone, simplified channel model
+4. **v4**: Fixed wire format (Swift `_0` Codable issue), chunk framing overlap, GATT notification path
+5. **v5**: Added L2CAP for audio — PSM sharing broken due to GATT operation sequencing
+6. **CONCLUSION**: BLE GATT is unreliable for data transfer. BLE L2CAP PSM sharing fails. BLE bandwidth (~13 KB/s practical) can't handle audio (64 KB/s). Classic BT blocked on iOS for third-party apps.
 
-### Current Architecture:
-- **iOS↔iOS**: MultipeerTransport (WiFi Direct/AWDL) — audio works perfectly
-- **Cross-platform discovery**: BLE GATT — channels visible both ways ✅
-- **Cross-platform audio**: BLE GATT notifications — **NOT WORKING** (bandwidth insufficient)
+### Key Decision Made (end of session):
+**New architecture agreed with user:**
+- BLE = control plane (discovery, RAFT leader election, commands, credential exchange)
+- MultipeerConnectivity = iOS↔iOS data plane (when no Android present)
+- WiFi Hotspot + UDP = cross-platform data plane (when Android detected)
+- Android creates hotspot automatically via `startLocalOnlyHotspot()`
+- iOS joins via `NEHotspotConfigurationManager`
+- Audio over UDP multicast on the shared WiFi network
 
 ## Current State
 
 ### iOS Project
 - **Path**: `/Users/aessam/tmp/ios-macos-apps/GetOverHere`
-- **Branch**: `main` (latest commit has megaphone rewrite + BLE fixes)
+- **Branch**: `main`
 - **Bundle ID**: `com.aens.GetOverHere`
-- **Team ID**: `VW9YC3A6JM`
 - **Build**: `xcodebuild build -scheme GetOverHere -destination 'generic/platform=iOS Simulator'`
-- **TestFlight**: App exists in App Store Connect, first build uploaded
-- **Key files**:
-  - `Core/DualTransport.swift` — runs Multipeer + BLE simultaneously (was CompositeTransport)
-  - `Core/BLETransport.swift` — GATT server + client, notify characteristic added
-  - `Core/MultipeerTransport.swift` — auto-invite with tiebreaker, unique MCPeerID
-  - `Services/ChannelService.swift` — audio-only megaphone, creator-speaks, periodic broadcast
-  - `Services/AudioEngine.swift` — AVAudioEngine, converter 48kHz→16kHz, noise gate
-  - `Views/ChannelRootView.swift` + `ChannelSidebar.swift` + `ChannelDetailView.swift`
+- **State**: Megaphone works iOS↔iOS via Multipeer. BLE discovery works cross-platform. Audio over BLE does NOT work (bandwidth limit). L2CAP added but PSM sharing broken. Code is messy from many patches.
 
 ### Android Project
 - **Path**: `/Users/aessam/AndroidStudioProjects/ComeOverHere`
 - **Branch**: `main`
 - **Build**: `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug`
-- **Key files**:
-  - `core/BLETransport.kt` — GATT server + client, no scan filter (checks UUID in code)
-  - `core/TransportMessage.kt` — manual JSON with `unwrap0()` for Swift Codable compat
-  - `service/ChannelService.kt` — mirrors iOS megaphone logic
-  - `service/AudioEngine.kt` — AudioRecord/AudioTrack at 16kHz mono float32
-  - `ui/ChannelScreen.kt` + `ui/AppViewModel.kt`
+- **State**: BLE transport works for discovery. Audio over BLE doesn't work. L2CAP added but untested due to PSM issue.
 
-### Wire Format (cross-platform)
-- **BLE framing**: `[ChunkFlag 1 byte][DataTag 1 byte][payload]`
-  - ChunkFlags: 0x00=continuation, 0x01=first, 0x02=last, 0x03=single
-  - DataTags: 0x01=message, 0x02=audio
-  - ⚠️ 0x01 and 0x02 overlap between flags and tags — only works because chunked data always starts with flag
-- **Messages**: JSON matching Swift Codable (Android uses `unwrap0()` for `_0` key)
-- **Audio**: `[DataTag.audio][channelID 36 bytes UTF-8][float32 PCM data]`
-- **Channel announce**: `{"channelAnnounce": {"channelID":"...", "channelName":"...", "createdAt":..., "createdBy":"..."}}`
-- **Dates**: Swift reference epoch (seconds since Jan 1 2001). Android converts via `SWIFT_REFERENCE_EPOCH = 978307200`
+### TestFlight
+- App exists in App Store Connect as `com.aens.GetOverHere`
+- One build uploaded. User has icons handled.
 
-### BLE UUIDs (both platforms)
+## What's Next: CLEAN-ROOM REWRITE
+
+**This is a rewrite, not a patch.** The existing BLE transport code is too tangled. Build the new architecture clean.
+
+### Architecture:
+
 ```
-Service:     A1B2C3D4-0001-0000-0000-000000000000
-Data Write:  A1B2C3D4-0002-0000-0000-000000000000
-Data Notify: A1B2C3D4-0003-0000-0000-000000000000
-Peer Name:   A1B2C3D4-0004-0000-0000-000000000000
+┌─────────────────────────────────────────────┐
+│                BLE Control Plane             │
+│  (always on, both platforms, lightweight)    │
+│                                              │
+│  • Device discovery (scan + advertise)       │
+│  • RAFT leader election                      │
+│  • "Become WiFi host" command                │
+│  • SSID + password credential exchange       │
+│  • Channel announce/metadata                 │
+│  • Heartbeat / keepalive                     │
+└──────────┬────────────────────┬──────────────┘
+           │                    │
+   iOS only │                    │ Cross-platform
+           │                    │
+┌──────────▼──────────┐  ┌─────▼──────────────┐
+│  MultipeerConnectivity│  │  WiFi Hotspot + UDP │
+│  (iOS ↔ iOS)         │  │  (iOS ↔ Android)    │
+│                      │  │                     │
+│  • Audio streaming   │  │  • Android creates  │
+│  • Auto WiFi Direct  │  │    hotspot (auto)   │
+│  • Zero config       │  │  • iOS joins (auto) │
+│  • Proven reliable   │  │  • UDP multicast    │
+│                      │  │  • Audio streaming  │
+└──────────────────────┘  └─────────────────────┘
 ```
 
-## What's Next: L2CAP Audio Streaming
+### Implementation Plan (ordered):
 
-The user approved adding BLE L2CAP channels for audio. This is the focused next task.
+#### Phase 0: Clean Up
+```bash
+# Keep the existing megaphone UI (ChannelRootView, ChannelSidebar, ChannelDetailView)
+# Keep AudioEngine (capture + playback)
+# Keep Channel + ChannelMessage models
+# DELETE: BLETransport.swift (too tangled, rewrite from scratch)
+# DELETE: L2CAPAudioStream.swift
+# DELETE: DualTransport (CompositeTransport.swift)
+# DELETE: MultipeerTransport.swift (rewrite simpler version)
+# REWRITE: ChannelService.swift (clean transport abstraction)
+```
 
-### Plan:
-1. **iOS: Add L2CAP listener + publisher**
-   - `CBPeripheralManager.publishL2CAPChannel(withEncryption:)` — host opens L2CAP PSM
-   - Include PSM in channel announce or peer name characteristic
-   - When broadcasting: write audio to L2CAP output stream
-   - When listening: read audio from L2CAP input stream
-   - Keep GATT for discovery/metadata, L2CAP only for audio
+#### Phase 1: BLE Control Plane (both platforms)
+New file: `BLEControlPlane.swift` / `BLEControlPlane.kt`
+- Scan + advertise with service UUID
+- Exchange peer info (name, platform: "ios"/"android", capabilities)
+- Send/receive JSON commands over single GATT write characteristic
+- Commands: `channel_announce`, `become_wifi_host`, `wifi_credentials`, `heartbeat`
+- NO audio over BLE. ONLY metadata.
+- Simple, robust, one characteristic for writes, one for notifications
 
-2. **Android: Add L2CAP client + server**
-   - `BluetoothDevice.createL2capChannel(psm)` or `BluetoothServerSocket.createL2capChannel()`
-   - Connect to iOS's L2CAP PSM after GATT handshake
-   - Read/write audio via `InputStream`/`OutputStream`
+#### Phase 2: RAFT Leader Election (both platforms)
+New file: `RAFTElection.swift` / `RAFTElection.kt`
+- Simplified RAFT for leader election among BLE-connected peers
+- Leader = the device that will coordinate the megaphone network
+- When Android is present, prefer Android as WiFi host (since iOS can't create hotspot programmatically)
+- Leader broadcasts heartbeat; if missed, re-election
 
-3. **Protocol**:
-   - After GATT connection + peer name exchange, the creator's device opens L2CAP
-   - PSM (Protocol/Service Multiplexer) number shared via a new GATT characteristic or in the channel announce
-   - Listeners connect to the L2CAP channel
-   - Audio flows as raw `[channelID 36 bytes][float32 PCM]` over the L2CAP stream
-   - No chunk framing needed — L2CAP is stream-oriented
+#### Phase 3: WiFi Hotspot Transport (Android creates, iOS joins)
+New files:
+- Android: `WiFiHotspotManager.kt` — `startLocalOnlyHotspot()`, returns SSID + password
+- iOS: `WiFiHotspotJoiner.swift` — `NEHotspotConfigurationManager.apply()` with SSID + password
+- Both: `UDPAudioTransport.swift` / `UDPAudioTransport.kt` — UDP multicast send/receive
 
-4. **Bandwidth**: L2CAP over BLE can do 100+ KB/s. Audio at 64 KB/s should work.
+Flow:
+1. BLE detects Android device
+2. Leader election → Android becomes WiFi host
+3. Android calls `startLocalOnlyHotspot()` → gets SSID + password
+4. Android sends `wifi_credentials` command via BLE to all peers
+5. iOS receives credentials → joins hotspot via `NEHotspotConfigurationManager`
+6. Both open UDP multicast socket on the hotspot network
+7. Audio streams over UDP — megabits of bandwidth
 
-5. **Fallback**: Keep GATT notification path for devices that don't support L2CAP (shouldn't be needed since both iOS 11+ and Android 10+ support it)
+#### Phase 4: MultipeerConnectivity Transport (iOS-only fast path)
+New file: `MultipeerTransport.swift` (simplified from current)
+- Auto-discover + auto-connect (current logic, cleaned up)
+- Used when ALL peers are iOS (no Android detected via BLE)
+- Fallback: if WiFi hotspot is active, Multipeer can coexist
 
-### Commands to resume:
+#### Phase 5: Unified ChannelService
+New file: `ChannelService.swift` (rewritten)
+- Protocol-based transport abstraction
+- Megaphone model: one creator (speaker), everyone listens
+- Channel announce via BLE control plane
+- Audio via active transport (Multipeer OR UDP, transparent to service)
+- Periodic re-announce via BLE
+
+#### Phase 6: Wire it up + test
+- Update AppCoordinator / MainActivity
+- Build both platforms
+- Test: iOS↔iOS (Multipeer), iOS↔Android (WiFi hotspot + UDP)
+
+### Key APIs:
+
+**Android WiFi Hotspot:**
+```kotlin
+val wifiManager = getSystemService(WIFI_SERVICE) as WifiManager
+wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalHotspotCallback() {
+    override fun onStarted(reservation: WifiManager.LocalHotspotReservation) {
+        val config = reservation.wifiConfiguration
+        // OR for Android 13+: reservation.softApConfiguration
+        val ssid = config.SSID  // or softApConfiguration.ssid
+        val password = config.preSharedKey  // or softApConfiguration.passphrase
+        // Share via BLE to all peers
+    }
+}, null)
+```
+
+**iOS Join Hotspot:**
+```swift
+import NetworkExtension
+let config = NEHotspotConfiguration(ssid: ssid, passphrase: password, isWEP: false)
+NEHotspotConfigurationManager.shared.apply(config) { error in
+    if let error { /* handle */ }
+    // Connected to hotspot. Open UDP socket.
+}
+```
+
+**UDP Multicast (both):**
+```
+// Multicast group: 239.0.0.1, port: 50000
+// Send: audio packets to multicast group
+// Receive: listen on multicast group
+// Packet format: [channelID 36 bytes][audio float32 PCM]
+```
+
+### Commands to start:
 ```bash
 # iOS
 cd /Users/aessam/tmp/ios-macos-apps/GetOverHere
-xcodebuild build -scheme GetOverHere -destination 'generic/platform=iOS Simulator' -quiet
 
 # Android
 cd /Users/aessam/AndroidStudioProjects/ComeOverHere
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
-
-# TestFlight (after archive)
-xcodebuild archive -scheme GetOverHere -destination 'generic/platform=iOS' -archivePath /tmp/GetOverHere.xcarchive -allowProvisioningUpdates
-xcodebuild -exportArchive -archivePath /tmp/GetOverHere.xcarchive -exportOptionsPlist /tmp/ExportOptions.plist -allowProvisioningUpdates
 ```
+
+## Decisions Made
+
+1. **BLE = control plane ONLY** — no audio, no large data over BLE ever
+2. **Android = WiFi host** when cross-platform is needed (iOS can't create hotspot programmatically)
+3. **UDP multicast** for audio on WiFi hotspot (simple, broadcast-friendly, low latency)
+4. **Multipeer stays** for iOS-only mode (proven, fast, zero config)
+5. **Clean rewrite** — don't patch existing BLE transport, start fresh
 
 ## Decisions Pending
 
-1. **L2CAP PSM sharing**: Via new GATT characteristic? Or embedded in channel announce JSON? (GATT characteristic is cleaner — PSM is a transport detail, not a channel property)
-2. **Audio format for L2CAP**: Keep 16kHz float32 (64 KB/s)? Or switch to 16kHz int16 (32 KB/s) for margin?
-3. **Multipeer iOS-to-iOS**: Still the primary for iOS mesh? Or switch everything to L2CAP for consistency?
+1. **RAFT implementation complexity**: Full RAFT or simplified leader election? (Suggest simplified — just term numbers + heartbeat, no log replication needed)
+2. **What if leader is iOS?**: iOS can't create hotspot automatically. Options: (a) always prefer Android as host, (b) ask iOS user to enable Personal Hotspot manually, (c) fall back to BLE-only metadata + Multipeer audio for iOS-only groups
+3. **`startLocalOnlyHotspot` vs `startTethering`**: Local-only doesn't provide internet. Is that OK? (Yes — we don't need internet, just a local network for UDP)
+4. **Audio format**: Keep 16kHz mono float32 (64 KB/s)? Or upgrade to higher quality since WiFi has unlimited bandwidth?
 
 ## Gotchas
 
-1. **iOS central BLE connection often fails** — `didConnect` never fires. The peripheral-side notification path works around this but it's fragile. L2CAP might have the same issue if initiated from the central side.
-2. **ChunkFlag/DataTag byte overlap** (0x01, 0x02) — works now but is fragile. Consider changing chunk flags to 0xF0-0xF3 in the next refactor.
-3. **`Audio session config failed: OSStatus error -50`** on iOS — happens when switching from capture to playback. Doesn't crash but playback may not start. Needs investigation.
-4. **Swift Codable `_0` wrapper** — custom Codable on `TransportMessage` fixes this for BLE. Multipeer between iOS devices uses the same encoder so it works there too.
-5. **Don't generate app icons with scripts** — user handles icons manually.
-6. **Don't replace working transports** — Multipeer stays for iOS↔iOS. Add L2CAP alongside, don't replace.
-7. **Android scan has no UUID filter** — scans all BLE, checks UUID in code. Works but burns more battery.
-8. **Periodic channel broadcast every 5 seconds** on both platforms — essential for late-joining peers.
+1. **`NEHotspotConfigurationManager` requires entitlement**: Add `com.apple.developer.networking.HotspotConfiguration` to the iOS app's entitlements
+2. **`startLocalOnlyHotspot` deprecated in Android 13+**: Use `startLocalOnlyHotspot(SoftApConfiguration, ...)` for API 33+
+3. **iOS can't create WiFi hotspot programmatically** — if all devices are iOS, stick with Multipeer. Only go WiFi when Android is present.
+4. **UDP multicast on Android hotspot**: The local-only hotspot might not enable multicast by default. Test with `MulticastLock`.
+5. **Don't generate icons with scripts** — user handles manually
+6. **Don't replace working transports** — Multipeer stays for iOS↔iOS
+7. **Swift Codable `_0` wrapper** — use custom Codable for any cross-platform JSON
+8. **Test with real devices** — BLE + WiFi hotspot don't work in simulators
 
 ## Nothing Running That Costs Money
 
-No cloud resources, no GPUs, no paid services. Everything is local + TestFlight (free tier).
+No cloud resources. All local + TestFlight (free).

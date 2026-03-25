@@ -40,11 +40,22 @@
 **Rationale**: Custom Codable produces clean JSON matching what Android manually builds. Both sides control the exact wire format.
 **Consequences**: Must manually update Codable when adding new message types.
 
-## ADR-006: BLE L2CAP for cross-platform audio (PENDING)
+## ADR-006: BLE L2CAP for cross-platform audio (ABANDONED)
 **Date**: 2026-03-24
-**Decision**: Use BLE L2CAP channels for audio streaming, keep GATT for metadata
-**Context**: GATT notifications can only do ~13 KB/s, audio needs 64 KB/s
-**Options**: Reduce audio quality, use L2CAP, accept no cross-platform audio
-**Rationale**: L2CAP provides stream-oriented BLE connections at 100+ KB/s. Both iOS 11+ and Android 10+ support it.
-**Consequences**: More complex BLE code (L2CAP + GATT). But solves the bandwidth problem without sacrificing audio quality.
-**Status**: Approved, implementation next session.
+**Decision**: Attempted L2CAP for audio streaming. Failed due to GATT PSM sharing sequencing issues.
+**Status**: Abandoned. Replaced by ADR-007.
+
+## ADR-007: Three-tier architecture — BLE control + WiFi hotspot + UDP audio
+**Date**: 2026-03-24
+**Decision**: BLE as control plane only. Android creates WiFi hotspot for cross-platform audio. UDP multicast for audio streaming.
+**Context**: BLE GATT can't handle audio bandwidth (~13 KB/s vs 64 KB/s needed). BLE L2CAP PSM sharing failed. Classic BT blocked on iOS. Need a reliable cross-platform audio path.
+**Options**: (a) Keep debugging BLE L2CAP, (b) WiFi hotspot + UDP, (c) Accept no cross-platform audio
+**Rationale**: WiFi provides unlimited bandwidth for audio. Android can create hotspot programmatically (`startLocalOnlyHotspot`). iOS can join programmatically (`NEHotspotConfigurationManager`). BLE handles the bootstrap (discovery, leader election, credential exchange). Clean separation of concerns.
+**Consequences**: Requires Android device as WiFi host when cross-platform is needed. iOS-only groups still use MultipeerConnectivity (no change). Clean rewrite of transport layer needed.
+
+## ADR-008: RAFT leader election for WiFi host selection
+**Date**: 2026-03-24
+**Decision**: Use simplified RAFT protocol to elect a leader who coordinates the network.
+**Context**: With multiple devices, need to decide who becomes the WiFi host. Can't have everyone creating hotspots.
+**Rationale**: RAFT is well-understood, handles network partitions, and naturally selects one leader. Simplified version: just term numbers + heartbeat, no log replication.
+**Consequences**: Android devices preferred as leaders (can create hotspot). iOS leads only in iOS-only groups.
