@@ -21,8 +21,11 @@ struct PeerInfo: Identifiable, Hashable, Codable, Sendable {
 // MARK: - BLE Commands (control plane)
 
 /// All BLE communication uses these typed commands. No raw bytes, no audio.
-enum BLECommand: Codable, Sendable {
-    case channelAnnounce(ChannelAnnounce)
+/// All BLE communication uses these typed commands. No raw bytes, no audio.
+/// IMPORTANT: All cases MUST use labeled parameters to avoid Swift's _0 Codable wrapper.
+/// See LessonsLearned.md #2.
+enum BLECommand: Sendable {
+    case channelAnnounce(announce: ChannelAnnounce)
     case channelEnded(channelID: String)
     case becomeWiFiHost
     case wifiCredentials(ssid: String, password: String)
@@ -35,7 +38,49 @@ enum BLECommand: Codable, Sendable {
         let channelName: String
         let createdBy: String
         var audioQuality: AudioQuality
-        var wifiSSID: String?  // Set once WiFi hotspot is ready
+        var wifiSSID: String?
+    }
+}
+
+// Custom Codable — encodes channelAnnounce fields directly (no _0 wrapper).
+extension BLECommand: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case channelAnnounce, channelEnded, becomeWiFiHost, wifiCredentials
+        case heartbeat, voteRequest, voteResponse
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .channelAnnounce(let v): try container.encode(v, forKey: .channelAnnounce)
+        case .channelEnded(let id): try container.encode(["channelID": id], forKey: .channelEnded)
+        case .becomeWiFiHost: try container.encode(true, forKey: .becomeWiFiHost)
+        case .wifiCredentials(let s, let p): try container.encode(["ssid": s, "password": p], forKey: .wifiCredentials)
+        case .heartbeat(let t, let l): try container.encode(["term": "\(t)", "leaderID": l], forKey: .heartbeat)
+        case .voteRequest(let t, let c): try container.encode(["term": "\(t)", "candidateID": c], forKey: .voteRequest)
+        case .voteResponse(let t, let g): try container.encode(["term": "\(t)", "granted": "\(g)"], forKey: .voteResponse)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let v = try? container.decode(ChannelAnnounce.self, forKey: .channelAnnounce) {
+            self = .channelAnnounce(announce: v)
+        } else if let v = try? container.decode([String: String].self, forKey: .channelEnded) {
+            self = .channelEnded(channelID: v["channelID"] ?? "")
+        } else if (try? container.decode(Bool.self, forKey: .becomeWiFiHost)) != nil {
+            self = .becomeWiFiHost
+        } else if let v = try? container.decode([String: String].self, forKey: .wifiCredentials) {
+            self = .wifiCredentials(ssid: v["ssid"] ?? "", password: v["password"] ?? "")
+        } else if let v = try? container.decode([String: String].self, forKey: .heartbeat) {
+            self = .heartbeat(term: Int(v["term"] ?? "0") ?? 0, leaderID: v["leaderID"] ?? "")
+        } else if let v = try? container.decode([String: String].self, forKey: .voteRequest) {
+            self = .voteRequest(term: Int(v["term"] ?? "0") ?? 0, candidateID: v["candidateID"] ?? "")
+        } else if let v = try? container.decode([String: String].self, forKey: .voteResponse) {
+            self = .voteResponse(term: Int(v["term"] ?? "0") ?? 0, granted: v["granted"] == "true")
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown BLECommand"))
+        }
     }
 }
 

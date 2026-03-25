@@ -152,7 +152,7 @@ final class ChannelService {
             audioQuality: audioQuality,
             wifiSSID: coordinator.wifiSSID
         )
-        coordinator.controlPlane.broadcast(.channelAnnounce(announce))
+        coordinator.controlPlane.broadcast(.channelAnnounce(announce: announce))
     }
 
     private func broadcastAllChannels() {
@@ -180,7 +180,7 @@ final class ChannelService {
             guard let self else { return }
             for await (command, _) in self.coordinator.controlPlane.commands {
                 switch command {
-                case .channelAnnounce(let announce):
+                case .channelAnnounce(announce: let announce):
                     guard !self.channels.contains(where: { $0.id == announce.channelID }) else { continue }
                     let channel = Channel(
                         id: announce.channelID,
