@@ -53,6 +53,7 @@ final class ChannelService {
         listenForChannelAnnouncements()
         listenForPeerEvents()
         listenForControl()
+        startPeriodicBroadcast()
         Logger.channel.info("ChannelService started")
     }
 
@@ -142,6 +143,18 @@ final class ChannelService {
         } else if listenState == .listening {
             audioEngine.stopPlayback()
         }
+    }
+
+    // MARK: - Periodic Broadcast
+
+    private func startPeriodicBroadcast() {
+        listenTasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !self.channels.isEmpty else { continue }
+                self.broadcastAllChannels()
+            }
+        })
     }
 
     // MARK: - Channel Announce

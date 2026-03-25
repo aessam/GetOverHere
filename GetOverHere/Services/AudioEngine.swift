@@ -78,7 +78,7 @@ final class AudioEngine {
 
         inputNode.installTap(
             onBus: 0,
-            bufferSize: 960, // ~20ms at 48kHz → ~320 frames at 16kHz → ~1.3KB per packet
+            bufferSize: 345, // ~7ms at 48kHz → ~115 frames at 16kHz → ~460 bytes (fits in one BLE MTU)
             format: nil
         ) { @Sendable [converterRef, continuationLock] buffer, _ in
             // Noise gate: compute RMS and drop quiet buffers (echo, background noise)

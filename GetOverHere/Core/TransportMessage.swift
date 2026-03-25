@@ -1,7 +1,8 @@
 import Foundation
 
-/// Cross-platform message format. Android will encode/decode the same JSON structure.
-enum TransportMessage: Codable, Sendable {
+/// Cross-platform message format with custom Codable to ensure iOS↔Android wire compatibility.
+/// Swift's auto-synthesized Codable wraps unnamed enum values with "_0" which Android doesn't send.
+enum TransportMessage: Sendable {
     case text(TextPayload)
     case walkieTalkieControl(WalkieTalkieControl)
     case channelAnnounce(ChannelAnnounce)
@@ -65,6 +66,42 @@ enum TransportMessage: Codable, Sendable {
         let transferID: String
         let index: Int
         let totalChunks: Int
-        let data: String // Base64-encoded chunk data
+        let data: String
+    }
+}
+
+// MARK: - Custom Codable (no _0 wrapper — matches Android wire format)
+
+extension TransportMessage: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case text, walkieTalkieControl, channelAnnounce, fileHeader, fileChunk
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let v): try container.encode(v, forKey: .text)
+        case .walkieTalkieControl(let v): try container.encode(v, forKey: .walkieTalkieControl)
+        case .channelAnnounce(let v): try container.encode(v, forKey: .channelAnnounce)
+        case .fileHeader(let v): try container.encode(v, forKey: .fileHeader)
+        case .fileChunk(let v): try container.encode(v, forKey: .fileChunk)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let v = try? container.decode(TextPayload.self, forKey: .text) {
+            self = .text(v)
+        } else if let v = try? container.decode(WalkieTalkieControl.self, forKey: .walkieTalkieControl) {
+            self = .walkieTalkieControl(v)
+        } else if let v = try? container.decode(ChannelAnnounce.self, forKey: .channelAnnounce) {
+            self = .channelAnnounce(v)
+        } else if let v = try? container.decode(FileHeader.self, forKey: .fileHeader) {
+            self = .fileHeader(v)
+        } else if let v = try? container.decode(FileChunk.self, forKey: .fileChunk) {
+            self = .fileChunk(v)
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No matching case"))
+        }
     }
 }

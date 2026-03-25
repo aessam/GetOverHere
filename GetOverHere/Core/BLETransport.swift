@@ -31,6 +31,7 @@ final class BLETransport: NSObject, TransportProtocol {
     private var centralManager: CBCentralManager!
     private var service: CBMutableService?
     private var writeCharacteristic: CBMutableCharacteristic?
+    private var notifyCharacteristic: CBMutableCharacteristic?
     private var peerNameCharacteristic: CBMutableCharacteristic?
 
     // Peer tracking — keyed by STABLE peer ID (from peer name characteristic)
@@ -93,16 +94,53 @@ final class BLETransport: NSObject, TransportProtocol {
         let encoded = try JSONEncoder().encode(message)
         var payload = Data([DataTag.message.rawValue])
         payload.append(encoded)
-        for peripheral in resolveTargets(peers) {
-            writeChunked(payload, to: peripheral)
+        let targets = resolveTargets(peers)
+        if !targets.isEmpty {
+            for peripheral in targets {
+                writeChunked(payload, to: peripheral)
+            }
         }
+        // Always also notify subscribed centrals (covers the case where
+        // our central connection failed but their central connected to us)
+        notifySubscribers(payload)
     }
 
     func sendAudioData(_ data: Data, to peers: [PeerInfo]) throws {
         var payload = Data([DataTag.audio.rawValue])
         payload.append(data)
-        for peripheral in resolveTargets(peers) {
-            writeDirect(payload, to: peripheral)
+        let targets = resolveTargets(peers)
+        if !targets.isEmpty {
+            for peripheral in targets {
+                writeDirect(payload, to: peripheral)
+            }
+        }
+        // Also notify — this is how audio reaches devices that connected to US
+        notifySubscribers(payload)
+    }
+
+    /// Send data to all centrals subscribed to our notify characteristic.
+    private func notifySubscribers(_ data: Data) {
+        guard let ch = notifyCharacteristic else { return }
+        let maxPayload = 500 // conservative for BLE notifications
+
+        if data.count + 1 <= maxPayload {
+            // Fits in one notification
+            var framed = Data([0x03]) // SINGLE
+            framed.append(data)
+            peripheralManager.updateValue(framed, for: ch, onSubscribedCentrals: nil)
+        } else {
+            // Split with FIRST/CONTINUATION/LAST framing
+            var offset = 0
+            while offset < data.count {
+                let end = min(offset + maxPayload, data.count)
+                let isFirst = offset == 0
+                let isLast = end == data.count
+                let flag: UInt8 = isFirst && isLast ? 0x03 : (isFirst ? 0x01 : (isLast ? 0x02 : 0x00))
+                var chunk = Data([flag])
+                chunk.append(data[offset..<end])
+                peripheralManager.updateValue(chunk, for: ch, onSubscribedCentrals: nil)
+                offset = end
+            }
         }
     }
 
@@ -116,14 +154,23 @@ final class BLETransport: NSObject, TransportProtocol {
 
     private func writeDirect(_ data: Data, to peripheral: CBPeripheral) {
         guard let ch = writeCharacteristics[peripheral] else { return }
+        // Always add CHUNK_FLAG_SINGLE (0x03) — without it, DataTag.audio (0x02)
+        // gets misinterpreted as CHUNK_FLAG_LAST on the receiver.
+        var framed = Data([0x03])
+        framed.append(data)
         let mtu = peripheral.maximumWriteValueLength(for: .withoutResponse)
-        if data.count <= mtu {
-            peripheral.writeValue(data, for: ch, type: .withoutResponse)
+        if framed.count <= mtu {
+            peripheral.writeValue(framed, for: ch, type: .withoutResponse)
         } else {
+            // Split into MTU-sized writes, each with SINGLE flag
+            // (audio chunks are independent, no reassembly needed)
             var offset = 0
-            while offset < data.count {
-                let end = min(offset + mtu, data.count)
-                peripheral.writeValue(data[offset..<end], for: ch, type: .withoutResponse)
+            let payload = data // without the flag we'll add per chunk
+            while offset < payload.count {
+                let end = min(offset + mtu - 1, payload.count)
+                var chunk = Data([0x03])
+                chunk.append(payload[offset..<end])
+                peripheral.writeValue(chunk, for: ch, type: .withoutResponse)
                 offset = end
             }
         }
@@ -153,34 +200,51 @@ final class BLETransport: NSObject, TransportProtocol {
 
     // MARK: - Receive
 
-    private func handleReceivedData(_ data: Data, from peerID: String) {
+    /// Handles raw BLE data. Format: [ChunkFlag][DataTag][payload]
+    /// ChunkFlag: 0x03=single, 0x01=first, 0x00=continuation, 0x02=last
+    private func handleReceivedData(_ rawData: Data, from peerID: String) {
         guard let peer = peersByStableID[peerID] else {
             Logger.transport.warning("Data from unknown peer \(peerID.prefix(8))")
             return
         }
-        guard data.count > 1, let tag = DataTag(rawValue: data[0]) else { return }
+        guard rawData.count >= 2 else { return }
 
-        if tag == .audio {
-            audioContinuation.yield((data.subdata(in: 1..<data.count), peer))
-            return
-        }
+        let firstByte = rawData[0]
 
-        // Message with chunk framing
-        guard data.count > 2 else { return }
-        let flag = data[1]
-        let payload = data.subdata(in: 2..<data.count)
+        // Check if data has chunk framing (first byte is a chunk flag)
+        if firstByte == 0x03 || firstByte == 0x01 || firstByte == 0x02 || firstByte == 0x00 {
+            let innerData = rawData.subdata(in: 1..<rawData.count)
 
-        if flag == 0x03 { // single
-            decodeMessage(payload, from: peer)
-        } else if flag == 0x01 { // first
-            reassemblyBuffers[peerID] = payload
-        } else {
-            reassemblyBuffers[peerID, default: Data()].append(payload)
-            if flag == 0x02 { // last
+            if firstByte == 0x03 { // single — complete message
+                processCompletePacket(innerData, from: peer)
+            } else if firstByte == 0x01 { // first chunk
+                reassemblyBuffers[peerID] = innerData
+            } else if firstByte == 0x00 { // continuation
+                reassemblyBuffers[peerID, default: Data()].append(innerData)
+            } else if firstByte == 0x02 { // last chunk
+                reassemblyBuffers[peerID, default: Data()].append(innerData)
                 if let assembled = reassemblyBuffers.removeValue(forKey: peerID) {
-                    decodeMessage(assembled, from: peer)
+                    processCompletePacket(assembled, from: peer)
                 }
             }
+        } else {
+            // No chunk framing — raw [DataTag][payload]
+            processCompletePacket(rawData, from: peer)
+        }
+    }
+
+    /// Process a fully assembled packet: [DataTag][payload]
+    private func processCompletePacket(_ data: Data, from peer: PeerInfo) {
+        guard data.count > 1, let tag = DataTag(rawValue: data[0]) else {
+            Logger.transport.warning("Bad packet from \(peer.displayName): \(data.count) bytes, first=\(data.first ?? 0)")
+            return
+        }
+        let payload = data.subdata(in: 1..<data.count)
+
+        if tag == .audio {
+            audioContinuation.yield((payload, peer))
+        } else {
+            decodeMessage(payload, from: peer)
         }
     }
 
@@ -272,14 +336,20 @@ extension BLETransport: CBPeripheralManagerDelegate {
             properties: [.write, .writeWithoutResponse],
             value: nil, permissions: [.writeable]
         )
+        let notifyCh = CBMutableCharacteristic(
+            type: BLEConstants.dataNotifyUUID,
+            properties: [.notify],
+            value: nil, permissions: [.readable]
+        )
         let peerNameCh = CBMutableCharacteristic(
             type: BLEConstants.peerNameUUID,
             properties: [.read],
             value: peerNameData, permissions: [.readable]
         )
         let svc = CBMutableService(type: BLEConstants.serviceUUID, primary: true)
-        svc.characteristics = [writeCh, peerNameCh]
+        svc.characteristics = [writeCh, notifyCh, peerNameCh]
         self.writeCharacteristic = writeCh
+        self.notifyCharacteristic = notifyCh
         self.peerNameCharacteristic = peerNameCh
         self.service = svc
         peripheralManager.add(svc)
@@ -352,11 +422,13 @@ extension BLETransport: CBCentralManagerDelegate {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
+            // Scan for ALL peripherals — service UUID filtering can fail cross-platform.
+            // We check the service UUID after connecting during service discovery.
             self.centralManager.scanForPeripherals(
-                withServices: [BLEConstants.serviceUUID],
+                withServices: nil,
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
             )
-            Logger.transport.info("Scanning started")
+            Logger.transport.info("BLE scanning started (no filter)")
         }
     }
 
@@ -366,11 +438,19 @@ extension BLETransport: CBCentralManagerDelegate {
             guard let self else { return }
             let bleID = peripheral.identifier.uuidString
             guard self.bleToStableID[bleID] == nil else { return }
-            // MUST retain the peripheral before connecting — CoreBluetooth
-            // cancels the connection if the CBPeripheral is deallocated.
-            self.peripheralsByStableID[bleID] = peripheral // temporary key until we get stable ID
+
+            // Check if advertisement contains our service UUID
+            let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+            let isOurApp = serviceUUIDs.contains(BLEConstants.serviceUUID)
+
+            if !isOurApp {
+                return // Not our app, skip
+            }
+
+            // Retain and connect
+            self.peripheralsByStableID[bleID] = peripheral
             self.centralManager.connect(peripheral, options: nil)
-            Logger.transport.info("Auto-connecting to \(bleID.prefix(8))")
+            Logger.transport.info("Found our app! Connecting to \(bleID.prefix(8)), services=\(serviceUUIDs)")
         }
     }
 
