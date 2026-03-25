@@ -35,8 +35,8 @@ struct ChannelSidebar: View {
             }
             ToolbarItem(placement: .topBarLeading) {
                 HStack(spacing: 4) {
-                    Circle().fill(coordinator.transport.connectedPeers.isEmpty ? .red : .green).frame(width: 8, height: 8)
-                    Text("\(coordinator.transport.connectedPeers.count)")
+                    Circle().fill(coordinator.coordinator.controlPlane.connectedPeers.isEmpty ? .red : .green).frame(width: 8, height: 8)
+                    Text("\(coordinator.coordinator.controlPlane.connectedPeers.count)")
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
@@ -46,7 +46,7 @@ struct ChannelSidebar: View {
 
     private func channelRow(_ channel: Channel) -> some View {
         HStack {
-            Image(systemName: channel.createdBy == coordinator.transport.localPeer.id
+            Image(systemName: channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id
                 ? "megaphone.fill" : "speaker.wave.2.fill")
                 .foregroundStyle(service.activeChannelID == channel.id ? .blue : .secondary)
                 .frame(width: 24)
@@ -55,7 +55,7 @@ struct ChannelSidebar: View {
                 Text(channel.name)
                     .font(.body.bold())
                     .lineLimit(1)
-                Text(channel.createdBy == coordinator.transport.localPeer.id ? "Your megaphone" : "Live")
+                Text(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "Your megaphone" : "Live")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

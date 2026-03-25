@@ -65,7 +65,7 @@ struct ChannelDetailView: View {
             // Status
             HStack(spacing: 4) {
                 Circle().fill(.green).frame(width: 8, height: 8)
-                Text("D:\(coordinator.transport.discoveredPeers.count) C:\(coordinator.transport.connectedPeers.count)")
+                Text("D:\(0) C:\(coordinator.coordinator.controlPlane.connectedPeers.count)")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -107,7 +107,7 @@ struct ChannelDetailView: View {
                 .font(.headline)
                 .foregroundStyle(.blue)
 
-            Text("by \(channel.createdBy == coordinator.transport.localPeer.id ? "you" : "someone nearby")")
+            Text("by \(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "you" : "someone nearby")")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -116,7 +116,7 @@ struct ChannelDetailView: View {
             // Status
             HStack(spacing: 4) {
                 Circle().fill(.green).frame(width: 8, height: 8)
-                Text("D:\(coordinator.transport.discoveredPeers.count) C:\(coordinator.transport.connectedPeers.count)")
+                Text("D:\(0) C:\(coordinator.coordinator.controlPlane.connectedPeers.count)")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }

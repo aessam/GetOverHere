@@ -5,59 +5,100 @@ import Foundation
 struct PeerInfo: Identifiable, Hashable, Codable, Sendable {
     let id: String
     var displayName: String
+    var platform: Platform
 
-    init(id: String = UUID().uuidString, displayName: String) {
+    enum Platform: String, Codable, Sendable {
+        case ios, android
+    }
+
+    init(id: String = UUID().uuidString, displayName: String, platform: Platform = .ios) {
         self.id = id
         self.displayName = displayName
+        self.platform = platform
     }
 }
 
-// MARK: - Events
+// MARK: - BLE Commands (control plane)
+
+/// All BLE communication uses these typed commands. No raw bytes, no audio.
+enum BLECommand: Codable, Sendable {
+    case channelAnnounce(ChannelAnnounce)
+    case channelEnded(channelID: String)
+    case becomeWiFiHost
+    case wifiCredentials(ssid: String, password: String)
+    case heartbeat(term: Int, leaderID: String)
+    case voteRequest(term: Int, candidateID: String)
+    case voteResponse(term: Int, granted: Bool)
+
+    struct ChannelAnnounce: Codable, Sendable {
+        let channelID: String
+        let channelName: String
+        let createdBy: String
+        var audioQuality: AudioQuality
+        var wifiSSID: String?  // Set once WiFi hotspot is ready
+    }
+}
+
+enum AudioQuality: String, Codable, Sendable, CaseIterable {
+    case standard  // 16kHz mono float32, ~64 KB/s
+    case hd        // 44.1kHz stereo float32, ~353 KB/s — WiFi only
+
+    var sampleRate: Double {
+        switch self {
+        case .standard: 16_000
+        case .hd: 44_100
+        }
+    }
+
+    var channels: Int {
+        switch self {
+        case .standard: 1
+        case .hd: 2
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .standard: "Standard (16kHz mono)"
+        case .hd: "HD (44.1kHz stereo)"
+        }
+    }
+}
+
+// MARK: - Control Plane Protocol (BLE)
+
+/// Lightweight BLE control plane. Discovery, commands, coordination. NO audio.
+protocol ControlPlane: AnyObject {
+    var localPeer: PeerInfo { get }
+    var connectedPeers: [PeerInfo] { get }
+    var commands: AsyncStream<(BLECommand, PeerInfo)> { get }
+    var peerEvents: AsyncStream<PeerEvent> { get }
+
+    func start()
+    func stop()
+    func broadcast(_ command: BLECommand)
+    func send(_ command: BLECommand, to peer: PeerInfo)
+}
 
 enum PeerEvent: Sendable {
     case discovered(PeerInfo)
     case lost(PeerInfo)
     case connected(PeerInfo)
     case disconnected(PeerInfo)
-    case connecting(PeerInfo)
 }
 
-enum FileTransferEvent: Sendable {
-    case receiving(fileName: String, from: PeerInfo)
-    case received(fileName: String, from: PeerInfo, localURL: URL)
-    case failed(fileName: String, from: PeerInfo, errorDescription: String)
-}
+// MARK: - Audio Plane Protocol (Multipeer or WiFi+UDP)
 
-// MARK: - Wire Format
+/// High-bandwidth audio transport. Either MultipeerConnectivity or WiFi+UDP.
+protocol AudioPlane: AnyObject {
+    var isActive: Bool { get }
 
-enum DataTag: UInt8, Sendable {
-    case message = 1
-    case audio = 2
-}
-
-// MARK: - Transport Protocol
-
-/// Abstraction over the peer-to-peer transport layer.
-/// iOS uses Multipeer Connectivity; Android will use Nearby Connections or BLE.
-protocol TransportProtocol: AnyObject {
-    var localPeer: PeerInfo { get }
-    var discoveredPeers: [PeerInfo] { get }
-    var connectedPeers: [PeerInfo] { get }
-
-    var textMessages: AsyncStream<(TransportMessage.TextPayload, PeerInfo)> { get }
-    var controlMessages: AsyncStream<(TransportMessage.WalkieTalkieControl, PeerInfo)> { get }
-    var channelAnnouncements: AsyncStream<(TransportMessage.ChannelAnnounce, PeerInfo)> { get }
-    var fileHeaders: AsyncStream<(TransportMessage.FileHeader, PeerInfo)> { get }
-    var fileChunks: AsyncStream<(TransportMessage.FileChunk, PeerInfo)> { get }
-    var audioData: AsyncStream<(Data, PeerInfo)> { get }
-    var fileTransfers: AsyncStream<FileTransferEvent> { get }
-    var peerEvents: AsyncStream<PeerEvent> { get }
-
-    func start()
+    /// Start sending audio. Called by the channel creator (speaker).
+    func startBroadcasting(channelID: String, quality: AudioQuality)
+    /// Send a chunk of captured audio to all listeners.
+    func sendAudio(_ data: Data)
+    /// Start receiving audio. Called by listeners.
+    func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void)
+    /// Stop everything.
     func stop()
-    func invitePeer(_ peer: PeerInfo)
-    func send(_ message: TransportMessage, to peers: [PeerInfo]) throws
-    func sendAudioData(_ data: Data, to peers: [PeerInfo]) throws
-    @discardableResult
-    func sendFile(at url: URL, named: String, to peer: PeerInfo) -> Progress
 }

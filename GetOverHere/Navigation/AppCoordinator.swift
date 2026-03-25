@@ -3,34 +3,36 @@ import SwiftUI
 
 @Observable
 final class AppCoordinator {
-    let transport: DualTransport
+    let coordinator: NetworkCoordinator
     let channelService: ChannelService
     let audioEngine: AudioEngine
 
     var showCreateChannel = false
     var newChannelName = ""
+    var selectedQuality: AudioQuality = .standard
 
     init(displayName: String) {
-        let transport = DualTransport(displayName: displayName)
+        let coordinator = NetworkCoordinator(displayName: displayName)
         let audioEngine = AudioEngine()
 
-        self.transport = transport
+        self.coordinator = coordinator
         self.audioEngine = audioEngine
-        self.channelService = ChannelService(transport: transport, audioEngine: audioEngine)
+        self.channelService = ChannelService(coordinator: coordinator, audioEngine: audioEngine)
     }
 
     func start() {
-        transport.start()
+        coordinator.start()
         channelService.startListening()
     }
 
     func stop() {
-        transport.stop()
+        coordinator.stop()
     }
 
     func createChannel() {
         let name = newChannelName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+        channelService.audioQuality = selectedQuality
         channelService.createChannel(name: name)
         newChannelName = ""
         showCreateChannel = false
