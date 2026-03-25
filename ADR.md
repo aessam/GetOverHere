@@ -59,3 +59,10 @@
 **Context**: With multiple devices, need to decide who becomes the WiFi host. Can't have everyone creating hotspots.
 **Rationale**: RAFT is well-understood, handles network partitions, and naturally selects one leader. Simplified version: just term numbers + heartbeat, no log replication.
 **Consequences**: Android devices preferred as leaders (can create hotspot). iOS leads only in iOS-only groups.
+
+## ADR-009: Cross-platform channel discovery proven via BLE control plane
+**Date**: 2026-03-24
+**Decision**: BLE control plane architecture works. Android discovers iOS channels via JSON commands over GATT.
+**Evidence**: Log `ChannelService: Discovered megaphone: I tttt` on Android after iOS created channel.
+**Flow proven**: BLE discovery → GATT connect → MTU negotiate → peer info exchange → channel announce broadcast → periodic re-broadcast → channel appears on remote device.
+**Remaining**: iOS→Android direction (iOS central connection unreliable), UDP audio over WiFi hotspot.

@@ -64,3 +64,18 @@
 **Root cause**: Single transport trying to handle both lightweight commands and heavy data. Different reliability requirements, different bandwidth needs.
 **Resolution**: Three-tier architecture — BLE control plane, Multipeer for iOS data, WiFi+UDP for cross-platform data.
 **Decision**: Always separate control plane (lightweight, reliable) from data plane (high bandwidth, can tolerate loss).
+
+## 12. BLE GATT operations are strictly sequential on Android
+**What happened**: Peer info characteristic read issued immediately after CCCD descriptor write. Read silently failed — Android can't run two GATT operations simultaneously.
+**Resolution**: Moved peer info read to `onDescriptorWrite` callback.
+**Decision**: On Android, always chain GATT operations via callbacks. Never issue two operations back-to-back.
+
+## 13. BLE default MTU is 23 bytes — negotiate before sending commands
+**What happened**: JSON BLE commands (heartbeat, channelAnnounce) were truncated to 20 bytes. `{"heartbeat":{"term"` was all that arrived.
+**Resolution**: Request MTU 512 immediately after GATT connection, discover services in `onMtuChanged`.
+**Decision**: Always negotiate MTU before any data transfer on BLE.
+
+## 14. Swift Codable _0 — the gift that keeps giving
+**What happened**: Fixed _0 for TransportMessage but forgot BLECommand. `channelAnnounce(ChannelAnnounce)` had an unnamed parameter → _0 wrapped → Android couldn't parse → channels invisible.
+**Resolution**: Custom Codable for BLECommand. All cases now encode directly.
+**Decision**: EVERY cross-platform enum needs either labeled parameters or custom Codable. Check this at design time, not debug time.
