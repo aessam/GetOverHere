@@ -7,6 +7,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_goh-chat._tcp</string>
+		<string>_goh-audio._tcp</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>GetOverHere needs microphone access for the walkie-talkie feature.</string>
