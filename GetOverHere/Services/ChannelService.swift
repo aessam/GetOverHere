@@ -178,7 +178,7 @@ final class ChannelService {
     private func listenForChannelCommands() {
         listenTasks.append(Task { [weak self] in
             guard let self else { return }
-            for await (command, _) in self.coordinator.controlPlane.commands {
+            for await (command, _) in self.coordinator.channelCommands {
                 switch command {
                 case .channelAnnounce(announce: let announce):
                     guard !self.channels.contains(where: { $0.id == announce.channelID }) else { continue }
@@ -210,7 +210,7 @@ final class ChannelService {
     private func listenForPeerEvents() {
         listenTasks.append(Task { [weak self] in
             guard let self else { return }
-            for await event in self.coordinator.controlPlane.peerEvents {
+            for await event in self.coordinator.channelPeerEvents {
                 if case .connected = event {
                     self.broadcastAllChannels()
                     self.listenerCount = self.coordinator.controlPlane.connectedPeers.count

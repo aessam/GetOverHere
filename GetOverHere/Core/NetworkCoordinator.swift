@@ -24,6 +24,12 @@ final class NetworkCoordinator {
     private(set) var wifiSSID: String?
     private(set) var wifiPassword: String?
 
+    /// Re-published streams for ChannelService (AsyncStream is single-consumer)
+    let channelCommands: AsyncStream<(BLECommand, PeerInfo)>
+    private let channelCommandsCont: AsyncStream<(BLECommand, PeerInfo)>.Continuation
+    let channelPeerEvents: AsyncStream<PeerEvent>
+    private let channelPeerEventsCont: AsyncStream<PeerEvent>.Continuation
+
     private var commandTask: Task<Void, Never>?
     private var peerTask: Task<Void, Never>?
 
@@ -31,6 +37,8 @@ final class NetworkCoordinator {
         self.controlPlane = BLEControlPlane(displayName: displayName)
         self.leaderElection = LeaderElection(controlPlane: controlPlane)
         self.multipeerAudio = MultipeerAudioPlane(displayName: displayName)
+        (channelCommands, channelCommandsCont) = AsyncStream.makeStream()
+        (channelPeerEvents, channelPeerEventsCont) = AsyncStream.makeStream()
     }
 
     func start() {
@@ -88,22 +96,23 @@ final class NetworkCoordinator {
         commandTask = Task { [weak self] in
             guard let self else { return }
             for await (command, peer) in self.controlPlane.commands {
+                // Forward ALL commands to ChannelService
+                self.channelCommandsCont.yield((command, peer))
+
+                // Handle network-level commands here
                 switch command {
                 case .wifiCredentials(let ssid, let password):
                     self.wifiSSID = ssid
                     self.wifiPassword = password
                     Logger.transport.info("WiFi credentials received: \(ssid)")
-                    // WiFi credentials come only from Android — fix their platform tag
                     self.controlPlane.updatePeerPlatform(peerID: peer.id, platform: .android)
-                    // Auto-join the hotspot
                     self.wifiJoiner.join(ssid: ssid, password: password)
 
                 case .becomeWiFiHost:
-                    // Android handles this — iOS can't create hotspot
-                    Logger.transport.info("Received becomeWiFiHost (iOS can't fulfill, ignoring)")
+                    Logger.transport.info("Received becomeWiFiHost (iOS can't fulfill)")
 
                 default:
-                    break // Channel commands handled by ChannelService
+                    break
                 }
             }
         }
@@ -113,6 +122,9 @@ final class NetworkCoordinator {
         peerTask = Task { [weak self] in
             guard let self else { return }
             for await event in self.controlPlane.peerEvents {
+                // Forward to ChannelService
+                self.channelPeerEventsCont.yield(event)
+
                 if case .connected(let peer) = event, peer.platform == .android {
                     // Android just appeared — request WiFi hotspot
                     Logger.transport.info("Android peer detected: \(peer.displayName)")
