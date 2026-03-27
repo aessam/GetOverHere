@@ -93,6 +93,8 @@ final class NetworkCoordinator {
                     self.wifiSSID = ssid
                     self.wifiPassword = password
                     Logger.transport.info("WiFi credentials received: \(ssid)")
+                    // WiFi credentials come only from Android — fix their platform tag
+                    self.controlPlane.updatePeerPlatform(peerID: peer.id, platform: .android)
                     // Auto-join the hotspot
                     self.wifiJoiner.join(ssid: ssid, password: password)
 

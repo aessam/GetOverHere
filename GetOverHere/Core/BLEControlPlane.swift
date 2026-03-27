@@ -108,6 +108,22 @@ final class BLEControlPlane: NSObject, ControlPlane {
         return PeerInfo(id: String(parts[0]), displayName: String(parts[1]), platform: platform)
     }
 
+    /// Update a connected peer's platform (e.g., when WiFi credentials reveal they're Android)
+    func updatePeerPlatform(peerID: String, platform: PeerInfo.Platform) {
+        if let idx = connectedPeers.firstIndex(where: { $0.id == peerID }) {
+            connectedPeers[idx].platform = platform
+            Logger.transport.info("Updated peer platform to \(platform.rawValue)")
+        }
+        for (key, var p) in peerByBLEID where p.id == peerID {
+            p.platform = platform
+            peerByBLEID[key] = p
+        }
+        for (key, var p) in centralPeers where p.id == peerID {
+            p.platform = platform
+            centralPeers[key] = p
+        }
+    }
+
     private func registerPeer(_ peer: PeerInfo, bleID: String) {
         guard peer.id != localPeer.id else { return }
         peerByBLEID[bleID] = peer
