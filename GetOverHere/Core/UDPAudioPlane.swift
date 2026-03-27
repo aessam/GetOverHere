@@ -2,33 +2,36 @@ import Foundation
 import Network
 import os
 
-/// UDP multicast audio transport for cross-platform audio over WiFi hotspot.
-/// Uses Apple's Network framework (NWConnection / NWListener).
+/// UDP broadcast audio transport for cross-platform audio over WiFi hotspot.
+/// Uses broadcast instead of multicast (Android's local-only hotspot doesn't support multicast).
 ///
-/// Multicast group: 239.0.0.1, port: 50000
-/// Packet format: raw float32 PCM audio (no headers — channelID filtering happens at service layer)
+/// Port: 50000
+/// Packet format: raw float32 PCM audio
 @Observable
 final class UDPAudioPlane: AudioPlane {
     private(set) var isActive = false
 
     private var connection: NWConnection?
     private var listener: NWListener?
-    private var group: NWMulticastGroup?
     nonisolated(unsafe) private var onAudioCallback: (@Sendable (Data) -> Void)?
 
-    private let multicastHost = "239.0.0.1"
-    private let multicastPort: UInt16 = 50000
+    private let port: UInt16 = 50000
 
     // MARK: - AudioPlane
 
     func startBroadcasting(channelID: String, quality: AudioQuality) {
-        let host = NWEndpoint.Host(multicastHost)
-        let port = NWEndpoint.Port(rawValue: multicastPort)!
+        // UDP broadcast to 255.255.255.255
+        let host = NWEndpoint.Host("255.255.255.255")
+        let port = NWEndpoint.Port(rawValue: self.port)!
 
-        connection = NWConnection(host: host, port: port, using: .udp)
+        let params = NWParameters.udp
+        params.allowLocalEndpointReuse = true
+        params.requiredInterfaceType = .wifi
+
+        connection = NWConnection(host: host, port: port, using: params)
         connection?.start(queue: .global(qos: .userInteractive))
         isActive = true
-        Logger.audio.info("UDP: broadcasting on \(self.multicastHost):\(self.multicastPort)")
+        Logger.audio.info("UDP: broadcasting on port \(self.port) (broadcast)")
     }
 
     func sendAudio(_ data: Data) {
@@ -44,17 +47,14 @@ final class UDPAudioPlane: AudioPlane {
             params.allowLocalEndpointReuse = true
             params.requiredInterfaceType = .wifi
 
-            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: multicastPort)!)
-            listener?.newConnectionHandler = { [weak self] connection in
-                connection.start(queue: .global(qos: .userInteractive))
-                self?.receiveLoop(connection)
+            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+            listener?.newConnectionHandler = { [weak self] conn in
+                conn.start(queue: .global(qos: .userInteractive))
+                self?.receiveLoop(conn)
             }
             listener?.start(queue: .global(qos: .userInteractive))
             isActive = true
-            Logger.audio.info("UDP: listening on port \(self.multicastPort)")
-
-            // Also set up multicast receive
-            setupMulticastReceive()
+            Logger.audio.info("UDP: listening on port \(self.port) (broadcast)")
         } catch {
             Logger.audio.error("UDP listener failed: \(error.localizedDescription)")
         }
@@ -70,28 +70,15 @@ final class UDPAudioPlane: AudioPlane {
         Logger.audio.info("UDP: stopped")
     }
 
-    // MARK: - Multicast Receive
-
-    private func setupMulticastReceive() {
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
-
-        let host = NWEndpoint.Host(multicastHost)
-        let port = NWEndpoint.Port(rawValue: multicastPort)!
-
-        let conn = NWConnection(host: host, port: port, using: params)
-        conn.start(queue: .global(qos: .userInteractive))
-        self.connection = conn
-        receiveLoop(conn)
-    }
+    // MARK: - Receive
 
     private func receiveLoop(_ connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
             if let data, !data.isEmpty {
                 self?.onAudioCallback?(data)
             }
-            if error == nil {
-                self?.receiveLoop(connection) // Continue receiving
+            if error == nil, self?.isActive == true {
+                self?.receiveLoop(connection)
             }
         }
     }
