@@ -1,18 +1,18 @@
 import Foundation
-import Network
+import Darwin
 import os
 
-/// UDP broadcast audio transport for cross-platform audio over WiFi hotspot.
-/// Uses broadcast instead of multicast (Android's local-only hotspot doesn't support multicast).
+/// UDP broadcast audio transport using BSD sockets (reliable for broadcast).
+/// NWListener doesn't properly handle broadcast datagrams — BSD sockets do.
 ///
-/// Port: 50000
-/// Packet format: raw float32 PCM audio
+/// Port: 50000, Address: 255.255.255.255 (broadcast)
 @Observable
 final class UDPAudioPlane: AudioPlane {
     private(set) var isActive = false
 
-    private var connection: NWConnection?
-    private var listener: NWListener?
+    private var sendSocket: Int32 = -1
+    private var recvSocket: Int32 = -1
+    private var recvTask: Task<Void, Never>?
     nonisolated(unsafe) private var onAudioCallback: (@Sendable (Data) -> Void)?
 
     private let port: UInt16 = 50000
@@ -20,66 +20,89 @@ final class UDPAudioPlane: AudioPlane {
     // MARK: - AudioPlane
 
     func startBroadcasting(channelID: String, quality: AudioQuality) {
-        // UDP broadcast to 255.255.255.255
-        let host = NWEndpoint.Host("255.255.255.255")
-        let port = NWEndpoint.Port(rawValue: self.port)!
-
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
-        params.requiredInterfaceType = .wifi
-
-        connection = NWConnection(host: host, port: port, using: params)
-        connection?.start(queue: .global(qos: .userInteractive))
+        sendSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        guard sendSocket >= 0 else {
+            Logger.audio.error("UDP: failed to create send socket")
+            return
+        }
+        var yes: Int32 = 1
+        setsockopt(sendSocket, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout<Int32>.size))
         isActive = true
-        Logger.audio.info("UDP: broadcasting on port \(self.port) (broadcast)")
+        Logger.audio.info("UDP: broadcasting on port \(self.port) (BSD socket)")
     }
 
     func sendAudio(_ data: Data) {
-        guard let connection, isActive else { return }
-        connection.send(content: data, completion: .idempotent)
+        guard isActive, sendSocket >= 0 else { return }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = INADDR_BROADCAST
+
+        data.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.baseAddress else { return }
+            withUnsafePointer(to: &addr) { addrPtr in
+                addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockAddr in
+                    Darwin.sendto(sendSocket, ptr, data.count, 0, sockAddr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+        }
     }
 
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void) {
         self.onAudioCallback = onAudio
 
-        do {
-            let params = NWParameters.udp
-            params.allowLocalEndpointReuse = true
-            params.requiredInterfaceType = .wifi
+        recvSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        guard recvSocket >= 0 else {
+            Logger.audio.error("UDP: failed to create recv socket")
+            return
+        }
 
-            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
-            listener?.newConnectionHandler = { [weak self] conn in
-                conn.start(queue: .global(qos: .userInteractive))
-                self?.receiveLoop(conn)
+        var yes: Int32 = 1
+        setsockopt(recvSocket, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(recvSocket, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY
+
+        let bindResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                Darwin.bind(recvSocket, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
-            listener?.start(queue: .global(qos: .userInteractive))
-            isActive = true
-            Logger.audio.info("UDP: listening on port \(self.port) (broadcast)")
-        } catch {
-            Logger.audio.error("UDP listener failed: \(error.localizedDescription)")
+        }
+        guard bindResult == 0 else {
+            Logger.audio.error("UDP: bind failed: \(String(cString: strerror(errno)))")
+            return
+        }
+
+        isActive = true
+        Logger.audio.info("UDP: listening on port \(self.port) (BSD socket)")
+
+        // Receive loop on background thread
+        let sock = recvSocket
+        recvTask = Task.detached { [weak self] in
+            var buf = [UInt8](repeating: 0, count: 4096)
+            while !Task.isCancelled {
+                let n = recv(sock, &buf, buf.count, 0)
+                if n > 0 {
+                    let data = Data(buf[0..<n])
+                    self?.onAudioCallback?(data)
+                } else if n < 0 {
+                    if errno == EAGAIN || errno == EINTR { continue }
+                    break
+                }
+            }
         }
     }
 
     func stop() {
-        connection?.cancel()
-        listener?.cancel()
-        connection = nil
-        listener = nil
-        onAudioCallback = nil
         isActive = false
+        recvTask?.cancel()
+        recvTask = nil
+        if sendSocket >= 0 { close(sendSocket); sendSocket = -1 }
+        if recvSocket >= 0 { close(recvSocket); recvSocket = -1 }
+        onAudioCallback = nil
         Logger.audio.info("UDP: stopped")
-    }
-
-    // MARK: - Receive
-
-    private func receiveLoop(_ connection: NWConnection) {
-        connection.receiveMessage { [weak self] data, _, _, error in
-            if let data, !data.isEmpty {
-                self?.onAudioCallback?(data)
-            }
-            if error == nil, self?.isActive == true {
-                self?.receiveLoop(connection)
-            }
-        }
     }
 }
