@@ -20,9 +20,10 @@ final class NetworkCoordinator {
         controlPlane.connectedPeers.contains { $0.platform == .android }
     }
 
-    /// WiFi hotspot SSID (set when Android shares credentials)
+    /// WiFi hotspot info (set when Android shares credentials)
     private(set) var wifiSSID: String?
     private(set) var wifiPassword: String?
+    private(set) var wifiHostIP: String?
 
     /// Re-published streams for ChannelService (AsyncStream is single-consumer)
     let channelCommands: AsyncStream<(BLECommand, PeerInfo)>
@@ -65,8 +66,9 @@ final class NetworkCoordinator {
     /// Called when peers change or when starting a broadcast.
     func selectAudioPlane() -> any AudioPlane {
         if hasAndroidPeers && wifiSSID != nil {
-            // Cross-platform: use UDP over WiFi hotspot
-            Logger.transport.info("Audio plane: UDP (cross-platform WiFi)")
+            // Cross-platform: use TCP over WiFi hotspot
+            udpAudio.hostIP = wifiHostIP
+            Logger.transport.info("Audio plane: TCP (cross-platform WiFi, hostIP=\(self.wifiHostIP ?? "none"))")
             activeAudioPlane = udpAudio
             return udpAudio
         } else {
@@ -101,10 +103,11 @@ final class NetworkCoordinator {
 
                 // Handle network-level commands here
                 switch command {
-                case .wifiCredentials(let ssid, let password):
+                case .wifiCredentials(let ssid, let password, let hostIP):
                     self.wifiSSID = ssid
                     self.wifiPassword = password
-                    Logger.transport.info("WiFi credentials received: \(ssid)")
+                    self.wifiHostIP = hostIP
+                    Logger.transport.info("WiFi credentials received: \(ssid), hostIP: \(hostIP ?? "none")")
                     self.controlPlane.updatePeerPlatform(peerID: peer.id, platform: .android)
                     self.wifiJoiner.join(ssid: ssid, password: password)
 

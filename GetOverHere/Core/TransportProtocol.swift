@@ -28,7 +28,7 @@ enum BLECommand: Sendable {
     case channelAnnounce(announce: ChannelAnnounce)
     case channelEnded(channelID: String)
     case becomeWiFiHost
-    case wifiCredentials(ssid: String, password: String)
+    case wifiCredentials(ssid: String, password: String, hostIP: String?)
     case heartbeat(term: Int, leaderID: String)
     case voteRequest(term: Int, candidateID: String)
     case voteResponse(term: Int, granted: Bool)
@@ -44,7 +44,7 @@ enum BLECommand: Sendable {
 
 // Helper structs for cross-platform JSON (proper types, no string-encoding numbers)
 private struct ChannelEndedPayload: Codable { let channelID: String }
-private struct WiFiCredentialsPayload: Codable { let ssid: String; let password: String }
+private struct WiFiCredentialsPayload: Codable { let ssid: String; let password: String; let hostIP: String? }
 private struct HeartbeatPayload: Codable { let term: Int; let leaderID: String }
 private struct VoteRequestPayload: Codable { let term: Int; let candidateID: String }
 private struct VoteResponsePayload: Codable { let term: Int; let granted: Bool }
@@ -61,7 +61,7 @@ extension BLECommand: Codable {
         case .channelAnnounce(let v): try container.encode(v, forKey: .channelAnnounce)
         case .channelEnded(let id): try container.encode(ChannelEndedPayload(channelID: id), forKey: .channelEnded)
         case .becomeWiFiHost: try container.encode(true, forKey: .becomeWiFiHost)
-        case .wifiCredentials(let s, let p): try container.encode(WiFiCredentialsPayload(ssid: s, password: p), forKey: .wifiCredentials)
+        case .wifiCredentials(let s, let p, let h): try container.encode(WiFiCredentialsPayload(ssid: s, password: p, hostIP: h), forKey: .wifiCredentials)
         case .heartbeat(let t, let l): try container.encode(HeartbeatPayload(term: t, leaderID: l), forKey: .heartbeat)
         case .voteRequest(let t, let c): try container.encode(VoteRequestPayload(term: t, candidateID: c), forKey: .voteRequest)
         case .voteResponse(let t, let g): try container.encode(VoteResponsePayload(term: t, granted: g), forKey: .voteResponse)
@@ -77,7 +77,7 @@ extension BLECommand: Codable {
         } else if (try? container.decode(Bool.self, forKey: .becomeWiFiHost)) != nil {
             self = .becomeWiFiHost
         } else if let v = try? container.decode(WiFiCredentialsPayload.self, forKey: .wifiCredentials) {
-            self = .wifiCredentials(ssid: v.ssid, password: v.password)
+            self = .wifiCredentials(ssid: v.ssid, password: v.password, hostIP: v.hostIP)
         } else if let v = try? container.decode(HeartbeatPayload.self, forKey: .heartbeat) {
             self = .heartbeat(term: v.term, leaderID: v.leaderID)
         } else if let v = try? container.decode(VoteRequestPayload.self, forKey: .voteRequest) {
