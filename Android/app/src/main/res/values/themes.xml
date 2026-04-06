@@ -1,0 +1,4 @@
+<resources>
+    <style name="Base.Theme.ComeOverHere" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <style name="Theme.ComeOverHere" parent="Base.Theme.ComeOverHere" />
+</resources>
