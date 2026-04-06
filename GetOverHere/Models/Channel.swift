@@ -5,6 +5,8 @@ struct Channel: Identifiable, Hashable, Sendable {
     var name: String
     let createdAt: Date
     let createdBy: String
+    /// Speaker's WiFi IP for TCP audio connection (from channelAnnounce).
+    var audioHostIP: String?
 
     static let townsquare = Channel(
         id: "00000000-0000-0000-0000-000000000000",

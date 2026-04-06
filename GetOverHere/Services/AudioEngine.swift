@@ -22,8 +22,9 @@ final class AudioEngine {
 
     /// Noise gate threshold (RMS). Audio below this is suppressed.
     /// Filters out room echo which is quieter than direct speech.
-    /// Range: 0.0 (disabled) to 1.0. Default 0.02 catches most echo.
-    var noiseGateThreshold: Float = 0.005
+    /// Range: 0.0 (disabled) to 1.0.
+    /// Default is disabled to avoid dropping quiet speech during live chat.
+    var noiseGateThreshold: Float = 0
 
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?

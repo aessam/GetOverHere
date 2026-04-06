@@ -17,6 +17,8 @@ final class LeaderElection {
 
     private let controlPlane: any ControlPlane
     private let localPeer: PeerInfo
+    /// Re-published command stream from NetworkCoordinator (AsyncStream is single-consumer)
+    let commands: AsyncStream<(BLECommand, PeerInfo)>
     private var electionTimer: Task<Void, Never>?
     private var heartbeatTimer: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
@@ -26,9 +28,10 @@ final class LeaderElection {
         controlPlane.connectedPeers.contains { $0.platform == .android }
     }
 
-    init(controlPlane: any ControlPlane) {
+    init(controlPlane: any ControlPlane, commands: AsyncStream<(BLECommand, PeerInfo)>) {
         self.controlPlane = controlPlane
         self.localPeer = controlPlane.localPeer
+        self.commands = commands
     }
 
     func start() {
@@ -108,7 +111,7 @@ final class LeaderElection {
     private func listenForCommands() {
         commandTask = Task { [weak self] in
             guard let self else { return }
-            for await (command, peer) in self.controlPlane.commands {
+            for await (command, peer) in self.commands {
                 switch command {
                 case .heartbeat(let term, let leaderID):
                     self.handleHeartbeat(term: term, leaderID: leaderID)

@@ -3,15 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>GetOverHere uses your local network to discover and communicate with nearby devices without WiFi or cellular.</string>
+	<string>GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_goh-chat._tcp</string>
 		<string>_goh-audio._tcp</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>GetOverHere needs microphone access for the walkie-talkie feature.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>GetOverHere uses Bluetooth to discover and communicate with nearby Android and iOS devices.</string>
+	<string>GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.</string>
 </dict>
 </plist>

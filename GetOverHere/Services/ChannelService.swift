@@ -97,6 +97,11 @@ final class ChannelService {
 
         // Select audio plane and start listening
         let plane = coordinator.selectAudioPlane()
+        // For TCP audio: set the speaker's IP before connecting
+        if let tcpPlane = plane as? UDPAudioPlane {
+            tcpPlane.hostIP = channel.audioHostIP
+            Logger.channel.info("TCP audio target: \(tcpPlane.hostIP ?? "nil")")
+        }
         audioEngine.startPlayback()
         plane.startListening(channelID: channel.id) { [weak self] data in
             Task { @MainActor in
@@ -145,12 +150,14 @@ final class ChannelService {
     }
 
     private func broadcastChannelAnnounce(_ channel: Channel) {
+        guard channel.createdBy == coordinator.controlPlane.localPeer.id else { return }
         let announce = BLECommand.ChannelAnnounce(
             channelID: channel.id,
             channelName: channel.name,
             createdBy: channel.createdBy,
             audioQuality: audioQuality,
-            wifiSSID: coordinator.wifiSSID
+            wifiSSID: nil,
+            audioHostIP: channel.audioHostIP
         )
         coordinator.controlPlane.broadcast(.channelAnnounce(announce: announce))
     }
@@ -181,16 +188,29 @@ final class ChannelService {
             for await (command, _) in self.coordinator.channelCommands {
                 switch command {
                 case .channelAnnounce(announce: let announce):
-                    guard !self.channels.contains(where: { $0.id == announce.channelID }) else { continue }
-                    let channel = Channel(
-                        id: announce.channelID,
-                        name: announce.channelName,
-                        createdAt: Date(),
-                        createdBy: announce.createdBy
-                    )
-                    self.channels.append(channel)
-                    Logger.channel.info("Discovered megaphone: \(channel.name)")
+                    if let idx = self.channels.firstIndex(where: { $0.id == announce.channelID }) {
+                        let previousHostIP = self.channels[idx].audioHostIP
+                        self.channels[idx].name = announce.channelName
+                        self.channels[idx].audioHostIP = announce.audioHostIP
+                        Logger.channel.info("Updated megaphone: \(announce.channelName) (audioHostIP=\(announce.audioHostIP ?? "nil"))")
 
+                        if self.activeChannelID == announce.channelID,
+                           self.listenState == .listening,
+                           previousHostIP != announce.audioHostIP,
+                           let updatedChannel = self.channels[safe: idx] {
+                            self.joinChannel(updatedChannel)
+                        }
+                    } else {
+                        let channel = Channel(
+                            id: announce.channelID,
+                            name: announce.channelName,
+                            createdAt: Date(),
+                            createdBy: announce.createdBy,
+                            audioHostIP: announce.audioHostIP
+                        )
+                        self.channels.append(channel)
+                        Logger.channel.info("Discovered megaphone: \(channel.name) (audioHostIP=\(announce.audioHostIP ?? "nil"))")
+                    }
                 case .channelEnded(let channelID):
                     self.channels.removeAll { $0.id == channelID }
                     if self.activeChannelID == channelID {
@@ -220,5 +240,12 @@ final class ChannelService {
                 }
             }
         })
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }

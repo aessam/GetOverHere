@@ -39,6 +39,7 @@ enum BLECommand: Sendable {
         let createdBy: String
         var audioQuality: AudioQuality
         var wifiSSID: String?
+        var audioHostIP: String?
     }
 }
 

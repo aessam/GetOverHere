@@ -19,6 +19,8 @@ final class UDPAudioPlane: AudioPlane {
     private var recvTask: Task<Void, Never>?
     private var acceptTask: Task<Void, Never>?
     nonisolated(unsafe) private var onAudioCallback: (@Sendable (Data) -> Void)?
+    private var sentPacketCount = 0
+    private var receivedPacketCount = 0
 
     /// Set by NetworkCoordinator — the Android hotspot IP for TCP connection
     var hostIP: String?
@@ -28,6 +30,10 @@ final class UDPAudioPlane: AudioPlane {
     // MARK: - Sender (TCP Server)
 
     func startBroadcasting(channelID: String, quality: AudioQuality) {
+        // Close any lingering server socket first
+        if serverFD >= 0 { close(serverFD); serverFD = -1 }
+        acceptTask?.cancel(); acceptTask = nil
+
         serverFD = socket(AF_INET, SOCK_STREAM, 0)
         guard serverFD >= 0 else { Logger.audio.error("TCP: socket failed"); return }
 
@@ -46,6 +52,7 @@ final class UDPAudioPlane: AudioPlane {
 
         listen(serverFD, 10)
         isActive = true
+        sentPacketCount = 0
         Logger.audio.info("TCP: server listening on port \(self.port)")
 
         // Accept loop
@@ -73,6 +80,10 @@ final class UDPAudioPlane: AudioPlane {
             // Length-prefixed: [4 bytes big-endian length][data]
             var len = UInt32(data.count).bigEndian
             let header = Data(bytes: &len, count: 4)
+            self.sentPacketCount += 1
+            if self.sentPacketCount == 1 {
+                Logger.audio.info("TCP: sending first audio packet (\(data.count) bytes) to \(self.connectedClients.count) client(s)")
+            }
             var dead: [Int32] = []
             for fd in self.connectedClients {
                 header.withUnsafeBytes { ptr in
@@ -103,6 +114,7 @@ final class UDPAudioPlane: AudioPlane {
         }
 
         isActive = true
+        receivedPacketCount = 0
         recvTask = Task.detached { [weak self] in
             Logger.audio.info("TCP: connecting to \(host):\(self?.port ?? 0)")
             let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -135,6 +147,13 @@ final class UDPAudioPlane: AudioPlane {
                 guard Self.readExact(fd: fd, buf: &dataBuf, count: len) else { break }
 
                 let data = Data(dataBuf)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.receivedPacketCount += 1
+                    if self.receivedPacketCount == 1 {
+                        Logger.audio.info("TCP: received first audio packet (\(data.count) bytes)")
+                    }
+                }
                 self?.onAudioCallback?(data)
             }
             Logger.audio.info("TCP: disconnected")
