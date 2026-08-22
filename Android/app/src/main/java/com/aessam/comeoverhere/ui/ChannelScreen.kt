@@ -97,6 +97,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     var joinCode by remember { mutableStateOf("") }
     var pendingCreateName by remember { mutableStateOf<String?>(null) }
     var createError by remember { mutableStateOf<String?>(null) }
+    var openAwareLabAfterPermission by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val pickerScope = rememberCoroutineScope()
     val photoPicker = rememberLauncherForActivityResult(
@@ -144,10 +145,12 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     ) { granted ->
         if (granted) {
             pickerError = null
-            onOpenWiFiAwareLab()
+            vm.enableWiFiAware()
+            if (openAwareLabAfterPermission) onOpenWiFiAwareLab()
         } else {
-            pickerError = "Nearby Wi-Fi permission is required only for the Wi-Fi Aware lab"
+            pickerError = "Nearby Wi-Fi permission is required for offline device-to-device tours"
         }
+        openAwareLabAfterPermission = false
     }
     val requestLocalGuidance = {
         if (
@@ -183,9 +186,22 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            openAwareLabAfterPermission = true
             wifiAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
             onOpenWiFiAwareLab()
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            openAwareLabAfterPermission = false
+            wifiAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else {
+            vm.enableWiFiAware()
         }
     }
     val mapPicker = rememberLauncherForActivityResult(

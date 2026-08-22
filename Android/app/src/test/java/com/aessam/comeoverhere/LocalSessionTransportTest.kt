@@ -19,12 +19,17 @@ import com.aessam.toursession.TourVisualMode
 import com.aessam.toursession.VisualFocusSnapshotPayload
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
+import java.net.InetAddress
+import java.net.Socket
+import javax.net.SocketFactory
 
 class LocalSessionTransportTest {
     @Test
@@ -94,6 +99,7 @@ class LocalSessionTransportTest {
         val heartbeatReceived = CountDownLatch(1)
         val disconnected = CountDownLatch(1)
         val failure = AtomicReference<String>()
+        val socketFactory = CountingSocketFactory()
 
         try {
             guide.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
@@ -121,6 +127,7 @@ class LocalSessionTransportTest {
             guide.startGuide()
 
             guest.hostIP = "127.0.0.1"
+            guest.setGuestSocketFactory(socketFactory)
             guest.configureSession(sessionID, guestID, "Guest", ParticipantPlatform.ANDROID, credential)
             guest.setEventHandler { event ->
                 when (event) {
@@ -152,6 +159,7 @@ class LocalSessionTransportTest {
 
             assertTrue("Guest did not authenticate", joined.await(3, TimeUnit.SECONDS))
             assertTrue("Guest did not receive welcome", connected.await(3, TimeUnit.SECONDS))
+            assertEquals(1, socketFactory.createdCount.get())
             val target = TargetSnapshotPayload(
                 4,
                 targetID,
@@ -185,6 +193,7 @@ class LocalSessionTransportTest {
         val guest = LocalSessionControlTransport(50_031)
         val sessionID = UUID.randomUUID()
         val failure = CountDownLatch(1)
+        val disconnected = CountDownLatch(1)
         val message = AtomicReference<String>()
         try {
             guide.configureSession(
@@ -207,11 +216,17 @@ class LocalSessionTransportTest {
                 if (event is SessionControlEvent.Failed) {
                     message.set(event.message)
                     failure.countDown()
+                } else if (event == SessionControlEvent.Disconnected) {
+                    disconnected.countDown()
                 }
             }
             guest.startGuest()
             assertTrue("Wrong code was not rejected", failure.await(3, TimeUnit.SECONDS))
             assertTrue(message.get().contains("guide connection failed"))
+            assertFalse(
+                "A failed authentication must not also emit a stale disconnect",
+                disconnected.await(250, TimeUnit.MILLISECONDS),
+            )
         } finally {
             guest.stop()
             guide.stop()
@@ -303,3 +318,31 @@ class LocalSessionTransportTest {
 
 private fun testCredential(sessionID: UUID): SessionCredential =
     SessionCredential.derive("23456789AB", sessionID)
+
+private class CountingSocketFactory : SocketFactory() {
+    private val delegate = getDefault()
+    val createdCount = AtomicInteger()
+
+    override fun createSocket(): Socket {
+        createdCount.incrementAndGet()
+        return delegate.createSocket()
+    }
+
+    override fun createSocket(host: String, port: Int): Socket = delegate.createSocket(host, port)
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+        localHost: InetAddress,
+        localPort: Int,
+    ): Socket = delegate.createSocket(host, port, localHost, localPort)
+
+    override fun createSocket(host: InetAddress, port: Int): Socket = delegate.createSocket(host, port)
+
+    override fun createSocket(
+        address: InetAddress,
+        port: Int,
+        localAddress: InetAddress,
+        localPort: Int,
+    ): Socket = delegate.createSocket(address, port, localAddress, localPort)
+}

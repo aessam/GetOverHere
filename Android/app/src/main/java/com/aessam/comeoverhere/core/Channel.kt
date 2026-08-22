@@ -5,7 +5,8 @@ data class Channel(
     val name: String,
     val createdAt: Double,  // Swift reference date (seconds since 2001-01-01)
     val createdBy: String,
-    val audioHostIP: String? = null
+    val audioHostIP: String? = null,
+    val hasWiFiAware: Boolean = false,
 ) {
     companion object {
         val TOWNSQUARE = Channel(

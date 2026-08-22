@@ -139,6 +139,7 @@ private class LocalAuthenticatedSessionTransport(
         active.set(true)
         daemonThread("session-control-guide") {
             val socket = guestSocketFactory.createSocket()
+            var authenticated = false
             try {
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 5_000)
@@ -149,6 +150,7 @@ private class LocalAuthenticatedSessionTransport(
                 socket.soTimeout = 5_000
                 val guideID = authenticateGuide(socket, output, configured)
                 socket.soTimeout = 0
+                authenticated = true
                 emit(SessionControlEvent.Connected)
 
                 val input = socket.getInputStream()
@@ -174,7 +176,7 @@ private class LocalAuthenticatedSessionTransport(
                 val wasActive = isRunActive(epoch) && clientSocket === socket
                 clearClient(socket)
                 socket.closeQuietly()
-                if (wasActive) emit(SessionControlEvent.Disconnected)
+                if (wasActive && authenticated) emit(SessionControlEvent.Disconnected)
             }
         }
     }

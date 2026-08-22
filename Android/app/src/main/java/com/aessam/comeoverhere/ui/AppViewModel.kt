@@ -48,6 +48,8 @@ class AppViewModel(
         channelService.createChannel(trimmed)
     }
 
+    fun enableWiFiAware() = channelService.enableWiFiAware()
+
     fun joinChannel(channel: Channel, tourCode: String) = channelService.joinChannel(channel, tourCode)
     fun setListenerOutput(output: ListenerOutput) = channelService.setListenerOutput(output)
     fun leaveChannel() = channelService.leaveChannel()
