@@ -10,25 +10,47 @@ import XCTest
 final class GetOverHereUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration() throws {
+        addUIInterruptionMonitor(withDescription: "Tour permissions") { alert in
+            for title in ["Allow", "OK"] where alert.buttons[title].exists {
+                alert.buttons[title].tap()
+                return true
+            }
+            return false
+        }
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        let addButton = app.buttons["Add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 3))
+        addButton.tap()
+
+        let channelName = app.textFields["e.g., Tour Group, Lecture Hall"]
+        XCTAssertTrue(channelName.waitForExistence(timeout: 2))
+        channelName.tap()
+        channelName.typeText("Alhambra")
+        app.buttons["Create"].tap()
+        app.tap()
+
+        let featurePicker = app.segmentedControls.firstMatch
+        XCTAssertTrue(featurePicker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(featurePicker.buttons["Slides"].exists, app.debugDescription)
+        XCTAssertTrue(featurePicker.buttons["Map"].exists, app.debugDescription)
+        XCTAssertTrue(featurePicker.buttons["Pointer"].exists, app.debugDescription)
+
+        featurePicker.buttons["Map"].tap()
+        XCTAssertTrue(app.staticTexts["No Offline Map"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["Import Offline Map"].exists)
+
+        featurePicker.buttons["Pointer"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Only the selected bearing angle is shared. Device location and guest compass readings stay local."]
+                .waitForExistence(timeout: 2)
+        )
     }
 
     @MainActor

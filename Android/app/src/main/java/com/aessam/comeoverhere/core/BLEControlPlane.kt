@@ -88,7 +88,7 @@ class BLEControlPlane(
         if (_connectedPeers.value.none { it.id == peer.id }) {
             _connectedPeers.value = _connectedPeers.value + peer
             _peerEvents.tryEmit(PeerEvent.Connected(peer))
-            Log.i(TAG, "Connected: ${peer.displayName} (${peer.platform.rawValue})")
+            Log.i(TAG, "BLE peer connected (${peer.platform.rawValue})")
         }
     }
 
@@ -155,7 +155,7 @@ class BLEControlPlane(
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 connectedGattClients[device.address] = device
-                Log.i(TAG, "GATT client connected: ${device.address}")
+                Log.i(TAG, "GATT client connected")
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connectedGattClients.remove(device.address)
                 val peer = peerByAddress.remove(device.address)
@@ -163,7 +163,7 @@ class BLEControlPlane(
                     _connectedPeers.value = _connectedPeers.value.filter { it.id != peer.id }
                     _peerEvents.tryEmit(PeerEvent.Disconnected(peer))
                 }
-                Log.i(TAG, "GATT client disconnected: ${device.address}")
+                Log.i(TAG, "GATT client disconnected")
             }
         }
 
@@ -249,7 +249,7 @@ class BLEControlPlane(
             val serviceUUIDs = result.scanRecord?.serviceUuids ?: return
             if (!serviceUUIDs.contains(ParcelUuid(BLEConstants.SERVICE_UUID))) return
 
-            Log.i(TAG, "Discovered peer: ${address.takeLast(8)}, connecting...")
+            Log.i(TAG, "Discovered BLE peer; connecting")
             connectToPeripheral(device)
         }
 
@@ -285,7 +285,7 @@ class BLEControlPlane(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val address = gatt.device.address
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.i(TAG, "GATT connected to $address, requesting MTU...")
+                Log.i(TAG, "GATT connected; requesting MTU")
                 gatt.requestMtu(512) // discoverServices called in onMtuChanged
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 val peer = peerByAddress.remove(address)
@@ -296,24 +296,24 @@ class BLEControlPlane(
                 gattConnections.remove(address)
                 writeCharByAddress.remove(address)
                 gatt.close()
-                Log.i(TAG, "GATT disconnected from $address, will rescan")
+                Log.i(TAG, "GATT disconnected; will rescan")
                 // Auto-reconnect via scanner picking it up again
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            Log.i(TAG, "MTU negotiated: $mtu for ${gatt.device.address}")
+            Log.i(TAG, "MTU negotiated: $mtu")
             gatt.discoverServices()
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val address = gatt.device.address
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.e(TAG, "Service discovery failed for $address: $status")
+                Log.e(TAG, "Service discovery failed: $status")
                 return
             }
             val service = gatt.getService(BLEConstants.SERVICE_UUID) ?: run {
-                Log.e(TAG, "Service not found on $address")
+                Log.e(TAG, "Service not found")
                 return
             }
 

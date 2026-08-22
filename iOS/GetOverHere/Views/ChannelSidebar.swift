@@ -1,31 +1,37 @@
 import SwiftUI
+import TourSessionCore
 
 struct ChannelSidebar: View {
     @Environment(AppCoordinator.self) private var coordinator
+    @State private var pendingJoinChannel: Channel?
+    @State private var joinCode = ""
+    let onOpenWiFiAwareLab: () -> Void
     private var service: ChannelService { coordinator.channelService }
 
     var body: some View {
-        List(selection: Binding(
-            get: { service.activeChannelID },
-            set: { id in
-                if let id, let ch = service.channels.first(where: { $0.id == id }) {
-                    service.joinChannel(ch)
-                }
-            }
-        )) {
+        List {
             // Available megaphones
             if service.channels.isEmpty {
                 emptyState
             } else {
                 Section("Live Megaphones") {
                     ForEach(service.channels) { channel in
-                        channelRow(channel)
-                            .tag(channel.id)
+                        Button {
+                            guard service.activeChannelID != channel.id else { return }
+                            joinCode = ""
+                            pendingJoinChannel = channel
+                        } label: {
+                            channelRow(channel)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Wi-Fi Aware Lab", systemImage: "antenna.radiowaves.left.and.right", action: onOpenWiFiAwareLab)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     coordinator.showCreateChannel = true
@@ -33,14 +39,38 @@ struct ChannelSidebar: View {
                     Image(systemName: "plus.circle.fill")
                 }
             }
-            ToolbarItem(placement: .topBarLeading) {
-                HStack(spacing: 4) {
-                    Circle().fill(coordinator.coordinator.controlPlane.connectedPeers.isEmpty ? .red : .green).frame(width: 8, height: 8)
-                    Text("\(coordinator.coordinator.controlPlane.connectedPeers.count)")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+        }
+        .sheet(item: $pendingJoinChannel) { channel in
+            NavigationStack {
+                Form {
+                    Section("Tour Code") {
+                        TextField("10-character code", text: $joinCode)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .fontDesign(.monospaced)
+                    }
+                    Section {
+                        Text("Ask the guide for the code shown on their screen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .navigationTitle(channel.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { pendingJoinChannel = nil }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Join") {
+                            service.joinChannel(channel, tourCode: joinCode)
+                            pendingJoinChannel = nil
+                        }
+                        .disabled(SessionCredential.normalize(joinCode).count != SessionCredential.shortCodeLength)
+                    }
                 }
             }
+            .presentationDetents([.medium])
         }
     }
 

@@ -1,9 +1,12 @@
 package com.aessam.comeoverhere.service
 
+import android.content.Context
 import android.media.*
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
+import android.os.Build
 import android.util.Log
+import com.aessam.comeoverhere.core.ListenerOutput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.withContext
@@ -17,7 +20,7 @@ import kotlin.math.sqrt
  *
  * Android AudioRecord supports 16kHz natively — no converter needed (unlike iOS).
  */
-class AudioEngine {
+class AudioEngine(context: Context) {
     @Volatile var isCapturing = false; private set
     @Volatile var isPlaying = false; private set
 
@@ -30,6 +33,9 @@ class AudioEngine {
     private var aec: AcousticEchoCanceler? = null
     private var ns: NoiseSuppressor? = null
     private var emittedPacketCount = 0
+    private val audioManager = context.applicationContext.getSystemService(AudioManager::class.java)
+    private var listenerOutput = ListenerOutput.PRIVATE_AUDIO
+    private var previousAudioMode: Int? = null
 
     companion object {
         private const val TAG = "AudioEngine"
@@ -39,17 +45,25 @@ class AudioEngine {
         const val CAPTURE_ENCODING = AudioFormat.ENCODING_PCM_16BIT
         const val PLAYBACK_ENCODING = AudioFormat.ENCODING_PCM_FLOAT
         const val BUFFER_SIZE_FACTOR = 2
+        private val PRIVATE_DEVICE_TYPES = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+        )
     }
 
     /**
      * Start capturing audio. Returns a Flow of float32 byte arrays (wire format).
      */
     fun startCapture(): Flow<ByteArray> = flow {
+        enterCommunicationMode()
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, CAPTURE_ENCODING)
         val bufferSize = minBuffer * BUFFER_SIZE_FACTOR
 
         val record = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
+            .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setSampleRate(SAMPLE_RATE)
@@ -67,13 +81,13 @@ class AudioEngine {
         if (AcousticEchoCanceler.isAvailable()) {
             aec = AcousticEchoCanceler.create(sessionId)?.also {
                 it.enabled = true
-                Log.i(TAG, "AEC enabled")
+                Log.i(TAG, "AEC enabled=${it.enabled}")
             }
         }
         if (NoiseSuppressor.isAvailable()) {
             ns = NoiseSuppressor.create(sessionId)?.also {
                 it.enabled = true
-                Log.i(TAG, "Noise suppressor enabled")
+                Log.i(TAG, "Noise suppressor enabled=${it.enabled}")
             }
         }
 
@@ -101,7 +115,7 @@ class AudioEngine {
                     }
                     emittedPacketCount += 1
                     if (emittedPacketCount == 1) {
-                        Log.i(TAG, "First capture packet emitted: ${byteBuffer.position()} bytes, rms=$rms")
+                        Log.i(TAG, "First capture packet emitted: ${byteBuffer.position()} bytes")
                     }
                     emit(byteBuffer.array())
                 }
@@ -115,6 +129,7 @@ class AudioEngine {
             aec = null
             ns = null
             isCapturing = false
+            leaveCommunicationMode()
             Log.i(TAG, "Capture stopped")
         }
     }.flowOn(Dispatchers.IO)
@@ -124,11 +139,12 @@ class AudioEngine {
     }
 
     fun startPlayback() {
+        enterCommunicationMode()
         val minBuffer = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, PLAYBACK_ENCODING)
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
@@ -146,7 +162,13 @@ class AudioEngine {
         track.play()
         audioTrack = track
         isPlaying = true
+        applyListenerOutputRoute()
         Log.i(TAG, "Playback started: ${SAMPLE_RATE}Hz mono float32")
+    }
+
+    fun setListenerOutput(output: ListenerOutput) {
+        listenerOutput = output
+        if (isPlaying) applyListenerOutputRoute()
     }
 
     fun enqueuePlayback(data: ByteArray) {
@@ -165,7 +187,50 @@ class AudioEngine {
         audioTrack?.release()
         audioTrack = null
         isPlaying = false
+        leaveCommunicationMode()
         Log.i(TAG, "Playback stopped")
+    }
+
+    private fun enterCommunicationMode() {
+        if (previousAudioMode == null) previousAudioMode = audioManager.mode
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+    }
+
+    private fun leaveCommunicationMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.clearCommunicationDevice()
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = false
+        }
+        previousAudioMode?.let { audioManager.mode = it }
+        previousAudioMode = null
+    }
+
+    private fun applyListenerOutputRoute() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val devices = audioManager.availableCommunicationDevices
+            val target = when (listenerOutput) {
+                ListenerOutput.SPEAKER -> devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                }
+                ListenerOutput.PRIVATE_AUDIO -> devices.firstOrNull {
+                    it.type in PRIVATE_DEVICE_TYPES
+                } ?: devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                }
+            }
+            if (target == null) {
+                Log.e(TAG, "No communication device for ${listenerOutput.name}")
+            } else {
+                val applied = audioManager.setCommunicationDevice(target)
+                Log.i(TAG, "Output route=${listenerOutput.name}, applied=$applied")
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = listenerOutput == ListenerOutput.SPEAKER
+            Log.i(TAG, "Output route=${listenerOutput.name}, legacy=true")
+        }
     }
 
     private fun computeRms(samples: ShortArray, count: Int): Float {

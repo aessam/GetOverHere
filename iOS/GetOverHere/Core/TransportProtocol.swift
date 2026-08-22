@@ -1,4 +1,5 @@
 import Foundation
+import TourSessionCore
 
 // MARK: - Peer Identity
 
@@ -152,5 +153,87 @@ protocol AudioPlane: AnyObject {
     /// Start receiving audio. Called by listeners.
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void)
     /// Stop everything.
+    func stop()
+
+    func configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential
+    )
+    func setSessionEventHandler(_ handler: (@Sendable (AudioSessionEvent) -> Void)?)
+}
+
+enum AudioSessionEvent: Sendable {
+    case joined(ParticipantSession)
+    case disconnected(connectionID: String)
+}
+
+extension AudioPlane {
+    func configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential
+    ) {}
+
+    func setSessionEventHandler(_ handler: (@Sendable (AudioSessionEvent) -> Void)?) {}
+}
+
+// MARK: - Reliable Session Control Transport
+
+enum SessionControlEvent: Sendable {
+    case connected
+    case guestJoined(ParticipantSession)
+    case envelopeReceived(SessionEnvelope)
+    case guestDisconnected(participantID: UUID)
+    case disconnected
+    case failed(String)
+}
+
+protocol SessionControlTransport: AnyObject {
+    var isActive: Bool { get }
+    var hostIP: String? { get set }
+
+    func configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential
+    )
+    func setEventHandler(_ handler: (@Sendable (SessionControlEvent) -> Void)?)
+    func startGuide()
+    func startGuest()
+    func send(kind: SessionMessageKind, payload: Data)
+    func stop()
+}
+
+enum SessionAssetEvent: Sendable {
+    case connected
+    case guestJoined(ParticipantSession)
+    case envelopeReceived(SessionEnvelope)
+    case guestDisconnected(participantID: UUID)
+    case disconnected
+    case failed(String)
+}
+
+protocol SessionAssetTransport: AnyObject {
+    var isActive: Bool { get }
+    var hostIP: String? { get set }
+
+    func configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential
+    )
+    func setEventHandler(_ handler: (@Sendable (SessionAssetEvent) -> Void)?)
+    func startGuide()
+    func startGuest()
+    func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?)
     func stop()
 }

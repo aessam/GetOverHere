@@ -94,12 +94,12 @@ final class LocalControlPlane: NSObject, ControlPlane {
         service.setTXTRecord(txtData)
         service.publish(options: NetService.Options.noAutoRename)
         publishedServices[announce.channelID] = service
-        Logger.transport.info("Published local channel: \(announce.channelName)")
+        Logger.transport.info("Published local channel")
     }
 
     private func unpublishChannel(channelID: String) {
         publishedServices.removeValue(forKey: channelID)?.stop()
-        Logger.transport.info("Unpublished local channel: \(channelID)")
+        Logger.transport.info("Unpublished local channel")
     }
 
     private func registerPeer(_ peer: PeerInfo, channelID: String) {
@@ -121,7 +121,7 @@ final class LocalControlPlane: NSObject, ControlPlane {
         let qualityRaw = txt[TXTKey.audioQuality].flatMap { String(data: $0, encoding: .utf8) } ?? AudioQuality.standard.rawValue
         let peer = PeerInfo(id: createdBy, displayName: creatorName, platform: PeerInfo.Platform(rawValue: platformRaw) ?? .ios)
         registerPeer(peer, channelID: service.name)
-        Logger.transport.info("Resolved local channel: \(channelName) at \(self.ipv4Address(for: service) ?? "nil")")
+        Logger.transport.info("Resolved local channel")
 
         let announce = BLECommand.ChannelAnnounce(
             channelID: service.name,
@@ -156,7 +156,7 @@ final class LocalControlPlane: NSObject, ControlPlane {
 extension LocalControlPlane: NetServiceBrowserDelegate {
     func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         guard publishedServices[service.name] == nil else { return }
-        Logger.transport.info("Found local service: \(service.name) type=\(service.type)")
+        Logger.transport.info("Found local service")
         discoveredServices[service.name] = service
         service.delegate = self
         service.resolve(withTimeout: 5)
@@ -178,6 +178,6 @@ extension LocalControlPlane: NetServiceDelegate {
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String : NSNumber]) {
-        Logger.transport.error("Failed to resolve local service \(sender.name): \(String(describing: errorDict))")
+        Logger.transport.error("Failed to resolve local service")
     }
 }

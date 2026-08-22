@@ -130,7 +130,7 @@ final class BLEControlPlane: NSObject, ControlPlane {
         if !connectedPeers.contains(where: { $0.id == peer.id }) {
             connectedPeers.append(peer)
             peerCont.yield(.connected(peer))
-            Logger.transport.info("Connected: \(peer.displayName) (\(peer.platform.rawValue))")
+            Logger.transport.info("BLE peer connected (\(peer.platform.rawValue))")
         }
     }
 }
@@ -167,7 +167,7 @@ extension BLEControlPlane: CBPeripheralManagerDelegate {
     }
 
     nonisolated func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: (any Error)?) {
-        if let error { Logger.transport.error("GATT service add failed: \(error.localizedDescription)"); return }
+        if error != nil { Logger.transport.error("GATT service add failed"); return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.peripheralManager.startAdvertising([
@@ -195,9 +195,9 @@ extension BLEControlPlane: CBPeripheralManagerDelegate {
                 // Decode and dispatch command
                 if let cmd = self.decodeCommand(data) {
                     self.commandCont.yield((cmd, peer))
-                    Logger.transport.info("BLE cmd received from \(peer.displayName): \(String(data: data, encoding: .utf8)?.prefix(60) ?? "?")")
+                    Logger.transport.info("BLE command decoded (\(data.count) bytes)")
                 } else {
-                    Logger.transport.error("BLE cmd decode FAILED: \(String(data: data, encoding: .utf8)?.prefix(80) ?? "raw \(data.count) bytes")")
+                    Logger.transport.error("BLE command decode failed (\(data.count) bytes)")
                 }
                 self.peripheralManager.respond(to: request, withResult: .success)
             }
@@ -238,7 +238,7 @@ extension BLEControlPlane: CBCentralManagerDelegate {
             guard serviceUUIDs.contains(BLEConstants.serviceUUID) else { return }
             self.peripherals[bleID] = peripheral
             self.centralManager.connect(peripheral, options: nil)
-            Logger.transport.info("Connecting to \(bleID.prefix(8))")
+            Logger.transport.info("Connecting to BLE peer")
         }
     }
 
@@ -314,6 +314,6 @@ extension BLEControlPlane: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: (any Error)?) {
-        if let error { Logger.transport.error("BLE write failed: \(error.localizedDescription)") }
+        if error != nil { Logger.transport.error("BLE write failed") }
     }
 }

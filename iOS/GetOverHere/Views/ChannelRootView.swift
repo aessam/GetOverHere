@@ -2,17 +2,33 @@ import SwiftUI
 
 struct ChannelRootView: View {
     @Environment(AppCoordinator.self) private var coordinator
+    @State private var showWiFiAwareLab = false
+    @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
 
     var body: some View {
         @Bindable var coord = coordinator
-        NavigationSplitView {
-            ChannelSidebar()
+        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+            ChannelSidebar(onOpenWiFiAwareLab: { showWiFiAwareLab = true })
                 .navigationTitle("Megaphone")
         } detail: {
             ChannelDetailView()
         }
+        .onChange(of: coordinator.channelService.activeChannelID) { _, activeChannelID in
+            preferredCompactColumn = activeChannelID == nil ? .sidebar : .detail
+        }
         .sheet(isPresented: $coord.showCreateChannel) {
             CreateChannelSheet()
+        }
+        .sheet(isPresented: $showWiFiAwareLab) {
+            if #available(iOS 26.4, *) {
+                WiFiAwareLabView()
+            } else {
+                ContentUnavailableView(
+                    "Wi-Fi Aware Unavailable",
+                    systemImage: "wifi.slash",
+                    description: Text("The experimental lab requires iOS 26.4 or later.")
+                )
+            }
         }
     }
 }
@@ -27,25 +43,6 @@ struct CreateChannelSheet: View {
             Form {
                 Section("Channel Name") {
                     TextField("e.g., Tour Group, Lecture Hall", text: $coord.newChannelName)
-                }
-
-                Section("Audio Quality") {
-                    Picker("Quality", selection: $coord.selectedQuality) {
-                        ForEach(AudioQuality.allCases, id: \.self) { quality in
-                            Text(quality.label).tag(quality)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if coordinator.selectedQuality == .hd {
-                        Label {
-                            Text("HD requires WiFi. May not work over Bluetooth-only connections.")
-                                .font(.caption)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                        }
-                    }
                 }
 
                 Section {

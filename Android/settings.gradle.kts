@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "ComeOverHere"
 include(":app")
+include(":tour-session-core")
+include(":tour-session-cli")

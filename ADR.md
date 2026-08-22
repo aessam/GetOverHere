@@ -102,3 +102,122 @@
 **Context**: Projects were in separate repositories. Cross-platform protocol changes required syncing two repos.
 **Rationale**: Single repo ensures protocol changes (BLECommand JSON format, channelAnnounce fields) are atomic. Shared docs (ADR, LessonsLearned) live at root.
 **Consequences**: Larger repo. Android and iOS developers both see the whole project.
+
+## ADR-015: Native Wi-Fi Aware as an isolated cross-platform experiment
+**Date**: 2026-08-21
+**Status**: Experimental. Do not replace the active tour transport until physical Android-to-iOS gates pass.
+**Decision**: Implement a native Wi-Fi Aware publisher/subscriber lab on both platforms behind a separate UI. Use `_goh-probe._udp`, authenticated platform pairing, a NAN data path, and a shared 28-byte binary frame header. Exercise the path with deterministic 45-byte payloads every 20 ms, representing an 18 kb/s Opus payload rate.
+**Context**: The selected option was direct native Wi-Fi Aware rather than a portable access point. Current vendor documentation does not prove Android-to-iOS interoperability on the target devices, so production integration before a physical result would hide the key risk.
+**Options**: (a) Replace production networking immediately, (b) isolated physical-device lab, (c) portable access point architecture.
+**Rationale**: The lab measures discovery, pairing, NDP establishment, loss, malformed frames, and p95 round-trip time without coupling an unproven transport to channel/audio state.
+**Consequences**: The iOS lab requires iOS 26.4 at runtime and the Wi-Fi Aware entitlement and service declaration, while the production target remains iOS 17. Android requires `NEARBY_WIFI_DEVICES` only when entering the lab. The app transport remains unchanged. A provisioning profile containing `com.apple.developer.wifi-aware` and a successful mixed-device probe are required before promotion.
+
+## ADR-016: Private listener output is the default anti-feedback mode
+**Date**: 2026-08-21
+**Status**: Accepted; physical echo A/B pending.
+**Decision**: Route listener audio to the earpiece or a connected headset by default. Provide an explicit Speaker override with a feedback warning. Use voice-communication capture processing where the active route supports it.
+**Context**: A nearby listener loudspeaker plays delayed guide audio back into the guide microphone. The guide then rebroadcasts it, producing an audible echo even though the transport sends each audio frame once. Platform AEC is designed around a device's own playback reference and cannot reliably cancel arbitrary neighboring phones.
+**Rationale**: Preventing the delayed signal from reaching the guide microphone is simpler and more reliable than adding custom adaptive echo cancellation. The speaker override preserves flexibility when devices are separated.
+**Consequences**: Guests normally listen through the receiver or headphones. Loudspeaker mode remains available but is explicitly identified as echo-prone near the guide. Custom WebRTC AEC remains out of scope unless physical testing shows private output is insufficient.
+
+## ADR-017: GOH2 transport-neutral session protocol
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Use a deterministic binary GOH2 envelope shared by a local Swift package and a pure Kotlin/JVM module. Every frame declares its protocol version, lane, message kind, sequence, session ID, sender ID, and payload length. Realtime audio, reliable control state, and slide assets are separate protocol lanes. Presentation and bearing changes are authoritative versioned snapshots; slide data is content-addressed by SHA-256 and transferred as manifests and resumable chunks.
+**Context**: The legacy app mixed discovery state with session state and had no cross-platform contract for slides, direction pointers, reconnect, or participant identity. Adding each feature directly to platform transports would duplicate state logic and make wire drift likely.
+**Options**: (a) extend the legacy JSON/BLE commands, (b) define platform-specific protocols, (c) establish one transport-neutral binary session core.
+**Rationale**: Deterministic manual encoding permits exact Swift/Kotlin byte comparisons on the development machine. Lane validation prevents asset data from entering the realtime path. Stable participant IDs allow reconnect replacement and correct counts.
+**Consequences**: Both mobile apps depend on the shared session cores. Any wire change requires equivalent Swift/Kotlin roundtrip tests and an intentional protocol-version decision. Per-tour authentication is defined separately by ADR-023.
+
+## ADR-018: Listener count comes from validated session membership
+**Date**: 2026-08-21
+**Status**: Accepted for local-LAN transport; Wi-Fi Aware physical validation pending.
+**Decision**: Count live guest sessions after a valid GOH2 hello on the data connection. Do not derive listeners from Bonjour/NSD discovery peers or raw socket count. A new connection with the same participant ID replaces and closes the previous connection.
+**Context**: Android could stream to an iPhone while displaying zero listeners because the UI counted control-plane discovery peers. Duplicate TCP connections could also overcount or deliver duplicate audio.
+**Rationale**: The guide can only claim a listener after that guest joins the actual channel transport. Stable identity handles reconnects without inflation, and socket close removes the participant.
+**Consequences**: Legacy builds without an authenticated GOH2 hello no longer interoperate with updated builds. Participant admission follows ADR-023.
+
+## ADR-019: Independent reliable control and asset channels
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Keep audio, authoritative session control, and tour-pack assets on three independent framed sockets. Control uses port 50001. Assets use port 50002 and a request-driven 64 KiB chunk protocol. Every socket performs the same GOH2 hello/welcome handshake and binds later frames to the authenticated participant ID. Asset requests are targeted per guest; completed content is stored by lowercase SHA-256 only after length and checksum verification.
+**Context**: Slides, offline map archives, presentation state, and dropped pins have different latency and reliability requirements. Sending a large map or image through the audio or control FIFO would create head-of-line stalls. Blindly enqueueing a whole file would also allow one slow guest to consume unbounded memory.
+**Options**: (a) one reliable socket for everything, (b) audio plus one shared control/asset socket, (c) three independent traffic classes.
+**Rationale**: The third socket is a small present cost and prevents asset traffic from delaying speech or guide commands. One request per chunk provides natural backpressure, restart-safe offsets, bounded memory, and per-guest progress without adding another acknowledgement format.
+**Consequences**: The app maintains three connections per guest. Tour-pack manifests, asset requests, chunks, and readiness statuses require exact Swift/Kotlin wire tests. A guest is presentation-ready only after every unique hash in the current manifest reports verified readiness.
+
+## ADR-020: Offline tour map with shared target only
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Render an operator-imported PMTiles archive locally with MapLibre. The guide may place one target pin and transmit only that target's latitude, longitude, label, version, and visibility. Each phone may use its own position and heading locally to render itself, distance, and direction, but those values are not protocol fields and never leave the device.
+**Context**: The guide needs to point guests toward a landmark without Internet access or sharing any participant's location. A live map service would violate the offline requirement, while sending participant positions would violate the product privacy rule.
+**Options**: (a) online map and shared positions, (b) offline map with all positions shared, (c) offline map with one shared target and device-local guidance.
+**Rationale**: A preloaded regional archive works without Internet. Encoding only `TargetSnapshotPayload` makes the privacy boundary executable and testable. A guest can still see the target without granting location permission; permission adds only local distance and direction.
+**Consequences**: The operator must import a suitable `.pmtiles` region pack before the tour. Map styles reject remote resources. Map archives use the reliable asset lane and content-addressed cache. No device location, location history, accuracy, or derived movement may be added to the wire protocol without replacing this ADR.
+
+## ADR-021: Magnetic pointer uses local headings
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: The guide transmits only a state version, magnetic reference, selected bearing angle, and visibility state. Each guest subtracts its own locally sampled magnetic heading to rotate the pointer. Guide and guest heading samples, accuracy, and sampling timestamps remain local.
+**Context**: A landmark pointer must work offline and should not require participant locations. True-north conversion would introduce location dependency without improving the current directional-assistance requirement.
+**Rationale**: Magnetic-relative guidance is consistent for a co-located tour group and keeps the wire payload small. Sensor accuracy is exposed in the UI so the app can avoid implying precision near magnetic interference.
+**Consequences**: The pointer is directional assistance, not surveying or AR anchoring. It may be hidden when heading data is invalid. Device heading and location remain outside the protocol.
+
+## ADR-022: Platform audio lifecycle with no Google Nearby runtime
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Declare the iOS audio background mode and keep Android guide capture or guest playback inside a typed foreground service. Remove the unused Google Nearby Connections dependency from the Android runtime graph.
+**Context**: Tour audio must continue when the screen locks. The working cross-platform path uses local IP; retaining an unused Nearby dependency adds Play Services availability and telemetry exposure without serving the active transport.
+**Rationale**: Background audio is a legitimate core product behavior on both platforms. Native lifecycle mechanisms make it explicit to the OS and user. Removing Nearby keeps the shipping path local and dependency-minimal.
+**Consequences**: Android shows an ongoing tour-audio notification while broadcasting or listening. The iOS app contains `UIBackgroundModes = audio` and a privacy manifest declaring no tracking or collected data. Wi-Fi Aware remains an isolated lab, not the production session transport.
+
+## ADR-023: Per-tour mutual authentication on every session lane
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Generate a random 10-character unambiguous tour code when the guide creates a session. Derive a session-bound key with HMAC-SHA256, then perform a fresh nonce-based mutual proof before admitting a guest on realtime, control, or asset sockets. Bind each proof to the session, guide, participant, requested lane, role, platform, capabilities, and display name as applicable. Compare proofs without early exit.
+**Context**: Bonjour/NSD discovery proves reachability, not permission to join. A nearby stranger must not receive audio, content, or state merely because the session is discoverable.
+**Options**: (a) trust discovery proximity, (b) approve each guest manually, (c) use a per-tour short code with challenge-response authentication.
+**Rationale**: One code scales to a tour group without guide-side approval taps. Nonces prevent replay, lane binding prevents proof reuse across sockets, and deterministic Swift/Kotlin fixtures prove both implementations derive identical results.
+**Consequences**: The code is displayed to the guide and entered by guests. Credentials exist only for the active session and are cleared when it ends; they are not persisted to preferences. The handshake authenticates admission but does not itself encrypt application payloads.
+
+## ADR-024: PMTiles v3 is the accepted offline archive
+**Date**: 2026-08-21
+**Status**: Accepted for local raster and vector sources.
+**Decision**: Accept only a complete PMTiles v3 archive plus a MapLibre style version 8 document with exactly one `getoverhere://map-archive` source. Resolve that source to an app-owned `pmtiles://file:///...` URL, reject network glyph, sprite, source, and tile resources, and validate all header sections before rendering.
+**Context**: A magic-prefix-only fixture proved nothing about archive structure or renderer support. Android also requires the documented three-slash local file URL; Java `File.toURI()` produces a one-slash form when interpolated directly.
+**Rationale**: PMTiles provides a single content-addressable regional file with byte-range access and native MapLibre support on both platforms. Complete archive validation fails before the renderer sees malformed offsets or unsupported metadata.
+**Consequences**: The test suite contains a complete one-tile PMTiles v3 archive, validates rejection cases, and renders it through MapLibre. Operator map packs must keep every referenced resource local; remote resource fallback is a hard error.
+
+## ADR-025: Runtime permissions are requested at the feature boundary
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Start local-LAN discovery without requesting microphone, location, or Wi-Fi Aware access. Request microphone access only when a user creates a guide session, location only when map guidance is opened, and `NEARBY_WIFI_DEVICES` only when the experimental Wi-Fi Aware lab is opened. Disable Android application backup.
+**Context**: The Android app previously requested microphone and Wi-Fi Aware permissions at launch from every participant, including guests who never transmit audio or use the lab. Its default backup configuration also permitted app-owned tour content to leave the device through platform backup.
+**Rationale**: A permission prompt should correspond to the action the user just selected. Guests need no microphone access, and local tour assets are reproducible operator content that should not enter cloud backup.
+**Consequences**: Denial is shown as an explicit feature error. The core local-LAN session starts without dangerous runtime permissions; only active feature roles request their required access.
+
+## ADR-026: Android tour runtime is application-owned
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Own `NetworkCoordinator`, `ChannelService`, audio, content, guidance, and application coroutine lifetime in `ComeOverHereApp`. Activities obtain the existing runtime and never end a tour from `onDestroy()`.
+**Context**: Android destroys and recreates `MainActivity` for configuration changes. Activity ownership made rotation terminate the guide or guest session even though the process and foreground audio service remained valid.
+**Options**: (a) disable Activity recreation, (b) retain selected objects manually, (c) make the process-level application own the tour runtime.
+**Rationale**: A tour session outlives a screen instance. Application ownership matches the foreground service and socket lifetime without hiding normal Android lifecycle events.
+**Consequences**: Explicit user actions end sessions. Activity recreation only replaces UI state collection. A connected-device instrumentation test must continue proving that the same `ChannelService` survives `ActivityScenario.recreate()`.
+
+## ADR-027: Experimental transports do not raise the production OS baseline
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Support iOS 17 and later for the production app and `TourSessionCore`. Isolate Wi-Fi Aware types and UI behind iOS 26.4 availability checks.
+**Context**: Adding the Wi-Fi Aware lab initially changed the entire app and local package deployment target to iOS 26.4, excluding otherwise compatible phones from the working local-LAN product.
+**Rationale**: The shipping audio, presentation, map, and pointer features use APIs available on iOS 17. An optional experiment must not dictate the minimum OS for unrelated production behavior.
+**Consequences**: Older supported devices receive an explicit lab-unavailable screen while retaining the complete local-LAN tour experience. The reusable verifier rejects deployment-target drift from iOS 17.
+
+## ADR-028: Guide-selected shared screen is explicit session state
+**Date**: 2026-08-21
+**Status**: Accepted.
+**Decision**: Add the versioned GOH2 `visualFocusSnapshot` control message in protocol 2.1. Its three values select Slides, Map, or Pointer. The guide publishes it when changing tools, and each late join or reconnect receives it after the presentation, target, and bearing snapshots so the final foreground choice is deterministic.
+**Context**: Target and bearing snapshots reached guests correctly, but a previously visible slide remained in front because the UI inferred visual priority independently on each platform. That made Map and Pointer appear unsent and produced different results for live changes and late joins.
+**Options**: (a) keep slide-first UI inference, (b) infer priority from whichever payload arrived last, (c) transmit the guide's selected screen explicitly.
+**Rationale**: Screen selection is product state, not transport arrival order. A nine-byte versioned payload is smaller and more deterministic than duplicating precedence rules in SwiftUI and Compose.
+**Consequences**: Guests may still browse locally until the next guide change. Existing slide, target, and bearing values remain intact when another tool is foregrounded. Swift and Kotlin exact-byte, stale-state, socket, late-join, and UI tests cover the new message.

@@ -76,3 +76,106 @@
 **What happened**: iOS dev agent created new files but didn't delete old ones. Build broke from conflicting types.
 **Resolution**: Explicitly list files to delete in task descriptions. Verify build after agent completes.
 **Decision**: When using team agents, always verify build. Agents create but rarely clean up.
+
+## 15. Wi-Fi Aware source support and signing support are separate gates
+**What happened**: The iOS 27 SDK compiled the Wi-Fi Aware implementation, but the existing team provisioning profile did not contain `com.apple.developer.wifi-aware`. Xcode could not refresh it because the selected Xcode installation had no developer account configured.
+**Resolution**: Keep unsigned device compilation and wire tests as source gates. Treat a refreshed entitlement-bearing profile as a required physical-device gate.
+**Decision**: Check capability provisioning before scheduling any Wi-Fi Aware field test. A successful compile does not prove an installable build.
+
+## 16. Runtime radio limits must be measured per device
+**What happened**: The connected Pixel 11 Pro reports 8 maximum NAN data paths, 8 publish sessions, and 8 subscribe sessions. These are hardware/firmware values, not universal Android limits.
+**Decision**: Record `Characteristics` and `AwareResources` for every test device. Never turn one phone's NDP count into a supported group-size claim.
+
+## 17. One-way megaphone feedback is not duplicate network delivery
+**What happened**: Cross-platform speech was crisp but echoed when the guide and listener phones were near each other. Inspection confirmed one-way capture and one transport write per listener. The listener loudspeaker was acoustically feeding delayed audio into the guide microphone.
+**Resolution**: Make receiver/headset playback the listener default, retain a warned speaker override, and enable supported voice-communication preprocessing on guide capture.
+**Decision**: Treat output routing as the first anti-feedback control. Do not assume same-device AEC can cancel playback from neighboring guest phones.
+
+## 18. Discovery peers are not listeners
+**What happened**: The guide streamed audio to a guest while the UI showed zero listeners. `listenerCount` read Bonjour/NSD control-plane peers, which describe discovered publishers, not guests attached to the guide's audio server.
+**Resolution**: Add a GOH2 hello to the actual session connection and maintain a participant registry keyed by stable participant ID. Disconnect by connection ID, and replace an older connection when the same participant reconnects.
+**Decision**: Product membership and counts must come from the product session, never from discovery or socket totals.
+
+## 19. Cross-platform protocol changes need executable byte equality
+**What happened**: Existing Swift Codable and hand-built Kotlin JSON had already drifted in earlier work. Semantic roundtrip tests on each platform would not detect different encodings.
+**Resolution**: Create shared Swift and Kotlin session cores, deterministic binary fixtures, CLIs, and `scripts/verify_tour_session.sh`. The gate compares exact bytes in both directions and exercises 1/8/20/50 participant churn plus loss, duplicate, and reorder accounting.
+**Decision**: A wire-format change is incomplete until Swift and Kotlin emit identical bytes and decode each other's output.
+
+## 20. Discovery diagnostics do not belong in the tour flow
+**What happened**: Both apps exposed peer counters that looked like listener status, and both creation screens exposed an audio-quality choice that was not actionable for the tour guide.
+**Resolution**: Remove discovery counters and quality selection from the product flow. Keep radio diagnostics in the explicit Wi-Fi Aware lab and use the standard audio profile by default.
+**Decision**: Product UI reports session state only. Transport diagnostics stay behind diagnostic surfaces.
+
+## 21. Reliable does not mean one FIFO
+**What happened**: Slides and offline maps require reliable transfer, but placing them beside audio or guide commands would let a large asset delay time-sensitive data. Enqueueing every chunk at once would also create a large per-guest memory backlog.
+**Resolution**: Use independent authenticated sockets for control and assets. The guest requests exactly one 64 KiB chunk at its persisted offset, verifies and writes it, then requests the next chunk. Final readiness is sent only after SHA-256 verification.
+**Decision**: Separate traffic by latency class. Reliable asset transfer must be bounded, resumable, content-addressed, and backpressured by the receiver.
+
+## 22. Privacy constraints belong in the wire schema
+**What happened**: The map needs a local user position for useful guidance, but the product permits sharing only the guide-selected target pin.
+**Resolution**: Keep device position, heading, accuracy, history, and movement inside platform guidance services. The only coordinate-bearing network message is the versioned target snapshot. Add exact cross-platform fixtures and source checks around that contract.
+**Decision**: Do not rely on UI copy or convention to protect location data. If a value must not leave the device, omit it from every transport payload.
+
+## 23. AVAudioEngine can abort the simulator before Swift handles an error
+**What happened**: The Xcode beta simulator aborted inside `AURemoteIO::Initialize` while `AVAudioEngine.inputNode` initialized. The process terminated before `engine.start()` could throw, so the navigation UI test crashed even though it was not testing audio.
+**Resolution**: Make simulator capture and playback explicit unsupported paths that log and return without touching `AVAudioEngine`. Keep audio proof on physical devices.
+**Decision**: Simulator UI tests may validate navigation and state, not microphone or speaker behavior. A crash below the throwable API boundary needs a compile-time environment guard.
+
+## 24. Xcode cloned simulators are not a stable test destination
+**What happened**: Xcode beta intermittently failed a cloned test device with `NSPOSIXErrorDomain Code 3`; the test never executed.
+**Resolution**: Run final tests against the explicitly booted simulator UUID with `-parallel-testing-enabled NO` and fresh DerivedData.
+**Decision**: Treat clone-launch failures as infrastructure failures only after the same test passes on a named booted simulator.
+
+## 25. Background audio needs an explicit platform lifecycle
+**What happened**: Working foreground audio did not prove that a guide or guest could lock the phone during a tour.
+**Resolution**: Add iOS audio background mode and an Android foreground service whose type matches guide microphone capture or guest media playback. Start and stop it from authoritative listen state.
+**Decision**: Transport sockets do not grant background execution. Model the ongoing audio role using each platform's supported lifecycle mechanism.
+
+## 26. A file signature is not a valid archive fixture
+**What happened**: Early offline-map tests used only the nine-byte PMTiles magic/version prefix. The validator passed data that no renderer could use.
+**Root cause**: The test asserted identification, not structure or rendering.
+**Resolution**: Validate the complete 127-byte v3 header, section bounds, counts, compression, tile type, and zoom range. Replace the prefix fixture with a complete one-tile archive and render it through MapLibre.
+**Decision**: Binary-container tests must include one complete minimal container and a renderer or parser roundtrip. Magic-byte tests cover rejection only.
+
+## 27. Java `File.toURI()` is not a MapLibre PMTiles URL
+**What happened**: Android generated `pmtiles://file:/data/...`; the physical MapLibre snapshot never completed. MapLibre requires `pmtiles://file:///data/...` for local byte-range reads.
+**Root cause**: Direct interpolation of `File.toURI()` preserved Java's one-slash `file:/...` spelling under the additional `pmtiles://` prefix.
+**Resolution**: Build `pmtiles://file://` plus the percent-encoded absolute URI path. Add an exact URL assertion and a physical Pixel snapshot test that verifies the rendered tile color.
+**Decision**: Validate nested/protocol-prefixed URLs as exact strings against the consumer's documented grammar; URI objects that are valid alone may be invalid after prefixing.
+
+## 28. Sensor metadata is not presentation state
+**What happened**: The first bearing snapshot included guide compass accuracy and sampling time even though the product allows only the selected bearing to cross the wire.
+**Root cause**: Local UI diagnostics were modeled beside the authoritative shared value and then serialized together.
+**Resolution**: Reduce the bearing payload to 14 bytes: state version, magnetic reference, selected angle, and visibility. Keep accuracy and timestamps in platform guidance services and scan shared modules for their field names in the verification gate.
+**Decision**: Shared state contains only what another device needs to reproduce the product action. Diagnostics stay local unless the product explicitly requires them.
+
+## 29. A loading state must not hide a permanent sensor failure
+**What happened**: A missing or unreliable compass left the pointer UI saying “Reading compass…” indefinitely because both conditions produced a nil heading.
+**Resolution**: Preserve an explicit unavailable/unreliable sensor state and render it separately from initial acquisition. Poor but usable accuracy remains visible as a warning.
+**Decision**: Every asynchronous hardware state needs distinct acquiring, ready, degraded, and unavailable representations when those states require different user action.
+
+## 30. Role permissions belong at the action that needs them
+**What happened**: Android requested microphone and Wi-Fi Aware access during application launch, even for guests who only listen over the local LAN.
+**Resolution**: Start LAN discovery immediately, request microphone access only when creating a megaphone, location only for local map guidance, and nearby Wi-Fi only for the isolated lab. Disable Android cloud backup for tour data.
+**Decision**: Do not aggregate optional role permissions into a launch gate.
+
+## 31. An Activity is not a session lifetime
+**What happened**: Rotating or recreating Android `MainActivity` called its teardown path and ended the active tour because networking and audio state were Activity-owned.
+**Resolution**: Move the runtime graph and its coroutine scope to `ComeOverHereApp`; make the Activity a UI client of that stable process-level state. Add a physical `ActivityScenario.recreate()` test.
+**Decision**: Long-running product sessions belong to the application or a service, never to a replaceable screen instance.
+
+## 32. An experimental API must not set the product compatibility floor
+**What happened**: The isolated iOS Wi-Fi Aware lab raised both the app and session package minimum from iOS 17 to iOS 26.4.
+**Resolution**: Mark lab-only types as iOS 26.4, guard their UI entry, restore the app and package to iOS 17, and enforce the baseline in the full verifier.
+**Decision**: Optional capability checks belong around the optional feature; production compatibility is set by production requirements.
+
+## 33. Active state does not navigate a compact split view automatically
+**What happened**: Creating a tour updated `activeChannelID`, but iPhone stayed on the channel list because `NavigationSplitView` had no compact-column binding.
+**Resolution**: Bind `preferredCompactColumn` to the active session: detail while a guide or guest session is active, sidebar after leaving.
+**Decision**: On compact layouts, test the state-to-navigation transition directly; updating the detail model is not navigation.
+
+## 34. Payload delivery does not define which screen is visible
+**What happened**: Slides arrived and rendered, while target and bearing payloads also arrived but stayed hidden behind the visible slide. The UI had an inferred slide-first priority rule and the protocol had no authoritative foreground selection.
+**Root cause**: Shared content state and shared screen state were treated as the same concern. Live payload order and late-join snapshot order could therefore produce different visible results.
+**Resolution**: Add a versioned Slides/Map/Pointer shared-screen snapshot, apply it on both guests, and send it last during late-join restoration. Keep the content snapshots independent.
+**Decision**: If a remote action changes what another device should display, transmit that choice as explicit recoverable state rather than reconstructing it from event order.

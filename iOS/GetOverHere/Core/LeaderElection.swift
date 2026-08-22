@@ -144,7 +144,7 @@ final class LeaderElection {
             votedFor = candidateID
             controlPlane.send(.voteResponse(term: term, granted: true), to: peer)
             startElectionTimeout()
-            Logger.transport.info("RAFT: voted for \(peer.displayName) (term=\(term))")
+            Logger.transport.info("RAFT: vote recorded (term=\(term))")
         } else {
             controlPlane.send(.voteResponse(term: term, granted: false), to: peer)
         }

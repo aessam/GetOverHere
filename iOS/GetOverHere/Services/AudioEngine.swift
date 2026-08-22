@@ -12,16 +12,16 @@ final class AudioEngine {
     private(set) var isCapturing = false
     private(set) var isPlaying = false
 
-    /// When true, playback routes to earpiece instead of speaker.
-    /// Listeners near the broadcaster should enable this to reduce echo.
-    var useEarpiece = false {
+    /// Listener playback defaults to the receiver or connected headset so nearby
+    /// speakers do not feed delayed tour audio back into the guide microphone.
+    var listenerOutput: ListenerOutput = .privateAudio {
         didSet {
             if isPlaying { applyOutputRoute() }
         }
     }
 
     /// Noise gate threshold (RMS). Audio below this is suppressed.
-    /// Filters out room echo which is quieter than direct speech.
+    /// Suppresses low-level background noise. This is not echo cancellation.
     /// Range: 0.0 (disabled) to 1.0.
     /// Default is disabled to avoid dropping quiet speech during live chat.
     var noiseGateThreshold: Float = 0
@@ -47,6 +47,12 @@ final class AudioEngine {
     // MARK: - Capture
 
     func startCapture() -> AsyncStream<Data> {
+#if targetEnvironment(simulator)
+        Logger.audio.error("Microphone capture is unavailable in the iOS Simulator")
+        return AsyncStream { continuation in
+            continuation.finish()
+        }
+#else
         stopCapture()
 
         configureAudioSession(forCapture: true)
@@ -56,9 +62,7 @@ final class AudioEngine {
         self.engine = engine
 
         let inputNode = engine.inputNode
-
-        // Voice processing disabled — crashes with Bluetooth HFP (render err: -1).
-        // The noise gate handles echo suppression instead.
+        enableVoiceProcessingIfSupported(on: inputNode)
 
         let hwFormat = inputNode.outputFormat(forBus: 0)
         Logger.audio.info("Hardware input: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch")
@@ -105,10 +109,11 @@ final class AudioEngine {
             isCapturing = true
             Logger.audio.info("Capture engine started (noiseGate=\(gateThreshold))")
         } catch {
-            Logger.audio.error("Capture engine failed to start: \(error.localizedDescription)")
+            Logger.audio.error("Capture engine failed to start")
         }
 
         return stream
+#endif
     }
 
     func stopCapture() {
@@ -128,9 +133,12 @@ final class AudioEngine {
     // MARK: - Playback
 
     func startPlayback() {
+#if targetEnvironment(simulator)
+        Logger.audio.error("Tour audio playback is unavailable in the iOS Simulator")
+        return
+#else
         stopPlayback()
 
-        configureAudioSession(forCapture: false)
         applyOutputRoute()
         logCurrentRoute("Playback")
 
@@ -145,10 +153,11 @@ final class AudioEngine {
             self.engine = engine
             self.playerNode = player
             self.isPlaying = true
-            Logger.audio.info("Playback started (earpiece=\(self.useEarpiece))")
+            Logger.audio.info("Playback started (output=\(self.listenerOutput.rawValue))")
         } catch {
-            Logger.audio.error("Playback engine failed to start: \(error.localizedDescription)")
+            Logger.audio.error("Playback engine failed to start")
         }
+#endif
     }
 
     func enqueuePlayback(_ data: Data) {
@@ -185,32 +194,47 @@ final class AudioEngine {
             try session.setActive(true)
             Logger.audio.info("Session: capture=\(forCapture), rate=\(session.sampleRate)Hz")
         } catch {
-            Logger.audio.error("Audio session config failed: \(error.localizedDescription)")
+            Logger.audio.error("Audio session config failed")
         }
     }
 
     private func applyOutputRoute() {
-        guard isPlaying else { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            // Switch to playAndRecord to enable earpiece routing, then override
-            if useEarpiece {
-                try session.setCategory(.playAndRecord, mode: .voiceChat)
+            if listenerOutput == .privateAudio {
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
                 try session.overrideOutputAudioPort(.none)
             } else {
-                try session.setCategory(.playback, mode: .default, options: [.allowBluetoothA2DP])
+                try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothA2DP])
             }
             try session.setActive(true)
-            Logger.audio.info("Output route: \(self.useEarpiece ? "earpiece" : "speaker")")
+            Logger.audio.info("Output route: \(self.listenerOutput.rawValue)")
         } catch {
-            Logger.audio.error("Output route override failed: \(error.localizedDescription)")
+            Logger.audio.error("Output route override failed")
+        }
+    }
+
+    private func enableVoiceProcessingIfSupported(on inputNode: AVAudioInputNode) {
+        let usesBluetoothHFP = AVAudioSession.sharedInstance().currentRoute.inputs.contains {
+            $0.portType == .bluetoothHFP
+        }
+        guard !usesBluetoothHFP else {
+            Logger.audio.info("Voice processing skipped for Bluetooth HFP route")
+            return
+        }
+
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+            Logger.audio.info("Voice processing enabled")
+        } catch {
+            Logger.audio.error("Voice processing unavailable")
         }
     }
 
     private func logCurrentRoute(_ context: String) {
         let route = AVAudioSession.sharedInstance().currentRoute
-        let inputs = route.inputs.map { "\($0.portName)(\($0.portType.rawValue))" }.joined(separator: ", ")
-        let outputs = route.outputs.map { "\($0.portName)(\($0.portType.rawValue))" }.joined(separator: ", ")
+        let inputs = route.inputs.map(\.portType.rawValue).joined(separator: ", ")
+        let outputs = route.outputs.map(\.portType.rawValue).joined(separator: ", ")
         Logger.audio.info("[\(context)] Route — in: [\(inputs)], out: [\(outputs)]")
     }
 

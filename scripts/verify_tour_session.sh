@@ -1,0 +1,181 @@
+#!/bin/bash
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SWIFT_PACKAGE="$PROJECT_ROOT/Packages/TourSessionCore"
+ANDROID_ROOT="$PROJECT_ROOT/Android"
+ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+SWIFT_SCRATCH="${GOH_SWIFT_SCRATCH:-/tmp/GetOverHereTourSessionSwift}"
+SWIFT_MODULE_CACHE="${GOH_SWIFT_MODULE_CACHE:-/tmp/GetOverHereTourSessionSwiftModuleCache}"
+KOTLIN_CLI="$ANDROID_ROOT/tour-session-cli/build/install/tour-session-cli/bin/tour-session-cli"
+XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer}"
+IOS_DERIVED_DATA="${GOH_IOS_DERIVED_DATA:-/tmp/GetOverHereTourSessionDerived}"
+IOS_MODULE_CACHE="${GOH_IOS_MODULE_CACHE:-/tmp/GetOverHereTourSessionModuleCache}"
+
+mkdir -p "$SWIFT_MODULE_CACHE"
+export CLANG_MODULE_CACHE_PATH="$SWIFT_MODULE_CACHE"
+export SWIFT_MODULE_CACHE_PATH="$SWIFT_MODULE_CACHE"
+
+if ! command -v swift >/dev/null 2>&1; then
+    echo "error: swift is not available" >&2
+    exit 1
+fi
+
+if [[ ! -x "$ANDROID_JAVA_HOME/bin/java" ]]; then
+    echo "error: Java not found under $ANDROID_JAVA_HOME" >&2
+    exit 1
+fi
+
+if [[ ! -x "$ANDROID_ROOT/gradlew" ]]; then
+    echo "error: Android Gradle wrapper is missing" >&2
+    exit 1
+fi
+
+if [[ ! -x "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
+    echo "error: xcodebuild not found under $XCODE_DEVELOPER_DIR" >&2
+    exit 1
+fi
+
+echo "[1/7] Swift protocol and registry tests"
+swift test --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH"
+
+echo "[2/7] Kotlin protocol and registry tests"
+(
+    cd "$ANDROID_ROOT"
+    JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew :tour-session-core:test :tour-session-cli:installDist
+)
+
+SWIFT_BIN="$(swift build --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH" --show-bin-path)/tour-session-swift"
+
+run_kotlin() {
+    JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$@"
+}
+
+echo "[3/7] Exact Swift/Kotlin wire bytes"
+SWIFT_HEX="$($SWIFT_BIN fixture)"
+KOTLIN_HEX="$(run_kotlin fixture)"
+if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then
+    echo "error: Swift and Kotlin encoded different GOH2 bytes" >&2
+    exit 1
+fi
+
+echo "[4/7] Cross-language decode and participant churn"
+SWIFT_DESCRIPTION="$($SWIFT_BIN decode "$KOTLIN_HEX")"
+KOTLIN_DESCRIPTION="$(run_kotlin decode "$SWIFT_HEX")"
+if [[ "$SWIFT_DESCRIPTION" != "$KOTLIN_DESCRIPTION" ]]; then
+    echo "error: Swift and Kotlin decoded different GOH2 values" >&2
+    exit 1
+fi
+
+for COUNT in 1 8 20 50; do
+    SWIFT_RESULT="$($SWIFT_BIN simulate "$COUNT")"
+    KOTLIN_RESULT="$(run_kotlin simulate "$COUNT")"
+    EXPECTED="peak=$COUNT|reconnect=$COUNT|staleDisconnect=$COUNT|final=0"
+    if [[ "$SWIFT_RESULT" != "$EXPECTED" || "$KOTLIN_RESULT" != "$EXPECTED" ]]; then
+        echo "error: participant simulation failed at $COUNT guests" >&2
+        exit 1
+    fi
+done
+
+echo "[5/7] Realtime loss, duplicate, and reorder audit"
+EXPECTED_FAULTS="unique=5|duplicates=1|reordered=1|missing=2"
+if [[ "$($SWIFT_BIN faults)" != "$EXPECTED_FAULTS" || "$(run_kotlin faults)" != "$EXPECTED_FAULTS" ]]; then
+    echo "error: realtime fault audit mismatch" >&2
+    exit 1
+fi
+
+if [[ "$($SWIFT_BIN state)" != "$(run_kotlin state)" ]]; then
+    echo "error: presentation, bearing, target, shared-screen, tour-pack, request, or status bytes differ" >&2
+    exit 1
+fi
+
+EXPECTED_FOCUS="initial=slides:0|guide=map:1,pointer:2|guest=pointer:2|stale=pointer:2|late=pointer:2"
+if [[ "$($SWIFT_BIN focus)" != "$EXPECTED_FOCUS" || "$(run_kotlin focus)" != "$EXPECTED_FOCUS" ]]; then
+    echo "error: guide-selected shared-screen simulation failed" >&2
+    exit 1
+fi
+
+if [[ "$($SWIFT_BIN auth)" != "$(run_kotlin auth)" ]]; then
+    echo "error: Swift and Kotlin authentication proofs differ" >&2
+    exit 1
+fi
+
+EXPECTED_RECOVERY="lateSlide=gate-left|lateTarget=9|reconnect=1|staleTarget=9|replacementTarget=10|missing=1|readyAfterFetch=true"
+if [[ "$($SWIFT_BIN recovery)" != "$EXPECTED_RECOVERY" || "$(run_kotlin recovery)" != "$EXPECTED_RECOVERY" ]]; then
+    echo "error: late-join, reconnect, missing-asset, or target-replacement simulation failed" >&2
+    exit 1
+fi
+
+if rg -n -i 'participant(location|latitude|longitude)|guest(location|latitude|longitude)|guide(location|latitude|longitude)' \
+    "$SWIFT_PACKAGE/Sources/TourSessionCore" \
+    "$ANDROID_ROOT/tour-session-core/src/main" >/dev/null; then
+    echo "error: participant location appeared in a shared wire-contract module" >&2
+    exit 1
+fi
+
+if rg -n 'accuracyMilliDegrees|sampledAtNanoseconds' \
+    "$SWIFT_PACKAGE/Sources/TourSessionCore" \
+    "$ANDROID_ROOT/tour-session-core/src/main" >/dev/null; then
+    echo "error: local compass metadata appeared in the shared bearing payload" >&2
+    exit 1
+fi
+
+if rg -n 'UIDevice\.current\.name|Command observed.*\$command|BLE cmd.*String\(data:|SSID=\$\{|WiFi joined:|validated guest.*displayName|Session guest joined.*displayName|GATT client (connected|disconnected):.*address' \
+    "$PROJECT_ROOT/iOS/GetOverHere" \
+    "$ANDROID_ROOT/app/src/main" >/dev/null; then
+    echo "error: credential or persistent participant metadata appeared in application logs" >&2
+    exit 1
+fi
+
+if rg -n 'Logger\..*error\.localizedDescription|fputs\(.*error\.localizedDescription' \
+    "$PROJECT_ROOT/iOS/GetOverHere" >/dev/null; then
+    echo "error: an unredacted runtime error can enter an iOS application log" >&2
+    exit 1
+fi
+
+if rg -n 'Log\.[vdiwe]\([^\n]*,\s*error\)|System\.err\.println.*error\.(message|localizedMessage)' \
+    "$ANDROID_ROOT/app/src/main" >/dev/null; then
+    echo "error: an unredacted runtime error can enter an Android application log" >&2
+    exit 1
+fi
+
+if rg -n 'play-services-nearby|com\.google\.android\.gms\.nearby' \
+    "$ANDROID_ROOT/app/build.gradle.kts" \
+    "$ANDROID_ROOT/app/src/main" \
+    "$ANDROID_ROOT/gradle/libs.versions.toml" >/dev/null; then
+    echo "error: unused Google Nearby dependency returned to the production Android path" >&2
+    exit 1
+fi
+
+if rg 'IPHONEOS_DEPLOYMENT_TARGET = ' "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj/project.pbxproj" \
+    | rg -v 'IPHONEOS_DEPLOYMENT_TARGET = 17\.0;' >/dev/null; then
+    echo "error: an iOS target no longer uses the supported iOS 17 baseline" >&2
+    exit 1
+fi
+
+if ! rg -q '\.iOS\(\.v17\),' "$SWIFT_PACKAGE/Package.swift"; then
+    echo "error: TourSessionCore no longer supports the production iOS 17 baseline" >&2
+    exit 1
+fi
+
+echo "[6/7] Android app integration, TCP loopback, and APK"
+(
+    cd "$ANDROID_ROOT"
+    JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew testDebugUnitTest assembleDebug
+)
+
+echo "[7/7] iOS app unit/integration suite in Simulator"
+DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \
+CLANG_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
+SWIFT_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
+    "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" -quiet \
+    -project "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj" \
+    -scheme GetOverHere \
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    -parallel-testing-enabled NO \
+    -derivedDataPath "$IOS_DERIVED_DATA" \
+    test \
+    -only-testing:GetOverHereTests
+
+echo "Tour session verification passed"

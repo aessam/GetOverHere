@@ -47,6 +47,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":tour-session-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
 
@@ -58,6 +59,7 @@ dependencies {
     implementation(libs.compose.material.icons)
     implementation(libs.androidx.activity.compose)
     debugImplementation(libs.compose.ui.tooling)
+    debugImplementation(libs.compose.ui.test.manifest)
 
     // Navigation
     implementation(libs.navigation.compose)
@@ -69,15 +71,18 @@ dependencies {
     // Serialization
     implementation(libs.kotlinx.serialization.json)
 
-    // Google Nearby Connections
-    implementation(libs.play.services.nearby)
-
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
+
+    // Offline vector maps
+    implementation(libs.maplibre.android)
 
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
 }

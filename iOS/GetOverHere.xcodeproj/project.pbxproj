@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000003 /* TourSessionCore */; };
+		A10000000000000000000002 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000004 /* TourSessionCore */; };
+		A20000000000000000000001 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* MapLibre */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		D95FA5F62F71F52100456E8F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,6 +71,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000001 /* TourSessionCore in Frameworks */,
+				A20000000000000000000001 /* MapLibre in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,6 +80,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000002 /* TourSessionCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,6 +134,8 @@
 			);
 			name = GetOverHere;
 			packageProductDependencies = (
+				A10000000000000000000003 /* TourSessionCore */,
+				A20000000000000000000003 /* MapLibre */,
 			);
 			productName = GetOverHere;
 			productReference = D95FA5E62F71F52100456E8F /* GetOverHere.app */;
@@ -148,6 +159,7 @@
 			);
 			name = GetOverHereTests;
 			packageProductDependencies = (
+				A10000000000000000000004 /* TourSessionCore */,
 			);
 			productName = GetOverHereTests;
 			productReference = D95FA5F52F71F52100456E8F /* GetOverHereTests.xctest */;
@@ -208,6 +220,10 @@
 			);
 			mainGroup = D95FA5DD2F71F52100456E8F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */,
+				A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D95FA5E72F71F52100456E8F /* Products */;
 			projectDirPath = "";
@@ -335,7 +351,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -393,7 +409,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -479,7 +495,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = VW9YC3A6JM;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aens.GetOverHereTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -501,7 +517,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = VW9YC3A6JM;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aens.GetOverHereTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -595,6 +611,42 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/TourSessionCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/maplibre/maplibre-gl-native-distribution";
+			requirement = {
+				kind = exactVersion;
+				version = 6.28.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000003 /* TourSessionCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
+			productName = TourSessionCore;
+		};
+		A10000000000000000000004 /* TourSessionCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
+			productName = TourSessionCore;
+		};
+		A20000000000000000000003 /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
+			productName = MapLibre;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D95FA5DE2F71F52100456E8F /* Project object */;
 }

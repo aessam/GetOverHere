@@ -26,12 +26,12 @@ final class WiFiHotspotJoiner {
                 if let error {
                     self?.error = error.localizedDescription
                     self?.isConnected = false
-                    Logger.transport.error("WiFi join failed: \(error.localizedDescription)")
+                    Logger.transport.error("WiFi join failed")
                 } else {
                     self?.isConnected = true
                     self?.currentSSID = ssid
                     self?.error = nil
-                    Logger.transport.info("WiFi joined: \(ssid)")
+                    Logger.transport.info("Local Wi-Fi joined")
                     // Wait for IP assignment, then discover network addresses
                     await self?.discoverWithRetry()
                 }
@@ -99,7 +99,7 @@ final class WiFiHotspotJoiner {
             inet_ntop(AF_INET, &gatewayAddr, &gatewayBuf, socklen_t(INET_ADDRSTRLEN))
             gatewayIP = String(cString: gatewayBuf)
 
-            Logger.transport.info("WiFi addresses: local=\(self.localIP ?? "?"), gateway=\(self.gatewayIP ?? "?")")
+            Logger.transport.info("Local Wi-Fi addressing resolved")
             return
         }
         Logger.transport.warning("No en0 IPv4 address found")

@@ -51,7 +51,7 @@ class WiFiHotspotManager(private val context: Context) {
                 val creds = extractCredentials(reservation)
                 if (creds != null) {
                     credentials = creds
-                    Log.i(TAG, "Hotspot started: SSID=${creds.ssid}")
+                    Log.i(TAG, "Local-only hotspot started")
                     onCredentialsReady?.invoke(creds)
                 } else {
                     Log.e(TAG, "Hotspot started but credentials unavailable")

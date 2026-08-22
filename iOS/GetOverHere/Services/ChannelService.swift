@@ -1,11 +1,19 @@
 import Foundation
 import os
+import TourSessionCore
 
-/// Audio-only megaphone service.
+enum OfflineMapStatus: Equatable {
+    case unavailable
+    case transferring
+    case ready
+    case failed(String)
+}
+
+/// Coordinates the guide's audio, presentation, and tour assets for one local session.
 /// - Creator of a channel is the ONLY speaker
 /// - Everyone else listens
-/// - BLE control plane handles discovery + coordination
-/// - Audio flows via Multipeer (iOS-only) or UDP (cross-platform via WiFi hotspot)
+/// - Bonjour handles discovery on the shared local network
+/// - Independent authenticated TCP lanes carry audio, control, and assets
 @Observable
 final class ChannelService {
 
@@ -20,16 +28,45 @@ final class ChannelService {
         case broadcasting
     }
 
+    enum ConnectionState: Equatable {
+        case idle
+        case connecting
+        case connected
+        case reconnecting(attempt: Int)
+        case failed
+    }
+
     private(set) var listenState: ListenState = .idle
     private(set) var listenerCount: Int = 0
+    private(set) var listenerOutput: ListenerOutput = .privateAudio
+    private(set) var isImportingSlides = false
+    private(set) var isImportingMap = false
+    private(set) var offlineMapConfiguration: OfflineMapConfiguration?
+    private(set) var offlineMapStatus: OfflineMapStatus = .unavailable
+    private(set) var tourFeatureError: String?
+    private(set) var tourCode: String?
+    private(set) var connectionState: ConnectionState = .idle
     var audioQuality: AudioQuality = .standard
+
+    struct SlideImport: Sendable {
+        let data: Data
+        let mimeType: String
+    }
 
     // MARK: - Dependencies
 
     private let coordinator: NetworkCoordinator
     private let audioEngine: AudioEngine
+    let tourControlService: TourControlService
+    let assetTransferService: TourAssetTransferService
+    let contentStore: TourContentStore
+    let localGuidanceService: LocalGuidanceService
     private var captureTask: Task<Void, Never>?
     private var listenTasks: [Task<Void, Never>] = []
+    private var participantRegistry = ParticipantRegistry()
+    private var guestCredential: SessionCredential?
+    private var reconnectAttempt = 0
+    private var reconnectTask: Task<Void, Never>?
 
     // MARK: - Computed
 
@@ -52,9 +89,38 @@ final class ChannelService {
 
     // MARK: - Init
 
-    init(coordinator: NetworkCoordinator, audioEngine: AudioEngine) {
+    init(
+        coordinator: NetworkCoordinator,
+        audioEngine: AudioEngine,
+        tourControlService: TourControlService,
+        assetTransferService: TourAssetTransferService,
+        contentStore: TourContentStore,
+        localGuidanceService: LocalGuidanceService
+    ) {
         self.coordinator = coordinator
         self.audioEngine = audioEngine
+        self.tourControlService = tourControlService
+        self.assetTransferService = assetTransferService
+        self.contentStore = contentStore
+        self.localGuidanceService = localGuidanceService
+        assetTransferService.setEventHandler { [weak self, tourControlService] event in
+            Task { @MainActor [weak self] in
+                switch event {
+                case let .manifestReceived(manifest):
+                    tourControlService.acceptTourPack(manifest)
+                    self?.refreshOfflineMap()
+                case .assetReady:
+                    self?.refreshOfflineMap()
+                case .participantReady:
+                    break
+                case .failed:
+                    Logger.channel.error("Tour asset transfer failed")
+                }
+            }
+        }
+        tourControlService.setConnectionEventHandler { [weak self] event in
+            Task { @MainActor [weak self] in self?.handleControlConnectionEvent(event) }
+        }
     }
 
     func startListening() {
@@ -73,43 +139,253 @@ final class ChannelService {
             createdAt: Date(),
             createdBy: coordinator.controlPlane.localPeer.id
         )
-        channels.append(channel)
-        activeChannelID = channel.id
-        listenState = .broadcasting
+        guard let sessionID = UUID(uuidString: channel.id),
+              let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
+            Logger.channel.error("Cannot create session with non-UUID channel or participant identity")
+            return
+        }
 
-        // Announce channel via BLE
-        broadcastChannelAnnounce(channel)
+        do {
+            let code = SessionCredential.generateShortCode()
+            let credential = try SessionCredential.derive(shortCode: code, sessionID: sessionID)
+            try contentStore.beginPack(packID: sessionID, displayName: name)
+            let emptyManifest = try contentStore.manifestPayload()
+            tourControlService.configureSession(
+                sessionID: sessionID,
+                participantID: participantID,
+                displayName: coordinator.controlPlane.localPeer.displayName,
+                platform: .iOS,
+                credential: credential
+            )
+            assetTransferService.configureSession(
+                sessionID: sessionID,
+                participantID: participantID,
+                displayName: coordinator.controlPlane.localPeer.displayName,
+                platform: .iOS,
+                credential: credential
+            )
+            tourControlService.startGuide(deckID: sessionID)
+            try assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
+            offlineMapConfiguration = nil
+            offlineMapStatus = .unavailable
+            tourFeatureError = nil
+            tourCode = code
 
-        // Select audio plane and start broadcasting
-        let plane = coordinator.selectAudioPlane()
-        plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
+            channels.append(channel)
+            activeChannelID = channel.id
+            listenState = .broadcasting
+            connectionState = .connected
+            guestCredential = nil
 
-        // Start capturing + sending audio
-        startCapturing(plane: plane, channelID: channel.id)
+            broadcastChannelAnnounce(channel)
 
-        Logger.channel.info("Created megaphone: \(name) (quality: \(self.audioQuality.label))")
+            let plane = coordinator.selectAudioPlane()
+            participantRegistry = ParticipantRegistry()
+            listenerCount = 0
+            plane.configureSession(
+                sessionID: sessionID,
+                participantID: participantID,
+                displayName: coordinator.controlPlane.localPeer.displayName,
+                platform: .iOS,
+                credential: credential
+            )
+            plane.setSessionEventHandler { [weak self] event in
+                Task { @MainActor in self?.handleAudioSessionEvent(event) }
+            }
+            plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
+            startCapturing(plane: plane, channelID: channel.id)
+        } catch {
+            tourCode = nil
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Cannot start tour features")
+            return
+        }
+
+        Logger.channel.info("Created megaphone (quality: \(self.audioQuality.label))")
     }
 
-    func joinChannel(_ channel: Channel) {
+    func joinChannel(_ channel: Channel, tourCode rawTourCode: String) {
+        guard let sessionID = UUID(uuidString: channel.id),
+              let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
+            Logger.channel.error("Cannot join session with non-UUID channel or participant identity")
+            return
+        }
+        let normalizedCode = SessionCredential.normalize(rawTourCode)
+        let credential: SessionCredential
+        do {
+            credential = try SessionCredential.derive(shortCode: normalizedCode, sessionID: sessionID)
+        } catch {
+            tourFeatureError = error.localizedDescription
+            return
+        }
+        guard let hostIP = channel.audioHostIP else {
+            tourFeatureError = "Guide network address is unavailable"
+            Logger.channel.error("Cannot join session without a guide network address")
+            return
+        }
         stopCurrentActivity()
+        offlineMapConfiguration = nil
+        offlineMapStatus = .transferring
+        tourFeatureError = nil
+        tourCode = normalizedCode
+        guestCredential = credential
+        reconnectAttempt = 0
         activeChannelID = channel.id
         listenState = .listening
+        connectionState = .connecting
+        setListenerOutput(.privateAudio)
+        startGuestTransports(
+            channel: channel,
+            hostIP: hostIP,
+            sessionID: sessionID,
+            participantID: participantID,
+            credential: credential
+        )
 
-        // Select audio plane and start listening
-        let plane = coordinator.selectAudioPlane()
-        // For TCP audio: set the speaker's IP before connecting
-        if let tcpPlane = plane as? UDPAudioPlane {
-            tcpPlane.hostIP = channel.audioHostIP
-            Logger.channel.info("TCP audio target: \(tcpPlane.hostIP ?? "nil")")
-        }
-        audioEngine.startPlayback()
-        plane.startListening(channelID: channel.id) { [weak self] data in
-            Task { @MainActor in
-                self?.audioEngine.enqueuePlayback(data)
+        Logger.channel.info("Joined megaphone")
+    }
+
+    func importSlides(_ imports: [SlideImport]) async {
+        guard listenState == .broadcasting, !imports.isEmpty else { return }
+        isImportingSlides = true
+        defer { isImportingSlides = false }
+        do {
+            for item in imports {
+                _ = try await contentStore.importSlide(data: item.data, mimeType: item.mimeType)
             }
+            let manifest = try contentStore.manifestPayload()
+            try await assetTransferService.hostTourPack(
+                manifest,
+                sourcesByAssetID: contentStore.sourcesByAssetID
+            )
+            try tourControlService.updateDeck(deckID: manifest.packID, slides: manifest.assets)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Slide import failed")
         }
+    }
 
-        Logger.channel.info("Listening to: \(channel.name)")
+    func moveSlide(assetID: String, to destinationIndex: Int) async {
+        guard listenState == .broadcasting else { return }
+        do {
+            try contentStore.moveSlide(assetID: assetID, to: destinationIndex)
+            try await publishCurrentTourPack()
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Slide reorder failed")
+        }
+    }
+
+    func removeSlide(assetID: String) async {
+        guard listenState == .broadcasting else { return }
+        do {
+            try contentStore.removeSlide(assetID: assetID)
+            try await publishCurrentTourPack()
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Slide removal failed")
+        }
+    }
+
+    func importOfflineMap(styleURL: URL, archiveURL: URL) async {
+        guard listenState == .broadcasting else { return }
+        isImportingMap = true
+        offlineMapStatus = .transferring
+        defer { isImportingMap = false }
+        let styleAccess = styleURL.startAccessingSecurityScopedResource()
+        let archiveAccess = archiveURL.startAccessingSecurityScopedResource()
+        defer {
+            if styleAccess { styleURL.stopAccessingSecurityScopedResource() }
+            if archiveAccess { archiveURL.stopAccessingSecurityScopedResource() }
+        }
+        do {
+            let styleData = try Data(contentsOf: styleURL, options: [.mappedIfSafe])
+            try await contentStore.importOfflineMap(styleData: styleData, archiveURL: archiveURL)
+            let manifest = try contentStore.manifestPayload()
+            try await assetTransferService.hostTourPack(
+                manifest,
+                sourcesByAssetID: contentStore.sourcesByAssetID
+            )
+            try tourControlService.updateDeck(deckID: manifest.packID, slides: manifest.assets)
+            refreshOfflineMap()
+            tourFeatureError = nil
+        } catch {
+            offlineMapStatus = .failed(error.localizedDescription)
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Offline map import failed")
+        }
+    }
+
+    func showSlide(assetID: String? = nil) {
+        do {
+            try tourControlService.showSlide(assetID: assetID)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+        }
+    }
+
+    func hideSlides() {
+        do { try tourControlService.hide() }
+        catch { tourFeatureError = error.localizedDescription }
+    }
+
+    func previousSlide() {
+        do { try tourControlService.goPrevious() }
+        catch { tourFeatureError = error.localizedDescription }
+    }
+
+    func nextSlide() {
+        do { try tourControlService.goNext() }
+        catch { tourFeatureError = error.localizedDescription }
+    }
+
+    func setVisualFocus(_ mode: TourVisualMode) {
+        do {
+            try tourControlService.setVisualFocus(mode)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+        }
+    }
+
+    func setTarget(latitude: Double, longitude: Double, label: String = "") {
+        do {
+            try tourControlService.setTarget(latitude: latitude, longitude: longitude, label: label)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+        }
+    }
+
+    func clearTarget() {
+        do { try tourControlService.clearTarget() }
+        catch { tourFeatureError = error.localizedDescription }
+    }
+
+    func shareCurrentBearing() {
+        do {
+            guard let heading = localGuidanceService.magneticHeadingDegrees else {
+                throw PresentationServiceError.invalidBearing
+            }
+            try tourControlService.shareBearing(degrees: heading)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+        }
+    }
+
+    func clearBearing() {
+        do { try tourControlService.clearBearing() }
+        catch { tourFeatureError = error.localizedDescription }
+    }
+
+    func setListenerOutput(_ output: ListenerOutput) {
+        listenerOutput = output
+        audioEngine.listenerOutput = output
     }
 
     func leaveChannel() {
@@ -117,7 +393,10 @@ final class ChannelService {
         stopCurrentActivity()
         activeChannelID = nil
         listenState = .idle
-        Logger.channel.info("Left channel: \(ch.name)")
+        tourCode = nil
+        connectionState = .idle
+        guestCredential = nil
+        Logger.channel.info("Left channel")
 
         if ch.createdBy == coordinator.controlPlane.localPeer.id {
             channels.removeAll { $0.id == ch.id }
@@ -129,8 +408,7 @@ final class ChannelService {
 
     private func startCapturing(plane: any AudioPlane, channelID: String) {
         let stream = audioEngine.startCapture()
-        captureTask = Task { [weak self] in
-            guard let self else { return }
+        captureTask = Task {
             for await data in stream {
                 guard !Task.isCancelled else { break }
                 plane.sendAudio(data)
@@ -139,6 +417,10 @@ final class ChannelService {
     }
 
     private func stopCurrentActivity() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectAttempt = 0
+        guestCredential = nil
         if listenState == .broadcasting {
             audioEngine.stopCapture()
             captureTask?.cancel()
@@ -146,7 +428,63 @@ final class ChannelService {
         } else if listenState == .listening {
             audioEngine.stopPlayback()
         }
+        coordinator.activeAudioPlane?.setSessionEventHandler(nil)
         coordinator.activeAudioPlane?.stop()
+        tourControlService.stop()
+        assetTransferService.stop()
+        localGuidanceService.stop()
+        offlineMapConfiguration = nil
+        offlineMapStatus = .unavailable
+        participantRegistry = ParticipantRegistry()
+        listenerCount = 0
+        connectionState = .idle
+    }
+
+    private func refreshOfflineMap() {
+        let manifest = isCreator ? try? contentStore.manifestPayload() : assetTransferService.manifest
+        guard let manifest else {
+            offlineMapConfiguration = nil
+            offlineMapStatus = listenState == .listening ? .transferring : .unavailable
+            return
+        }
+        let hasStyle = manifest.assets.contains { $0.kind == .mapStyle }
+        let hasArchive = manifest.assets.contains { $0.kind == .mapArchive }
+        guard hasStyle || hasArchive else {
+            offlineMapConfiguration = nil
+            offlineMapStatus = .unavailable
+            return
+        }
+        guard hasStyle, hasArchive else {
+            let message = "The tour pack contains an incomplete offline map"
+            offlineMapConfiguration = nil
+            offlineMapStatus = .failed(message)
+            tourFeatureError = message
+            return
+        }
+        let files = isCreator ? contentStore.sourcesByAssetID : assetTransferService.readyURLsByAssetID
+        do {
+            offlineMapConfiguration = try OfflineMapPack.resolve(
+                manifest: manifest,
+                filesByAssetID: files
+            )
+            offlineMapStatus = .ready
+        } catch OfflineMapPackError.styleNotReady, OfflineMapPackError.archiveNotReady {
+            offlineMapConfiguration = nil
+            offlineMapStatus = .transferring
+        } catch {
+            offlineMapConfiguration = nil
+            offlineMapStatus = .failed(error.localizedDescription)
+            tourFeatureError = error.localizedDescription
+        }
+    }
+
+    private func publishCurrentTourPack() async throws {
+        let manifest = try contentStore.manifestPayload()
+        try await assetTransferService.hostTourPack(
+            manifest,
+            sourcesByAssetID: contentStore.sourcesByAssetID
+        )
+        try tourControlService.updateDeck(deckID: manifest.packID, slides: manifest.assets)
     }
 
     private func broadcastChannelAnnounce(_ channel: Channel) {
@@ -192,13 +530,15 @@ final class ChannelService {
                         let previousHostIP = self.channels[idx].audioHostIP
                         self.channels[idx].name = announce.channelName
                         self.channels[idx].audioHostIP = announce.audioHostIP
-                        Logger.channel.info("Updated megaphone: \(announce.channelName) (audioHostIP=\(announce.audioHostIP ?? "nil"))")
+                        Logger.channel.info("Updated discovered megaphone")
 
                         if self.activeChannelID == announce.channelID,
                            self.listenState == .listening,
                            previousHostIP != announce.audioHostIP,
                            let updatedChannel = self.channels[safe: idx] {
-                            self.joinChannel(updatedChannel)
+                            if let tourCode = self.tourCode {
+                                self.joinChannel(updatedChannel, tourCode: tourCode)
+                            }
                         }
                     } else {
                         let channel = Channel(
@@ -209,7 +549,7 @@ final class ChannelService {
                             audioHostIP: announce.audioHostIP
                         )
                         self.channels.append(channel)
-                        Logger.channel.info("Discovered megaphone: \(channel.name) (audioHostIP=\(announce.audioHostIP ?? "nil"))")
+                        Logger.channel.info("Discovered megaphone")
                     }
                 case .channelEnded(let channelID):
                     self.channels.removeAll { $0.id == channelID }
@@ -217,6 +557,9 @@ final class ChannelService {
                         self.stopCurrentActivity()
                         self.activeChannelID = nil
                         self.listenState = .idle
+                        self.tourCode = nil
+                        self.connectionState = .idle
+                        self.guestCredential = nil
                         Logger.channel.info("Channel ended")
                     }
 
@@ -233,13 +576,120 @@ final class ChannelService {
             for await event in self.coordinator.channelPeerEvents {
                 if case .connected = event {
                     self.broadcastAllChannels()
-                    self.listenerCount = self.coordinator.controlPlane.connectedPeers.count
-                }
-                if case .disconnected = event {
-                    self.listenerCount = self.coordinator.controlPlane.connectedPeers.count
                 }
             }
         })
+    }
+
+    private func handleAudioSessionEvent(_ event: AudioSessionEvent) {
+        switch event {
+        case let .joined(participant):
+            participantRegistry.register(participant)
+            listenerCount = participantRegistry.listenerCount
+            Logger.channel.info("Session guest joined; listeners=\(self.listenerCount)")
+        case let .disconnected(connectionID):
+            participantRegistry.disconnect(connectionID: connectionID)
+            listenerCount = participantRegistry.listenerCount
+            Logger.channel.info("Session connection left; listeners=\(self.listenerCount)")
+        }
+    }
+
+    private func startGuestTransports(
+        channel: Channel,
+        hostIP: String,
+        sessionID: UUID,
+        participantID: UUID,
+        credential: SessionCredential
+    ) {
+        tourControlService.configureSession(
+            sessionID: sessionID,
+            participantID: participantID,
+            displayName: coordinator.controlPlane.localPeer.displayName,
+            platform: .iOS,
+            credential: credential
+        )
+        assetTransferService.configureSession(
+            sessionID: sessionID,
+            participantID: participantID,
+            displayName: coordinator.controlPlane.localPeer.displayName,
+            platform: .iOS,
+            credential: credential
+        )
+        tourControlService.startGuest(hostIP: hostIP)
+        assetTransferService.joinTour(hostIP: hostIP)
+
+        let plane = coordinator.selectAudioPlane()
+        plane.configureSession(
+            sessionID: sessionID,
+            participantID: participantID,
+            displayName: coordinator.controlPlane.localPeer.displayName,
+            platform: .iOS,
+            credential: credential
+        )
+        plane.setSessionEventHandler(nil)
+        if let tcpPlane = plane as? UDPAudioPlane {
+            tcpPlane.hostIP = hostIP
+        }
+        audioEngine.startPlayback()
+        plane.startListening(channelID: channel.id) { [weak self] data in
+            Task { @MainActor [weak self] in self?.audioEngine.enqueuePlayback(data) }
+        }
+    }
+
+    private func handleControlConnectionEvent(_ event: TourControlConnectionEvent) {
+        guard listenState == .listening else { return }
+        switch event {
+        case .connected:
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            reconnectAttempt = 0
+            connectionState = .connected
+            tourFeatureError = nil
+        case .disconnected:
+            scheduleReconnect(reason: "Guide connection closed")
+        case let .failed(message):
+            scheduleReconnect(reason: message)
+        }
+    }
+
+    private func scheduleReconnect(reason: String) {
+        guard reconnectTask == nil,
+              reconnectAttempt < 5,
+              let channel = activeChannel,
+              let credential = guestCredential,
+              let hostIP = channel.audioHostIP,
+              let sessionID = UUID(uuidString: channel.id),
+              let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
+            if reconnectAttempt >= 5 {
+                connectionState = .failed
+                tourFeatureError = "Could not reconnect to the guide"
+            }
+            return
+        }
+        reconnectAttempt += 1
+        connectionState = .reconnecting(attempt: reconnectAttempt)
+        Logger.channel.error("Session reconnect attempt \(self.reconnectAttempt)")
+        let delaySeconds = 1 << (reconnectAttempt - 1)
+        reconnectTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delaySeconds))
+            } catch {
+                return
+            }
+            guard let self, self.listenState == .listening else { return }
+            self.reconnectTask = nil
+            self.coordinator.activeAudioPlane?.stop()
+            self.tourControlService.stop()
+            self.assetTransferService.stop()
+            self.audioEngine.stopPlayback()
+            self.startGuestTransports(
+                channel: channel,
+                hostIP: hostIP,
+                sessionID: sessionID,
+                participantID: participantID,
+                credential: credential
+            )
+        }
     }
 }
 

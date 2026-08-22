@@ -3,7 +3,13 @@ package com.aessam.comeoverhere.core
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.*
+import com.aessam.toursession.ParticipantPlatform
+import com.aessam.toursession.ParticipantSession
+import com.aessam.toursession.SessionEnvelope
+import com.aessam.toursession.SessionCredential
+import com.aessam.toursession.SessionMessageKind
 import java.util.UUID
+import javax.net.SocketFactory
 
 // MARK: - Peer Identity
 
@@ -85,6 +91,78 @@ interface AudioPlane {
     fun startBroadcasting(channelID: String, quality: AudioQuality)
     fun sendAudio(data: ByteArray)
     fun startListening(channelID: String, onAudio: (ByteArray) -> Unit)
+    fun stop()
+    fun configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential,
+    ) {}
+    fun setSessionEventHandler(handler: ((AudioSessionEvent) -> Unit)?) {}
+    fun setGuestSocketFactory(factory: SocketFactory?) {}
+}
+
+sealed class AudioSessionEvent {
+    data class Joined(val participant: ParticipantSession) : AudioSessionEvent()
+    data class Disconnected(val connectionID: String) : AudioSessionEvent()
+}
+
+// MARK: - Reliable Session Control Transport
+
+sealed class SessionControlEvent {
+    data object Connected : SessionControlEvent()
+    data class GuestJoined(val participant: ParticipantSession) : SessionControlEvent()
+    data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionControlEvent()
+    data class GuestDisconnected(val participantID: UUID) : SessionControlEvent()
+    data object Disconnected : SessionControlEvent()
+    data class Failed(val message: String) : SessionControlEvent()
+}
+
+interface SessionControlTransport {
+    val isActive: Boolean
+    var hostIP: String?
+
+    fun configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential,
+    )
+    fun setEventHandler(handler: ((SessionControlEvent) -> Unit)?)
+    fun startGuide()
+    fun startGuest()
+    fun send(kind: SessionMessageKind, payload: ByteArray)
+    fun setGuestSocketFactory(factory: SocketFactory?) {}
+    fun stop()
+}
+
+sealed class SessionAssetEvent {
+    data object Connected : SessionAssetEvent()
+    data class GuestJoined(val participant: ParticipantSession) : SessionAssetEvent()
+    data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionAssetEvent()
+    data class GuestDisconnected(val participantID: UUID) : SessionAssetEvent()
+    data object Disconnected : SessionAssetEvent()
+    data class Failed(val message: String) : SessionAssetEvent()
+}
+
+interface SessionAssetTransport {
+    val isActive: Boolean
+    var hostIP: String?
+
+    fun configureSession(
+        sessionID: UUID,
+        participantID: UUID,
+        displayName: String,
+        platform: ParticipantPlatform,
+        credential: SessionCredential,
+    )
+    fun setEventHandler(handler: ((SessionAssetEvent) -> Unit)?)
+    fun startGuide()
+    fun startGuest()
+    fun send(kind: SessionMessageKind, payload: ByteArray, participantID: UUID?)
+    fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
 }
 
@@ -192,7 +270,7 @@ fun parseBLECommand(data: ByteArray): BLECommand? {
             else -> null
         }
     } catch (e: Exception) {
-        android.util.Log.e("BLECommand", "Parse failed: ${e.message}")
+        android.util.Log.e("BLECommand", "Parse failed: ${e.javaClass.simpleName}")
         null
     }
 }

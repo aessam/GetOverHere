@@ -1,106 +1,84 @@
-# GET OVER HERE!
+# GetOverHere
 
-> *"GET OVER HERE!"* — Scorpion, Mortal Kombat
+Offline tour-guide broadcasting for iOS and Android. One guide speaks; guests listen and receive synchronized slides, a shared map target, or a sightline pointer. A tour uses a local Wi-Fi network and does not require Internet access, accounts, a backend, or analytics.
 
-A peer-to-peer megaphone app that yanks nearby devices into a live audio channel — no backend, no accounts, no excuses. One person speaks, everyone listens. Like Scorpion's spear, it reaches out and pulls you in.
+## Product
 
-## What It Does
+- One authenticated guide-to-many-guests audio session.
+- Ordered local-image slide deck with automatic guest presentation.
+- Offline PMTiles map with one guide-selected target pin.
+- Device-local user dot, distance, and direction. Participant locations never leave their phones.
+- Magnetic sightline pointer for landmarks that are not map coordinates.
+- Late-join and reconnect recovery for presentation, pin, pointer, and cached assets.
+- Receiver/headset playback by default to prevent acoustic feedback; speaker is an explicit override.
 
-Create a channel. Speak. Every nearby device hears you — **instantly**, over the local network or via Android WiFi hotspot. No sign-ups, no cloud. Just raw, direct audio between devices.
+The authoritative requirements and acceptance gates are in [TourGuideProductSpec.md](TourGuideProductSpec.md). Architecture decisions are in [ADR.md](ADR.md), and executed evidence is in [ExperimentLog.md](ExperimentLog.md).
 
-- **One speaker per channel** — the creator holds the mic
-- **Everyone else listens** — join and hear, that's it
-- **Cross-platform** — iOS and Android, side by side
-- **Zero infrastructure** — works on any shared network, or via Android hotspot when there's nothing else
+## Live architecture
 
-## How It Works
-
+```text
+                         local Wi-Fi LAN
+                   Internet connection not needed
+                              │
+          ┌───────────────────┴───────────────────┐
+          │                                       │
+      guide phone                            guest phones
+       iOS/Android                            iOS/Android
+          │                                       │
+          ├── TCP :50000, GOH2 realtime audio ───►│
+          ├── TCP :50001, GOH2 control state ────►│
+          └── TCP :50002, GOH2 asset chunks ─────►│
 ```
-  [Speaker]                    [Listener]
-     |                             |
-     |── BLE / Bonjour discover ──>|
-     |                             |
-     |── channel announce ────────>|
-     |                             |
-     |══ TCP audio stream ════════>|
-     |   (16kHz mono float32)      |
-```
 
-Three-tier architecture:
+Bonjour on iOS and NSD on Android discover guide sessions. Possession of a random per-tour short code is required before any lane admits a guest. Control and assets cannot block audio because each has an independent authenticated connection. Slide and map assets are content-addressed, chunked, resumable, and SHA-256 verified.
 
-| Layer | Purpose | Tech |
-|-------|---------|------|
-| **Control Plane** | Discovery + coordination | BLE GATT / Bonjour |
-| **Leader Election** | Picks WiFi host (Android preferred) | Simplified RAFT |
-| **Audio Plane** | Actual audio streaming | TCP (cross-platform) / MultipeerConnectivity (iOS-only) |
+The operator currently provides the local network, normally with a pocket access point. Native Wi-Fi Aware is isolated behind a diagnostic lab and is not a production dependency. The app does not implement mesh routing.
 
-When Android is present, it spins up a local WiFi hotspot. iOS joins automatically and discovers the gateway IP (= Android). Audio flows over TCP with length-prefixed PCM packets. When it's iOS-only, MultipeerConnectivity handles everything.
+## Repository
 
-## Project Structure
-
-```
-GetOverHere/
-  iOS/                          # Xcode project (Swift, iOS 17+)
-    GetOverHere/
-      Core/
-        BLEControlPlane.swift       # BLE GATT server+client for cross-platform discovery
-        LocalControlPlane.swift     # Bonjour-based discovery for same-network
-        LeaderElection.swift        # RAFT-inspired leader election
-        NetworkCoordinator.swift    # Orchestrates control + audio plane selection
-        UDPAudioPlane.swift         # TCP audio server/client
-        MultipeerAudioPlane.swift   # iOS-only audio via MultipeerConnectivity
-        WiFiHotspotJoiner.swift     # Joins Android hotspot + gateway IP discovery
-      Services/
-        AudioEngine.swift           # AVAudioEngine capture/playback + format conversion
-        ChannelService.swift        # Megaphone channel lifecycle
-      Models/
-        Channel.swift
-      Views/
-        ChannelRootView.swift       # Main UI
-        ChannelSidebar.swift        # Channel list
-        ChannelDetailView.swift     # Active channel view
-      Navigation/
-        AppCoordinator.swift        # App lifecycle coordinator
-    GetOverHere.xcodeproj/
-  Android/                      # Gradle project (Kotlin, API 26+)
-    app/src/main/java/com/aessam/comeoverhere/
-      core/
-        BLEControlPlane.kt         # BLE GATT for cross-platform discovery
-        TransportProtocol.kt       # Shared protocol types + JSON serialization
-        LeaderElection.kt          # RAFT leader election
-        NetworkCoordinator.kt      # Hotspot + audio plane coordination
-        UDPAudioPlane.kt           # TCP audio server/client
-        WiFiHotspotManager.kt      # startLocalOnlyHotspot wrapper
-      service/
-        ChannelService.kt          # Megaphone channel lifecycle
-        AudioEngine.kt             # AudioRecord/AudioTrack capture/playback
-      ui/
-        ChannelScreen.kt           # Compose UI
-        AppViewModel.kt
-  ADR.md                        # Architecture decisions
-  LessonsLearned.md             # What went wrong and why
-  DESIGN.md                     # UI/UX design (superseded — see below)
-  SPEC.md                       # Original spec (superseded — see below)
+```text
+Packages/TourSessionCore/          Swift GOH2 contracts, registry, CLI, tests
+Android/tour-session-core/         Equivalent Kotlin contracts and tests
+Android/tour-session-cli/          Host simulation and fixture CLI
+iOS/GetOverHere/                   Native iOS app
+Android/app/                       Native Android app
+scripts/verify_tour_session.sh     Complete host/simulator verification gate
+TourGuideProductSpec.md            Authoritative product specification
+ADR.md                             Architecture decisions
+LessonsLearned.md                  Root causes and durable rules
+ExperimentLog.md                   Commands, devices, and results
 ```
 
 ## Requirements
 
-| Platform | Min Version | Language |
-|----------|-------------|----------|
-| iOS | 17+ | Swift 5.9+ |
-| Android | API 26 (8.0+) | Kotlin |
+| Platform | Minimum |
+|---|---:|
+| iOS | 17.0 |
+| Android | API 26 / Android 8.0 |
 
-## Building
+Physical devices are required for final audio, local-network, compass, location, background, and map-renderer acceptance.
 
-**iOS**: Open `iOS/GetOverHere.xcodeproj` in Xcode 16+. Build and run on device (simulator lacks BLE/Multipeer).
+## Verification
 
-**Android**: Open `Android/` in Android Studio. `./gradlew assembleDebug`.
+```bash
+scripts/verify_tour_session.sh
 
-## The Name
+cd Android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew connectedDebugAndroidTest
+```
 
-Scorpion doesn't ask politely. He throws a spear, hooks you, and drags you over. This app does the same thing with audio — no setup, no negotiation. You create a channel, and nearby devices get pulled in.
+The first command tests Swift and Kotlin protocol parity, exact wire bytes, authentication, participant churn at 1/8/20/50 guests, fault accounting, Android JVM integration/APK assembly, and the iOS Simulator suite.
 
-**GET OVER HERE!**
+## Build
+
+```bash
+xcodebuild -project iOS/GetOverHere.xcodeproj \
+  -scheme GetOverHere \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+
+cd Android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
+```
 
 ## License
 

@@ -9,3 +9,14 @@ DerivedData/
 
 # Claude
 .claude/settings.local.json
+
+# Android local build cache
+Android/.gradle/
+
+# This repository owns its cross-platform Swift package. Override the global
+# macOS Packages/ ignore so protocol sources and tests stay tracked.
+!Packages/
+!Packages/TourSessionCore/
+!Packages/TourSessionCore/**
+Packages/TourSessionCore/.build/
+Packages/TourSessionCore/.swiftpm/

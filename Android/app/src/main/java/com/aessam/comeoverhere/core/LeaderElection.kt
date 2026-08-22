@@ -138,10 +138,9 @@ class LeaderElection(
             votedFor = candidateID
             controlPlane.send(BLECommand.VoteResponse(term = term, granted = true), from)
             startElectionTimeout()
-            Log.i(TAG, "RAFT: voted for ${from.displayName} (term=$term)")
+            Log.i(TAG, "RAFT: vote recorded (term=$term)")
         } else {
             controlPlane.send(BLECommand.VoteResponse(term = term, granted = false), from)
         }
     }
 }
-

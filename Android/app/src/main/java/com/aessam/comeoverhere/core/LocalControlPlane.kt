@@ -76,7 +76,7 @@ class LocalControlPlane(
         override fun onServiceFound(serviceInfo: NsdServiceInfo) {
             if (normalizeServiceType(serviceInfo.serviceType) != normalizeServiceType(SERVICE_TYPE)) return
             if (publishedServices.containsKey(serviceInfo.serviceName)) return
-            Log.i(TAG, "Found local service: ${serviceInfo.serviceName} type=${serviceInfo.serviceType}")
+            Log.i(TAG, "Found local service")
             nsdManager.resolveService(serviceInfo, resolveListener(serviceInfo.serviceName))
         }
 
@@ -95,12 +95,14 @@ class LocalControlPlane(
     override fun stop() {
         try {
             nsdManager.stopServiceDiscovery(discoveryListener)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+                Log.w(TAG, "Failed to stop local service discovery (${error.javaClass.simpleName})")
         }
         publishedServices.values.forEach { (_, listener) ->
             try {
                 nsdManager.unregisterService(listener)
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.w(TAG, "Failed to unregister local service (${error.javaClass.simpleName})")
             }
         }
         publishedServices.clear()
@@ -136,7 +138,7 @@ class LocalControlPlane(
 
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
-                Log.i(TAG, "Published local channel: ${announce.channelName}")
+                Log.i(TAG, "Published local channel")
             }
 
             override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
@@ -158,13 +160,14 @@ class LocalControlPlane(
         val (_, listener) = publishedServices.remove(channelID) ?: return
         try {
             nsdManager.unregisterService(listener)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w(TAG, "Failed to unpublish channel (${error.javaClass.simpleName})")
         }
     }
 
     private fun resolveListener(channelID: String) = object : NsdManager.ResolveListener {
         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-            Log.e(TAG, "Resolve failed for $channelID: $errorCode")
+            Log.e(TAG, "Resolve failed: $errorCode")
         }
 
         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
@@ -175,7 +178,7 @@ class LocalControlPlane(
             val quality = serviceInfo.attributes[TXT_AUDIO_QUALITY]?.decodeToString()?.let(AudioQuality::fromRaw) ?: AudioQuality.STANDARD
             val platform = serviceInfo.attributes[TXT_PLATFORM]?.decodeToString()?.let(PeerInfo.Platform::fromRaw) ?: PeerInfo.Platform.ANDROID
             val hostIP = serviceInfo.host?.hostAddress
-            Log.i(TAG, "Resolved local channel: $channelName at $hostIP")
+            Log.i(TAG, "Resolved local channel")
 
             val peer = PeerInfo(id = createdBy, displayName = creatorName, platform = platform)
             peerByChannelID[channelID] = peer

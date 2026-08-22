@@ -55,7 +55,7 @@ class NetworkCoordinator(
     private fun listenForCommands() {
         commandJob = scope.launch {
             controlPlane.commands.collect { (command, peer) ->
-                Log.d(TAG, "Command observed from ${peer.displayName}: $command")
+                Log.d(TAG, "${command.javaClass.simpleName} observed from ${peer.platform.rawValue} peer")
             }
         }
     }
@@ -64,7 +64,7 @@ class NetworkCoordinator(
         peerJob = scope.launch {
             controlPlane.peerEvents.collect { event ->
                 if (event is PeerEvent.Connected) {
-                    Log.i(TAG, "Peer connected: ${event.peer.displayName}")
+                    Log.i(TAG, "${event.peer.platform.rawValue} peer connected")
                 }
             }
         }

@@ -72,7 +72,7 @@ extension MultipeerAudioPlane: MCSessionDelegate {
 
     nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         let stateStr = switch state { case .connected: "connected"; case .connecting: "connecting"; case .notConnected: "disconnected"; @unknown default: "unknown" }
-        Logger.audio.info("Multipeer peer \(peerID.displayName): \(stateStr)")
+        Logger.audio.info("Multipeer connection state: \(stateStr)")
     }
 
     nonisolated func session(_ s: MCSession, didReceive stream: InputStream, withName: String, fromPeer: MCPeerID) {}
@@ -94,7 +94,7 @@ extension MultipeerAudioPlane: MCNearbyServiceBrowserDelegate {
     }
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {}
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: any Error) {
-        Logger.audio.error("Multipeer browse failed: \(error.localizedDescription)")
+        Logger.audio.error("Multipeer browse failed")
     }
 }
 
@@ -106,6 +106,6 @@ extension MultipeerAudioPlane: MCNearbyServiceAdvertiserDelegate {
         }
     }
     nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: any Error) {
-        Logger.audio.error("Multipeer advertise failed: \(error.localizedDescription)")
+        Logger.audio.error("Multipeer advertise failed")
     }
 }

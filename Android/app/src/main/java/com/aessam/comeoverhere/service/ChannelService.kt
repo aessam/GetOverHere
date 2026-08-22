@@ -2,40 +2,95 @@ package com.aessam.comeoverhere.service
 
 import android.util.Log
 import com.aessam.comeoverhere.core.*
+import com.aessam.toursession.ParticipantPlatform
+import com.aessam.toursession.ParticipantRegistry
+import com.aessam.toursession.PresentationSnapshotPayload
+import com.aessam.toursession.SessionCredential
+import com.aessam.toursession.TourAssetDescriptor
+import com.aessam.toursession.TargetSnapshotPayload
+import com.aessam.toursession.BearingSnapshotPayload
+import com.aessam.toursession.TourVisualMode
+import com.aessam.toursession.VisualFocusSnapshotPayload
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.io.File
 import java.util.UUID
 
 /**
- * Audio-only megaphone service — matches iOS ChannelService architecture.
+ * Coordinates audio, presentation state, and tour assets for one local session.
  * - Creator of a channel is the ONLY speaker
  * - Everyone else listens
- * - BLE control plane handles discovery + coordination
- * - Audio flows via UDP over WiFi hotspot (cross-platform)
+ * - Android NSD handles discovery on the shared local network
+ * - Independent authenticated TCP lanes carry audio, control, and assets
  */
 
 enum class ListenState { IDLE, LISTENING, BROADCASTING }
+enum class SessionConnectionState { IDLE, CONNECTING, CONNECTED, RECONNECTING, FAILED }
+sealed interface OfflineMapStatus {
+    data object Unavailable : OfflineMapStatus
+    data object Transferring : OfflineMapStatus
+    data object Ready : OfflineMapStatus
+    data class Failed(val message: String) : OfflineMapStatus
+}
 
 interface ChannelServiceProtocol {
     val channels: StateFlow<List<Channel>>
     val activeChannelID: StateFlow<String?>
     val listenState: StateFlow<ListenState>
     val listenerCount: StateFlow<Int>
+    val readyParticipantCount: StateFlow<Int>
     val connectedPeers: StateFlow<List<PeerInfo>>
+    val listenerOutput: StateFlow<ListenerOutput>
+    val presentationSnapshot: StateFlow<PresentationSnapshotPayload?>
+    val slides: StateFlow<List<TourAssetDescriptor>>
+    val readySlideFiles: StateFlow<Map<String, File>>
+    val isImportingSlides: StateFlow<Boolean>
+    val isImportingMap: StateFlow<Boolean>
+    val offlineMapConfiguration: StateFlow<OfflineMapConfiguration?>
+    val offlineMapStatus: StateFlow<OfflineMapStatus>
+    val tourFeatureError: StateFlow<String?>
+    val tourCode: StateFlow<String?>
+    val connectionState: StateFlow<SessionConnectionState>
+    val reconnectAttempt: StateFlow<Int>
+    val targetSnapshot: StateFlow<TargetSnapshotPayload?>
+    val bearingSnapshot: StateFlow<BearingSnapshotPayload?>
+    val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?>
+    val localGuidanceService: LocalGuidanceService
     val localPeerID: String
     val audioQuality: AudioQuality
 
     fun start()
     fun stop()
     fun createChannel(name: String, quality: AudioQuality = AudioQuality.STANDARD)
-    fun joinChannel(channel: Channel)
+    fun joinChannel(channel: Channel, tourCode: String)
+    fun setListenerOutput(output: ListenerOutput)
     fun leaveChannel()
+    fun importSlides(imports: List<SlideImport>)
+    fun moveSlide(assetID: String, destinationIndex: Int)
+    fun removeSlide(assetID: String)
+    fun importOfflineMap(import: OfflineMapImport)
+    fun showSlide(assetID: String? = null)
+    fun hideSlides()
+    fun previousSlide()
+    fun nextSlide()
+    fun setVisualFocus(mode: TourVisualMode)
+    fun setTarget(latitude: Double, longitude: Double, label: String = "")
+    fun clearTarget()
+    fun shareCurrentBearing()
+    fun clearBearing()
 }
+
+data class SlideImport(val bytes: ByteArray, val mimeType: String)
+data class OfflineMapImport(val styleBytes: ByteArray, val temporaryArchive: File)
 
 class ChannelService(
     private val coordinator: NetworkCoordinator,
     private val audioEngine: AudioEngine,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val tourControlService: TourControlService,
+    private val assetTransferService: TourAssetTransferService,
+    private val contentStore: TourContentStore,
+    override val localGuidanceService: LocalGuidanceService,
 ) : ChannelServiceProtocol {
 
     private val _channels = MutableStateFlow<List<Channel>>(emptyList())
@@ -50,11 +105,54 @@ class ChannelService(
     private val _listenerCount = MutableStateFlow(0)
     override val listenerCount: StateFlow<Int> = _listenerCount.asStateFlow()
 
+    private val _readyParticipantCount = MutableStateFlow(0)
+    override val readyParticipantCount: StateFlow<Int> = _readyParticipantCount.asStateFlow()
+
+    private val _listenerOutput = MutableStateFlow(ListenerOutput.PRIVATE_AUDIO)
+    override val listenerOutput: StateFlow<ListenerOutput> = _listenerOutput.asStateFlow()
+
+    override val presentationSnapshot = tourControlService.snapshot
+    override val slides = tourControlService.slides
+    override val targetSnapshot = tourControlService.targetSnapshot
+    override val bearingSnapshot = tourControlService.bearingSnapshot
+    override val visualFocusSnapshot = tourControlService.visualFocusSnapshot
+
+    private val _readySlideFiles = MutableStateFlow<Map<String, File>>(emptyMap())
+    override val readySlideFiles: StateFlow<Map<String, File>> = _readySlideFiles.asStateFlow()
+
+    private val _isImportingSlides = MutableStateFlow(false)
+    override val isImportingSlides: StateFlow<Boolean> = _isImportingSlides.asStateFlow()
+
+    private val _isImportingMap = MutableStateFlow(false)
+    override val isImportingMap: StateFlow<Boolean> = _isImportingMap.asStateFlow()
+
+    private val _offlineMapConfiguration = MutableStateFlow<OfflineMapConfiguration?>(null)
+    override val offlineMapConfiguration: StateFlow<OfflineMapConfiguration?> =
+        _offlineMapConfiguration.asStateFlow()
+
+    private val _offlineMapStatus = MutableStateFlow<OfflineMapStatus>(OfflineMapStatus.Unavailable)
+    override val offlineMapStatus: StateFlow<OfflineMapStatus> = _offlineMapStatus.asStateFlow()
+
+    private val _tourFeatureError = MutableStateFlow<String?>(null)
+    override val tourFeatureError: StateFlow<String?> = _tourFeatureError.asStateFlow()
+
+    private val _tourCode = MutableStateFlow<String?>(null)
+    override val tourCode: StateFlow<String?> = _tourCode.asStateFlow()
+
+    private val _connectionState = MutableStateFlow(SessionConnectionState.IDLE)
+    override val connectionState: StateFlow<SessionConnectionState> = _connectionState.asStateFlow()
+
+    private val _reconnectAttempt = MutableStateFlow(0)
+    override val reconnectAttempt: StateFlow<Int> = _reconnectAttempt.asStateFlow()
+
     override val connectedPeers: StateFlow<List<PeerInfo>> = coordinator.controlPlane.connectedPeers
     override val localPeerID: String get() = coordinator.controlPlane.localPeer.id
     override var audioQuality: AudioQuality = AudioQuality.STANDARD
 
     private var captureJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var guestCredential: SessionCredential? = null
+    private var participantRegistry = ParticipantRegistry()
 
     val activeChannel: Channel?
         get() = _channels.value.find { it.id == _activeChannelID.value }
@@ -64,6 +162,32 @@ class ChannelService(
 
     companion object {
         private const val TAG = "ChannelService"
+    }
+
+    init {
+        assetTransferService.setEventHandler { event ->
+            when (event) {
+                is TourAssetTransferEvent.ManifestReceived -> {
+                    tourControlService.acceptTourPack(event.manifest)
+                    refreshOfflineMap()
+                }
+                is TourAssetTransferEvent.AssetReady -> {
+                    _readySlideFiles.value = _readySlideFiles.value + (event.assetID to event.file)
+                    refreshOfflineMap()
+                }
+                is TourAssetTransferEvent.ParticipantReady -> Unit
+                is TourAssetTransferEvent.ParticipantReadinessChanged -> {
+                    _readyParticipantCount.value = event.readyCount
+                }
+                is TourAssetTransferEvent.Failed -> {
+                    _tourFeatureError.value = event.message
+                    Log.e(TAG, "Tour asset transfer failed")
+                }
+            }
+        }
+        tourControlService.setConnectionEventHandler { event ->
+            scope.launch { handleControlConnectionEvent(event) }
+        }
     }
 
     // MARK: - Lifecycle
@@ -89,38 +213,217 @@ class ChannelService(
             createdAt = nowAsSwiftRef(),
             createdBy = coordinator.controlPlane.localPeer.id
         )
-        _channels.value = _channels.value + channel
-        _activeChannelID.value = channel.id
-        _listenState.value = ListenState.BROADCASTING
+        val sessionID = UUID.fromString(channel.id)
+        val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
+            .getOrElse {
+                Log.e(TAG, "Cannot create session with non-UUID participant identity", it)
+                return
+            }
+        try {
+            val code = SessionCredential.generateShortCode()
+            val credential = SessionCredential.derive(code, sessionID)
+            contentStore.beginPack(sessionID, name)
+            val emptyManifest = contentStore.manifestPayload()
+            tourControlService.configureSession(
+                sessionID,
+                participantID,
+                coordinator.controlPlane.localPeer.displayName,
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            assetTransferService.configureSession(
+                sessionID,
+                participantID,
+                coordinator.controlPlane.localPeer.displayName,
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            tourControlService.startGuide(sessionID)
+            assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
+            _readySlideFiles.value = emptyMap()
+            _offlineMapConfiguration.value = null
+            _offlineMapStatus.value = OfflineMapStatus.Unavailable
+            _tourFeatureError.value = null
+            _tourCode.value = code
 
-        // Announce via BLE
-        broadcastChannelAnnounce(channel)
+            _channels.value = _channels.value + channel
+            _activeChannelID.value = channel.id
+            _listenState.value = ListenState.BROADCASTING
+            _connectionState.value = SessionConnectionState.CONNECTED
+            guestCredential = null
 
-        // Select audio plane and start broadcasting
-        val plane = coordinator.selectAudioPlane()
-        plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
+            broadcastChannelAnnounce(channel)
 
-        // Start capturing + sending audio
-        startCapturing(plane, channel.id)
-        Log.i(TAG, "Created megaphone: $name (quality: ${audioQuality.label})")
+            val plane = coordinator.selectAudioPlane()
+            participantRegistry = ParticipantRegistry()
+            _listenerCount.value = 0
+            _readyParticipantCount.value = 0
+            plane.configureSession(
+                sessionID = sessionID,
+                participantID = participantID,
+                displayName = coordinator.controlPlane.localPeer.displayName,
+                platform = ParticipantPlatform.ANDROID,
+                credential = credential,
+            )
+            plane.setSessionEventHandler { event ->
+                scope.launch { handleAudioSessionEvent(event) }
+            }
+            plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
+            startCapturing(plane, channel.id)
+        } catch (error: Exception) {
+            _tourCode.value = null
+            _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+            Log.e(TAG, "Cannot start tour features (${error.javaClass.simpleName})")
+            return
+        }
+        Log.i(TAG, "Created megaphone (quality: ${audioQuality.label})")
     }
 
-    override fun joinChannel(channel: Channel) {
+    override fun joinChannel(channel: Channel, tourCode: String) {
+        val sessionID = runCatching { UUID.fromString(channel.id) }
+            .getOrElse {
+                Log.e(TAG, "Cannot join session with non-UUID channel identity", it)
+                return
+            }
+        val normalizedCode = SessionCredential.normalize(tourCode)
+        val credential = runCatching { SessionCredential.derive(normalizedCode, sessionID) }
+            .getOrElse {
+                _tourFeatureError.value = it.message ?: it.javaClass.simpleName
+                return
+            }
+        val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
+            .getOrElse {
+                Log.e(TAG, "Cannot join session with non-UUID participant identity", it)
+                return
+            }
+        val hostIP = channel.audioHostIP ?: run {
+            _tourFeatureError.value = "Guide network address is unavailable"
+            Log.e(TAG, "Cannot join session without a guide network address")
+            return
+        }
         stopCurrentActivity()
+        _readySlideFiles.value = emptyMap()
+        _readyParticipantCount.value = 0
+        _offlineMapConfiguration.value = null
+        _offlineMapStatus.value = OfflineMapStatus.Transferring
+        _tourFeatureError.value = null
+        _tourCode.value = normalizedCode
+        guestCredential = credential
+        _reconnectAttempt.value = 0
         _activeChannelID.value = channel.id
         _listenState.value = ListenState.LISTENING
+        _connectionState.value = SessionConnectionState.CONNECTING
+        setListenerOutput(ListenerOutput.PRIVATE_AUDIO)
+        startGuestTransports(channel, hostIP, sessionID, participantID, credential)
+        Log.i(TAG, "Joined megaphone")
+    }
 
-        val plane = coordinator.selectAudioPlane()
-        // For TCP audio: set the speaker's IP before connecting
-        if (plane is UDPAudioPlane) {
-            plane.hostIP = channel.audioHostIP
-            Log.i(TAG, "TCP audio target: ${plane.hostIP}")
+    override fun importSlides(imports: List<SlideImport>) {
+        if (_listenState.value != ListenState.BROADCASTING || imports.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            _isImportingSlides.value = true
+            try {
+                imports.forEach { contentStore.importSlide(it.bytes, it.mimeType) }
+                val manifest = contentStore.manifestPayload()
+                assetTransferService.hostTourPack(manifest, contentStore.sourcesByAssetID)
+                tourControlService.updateDeck(manifest.packID, manifest.assets)
+                _readySlideFiles.value = contentStore.sourcesByAssetID
+                _tourFeatureError.value = null
+            } catch (error: Exception) {
+                _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Slide import failed (${error.javaClass.simpleName})")
+            } finally {
+                _isImportingSlides.value = false
+            }
         }
-        audioEngine.startPlayback()
-        plane.startListening(channelID = channel.id) { data ->
-            audioEngine.enqueuePlayback(data)
+    }
+
+    override fun moveSlide(assetID: String, destinationIndex: Int) {
+        if (_listenState.value != ListenState.BROADCASTING) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                contentStore.moveSlide(assetID, destinationIndex)
+                publishCurrentTourPack()
+                _tourFeatureError.value = null
+            } catch (error: Exception) {
+                _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Slide reorder failed (${error.javaClass.simpleName})")
+            }
         }
-        Log.i(TAG, "Listening to: ${channel.name}")
+    }
+
+    override fun removeSlide(assetID: String) {
+        if (_listenState.value != ListenState.BROADCASTING) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                contentStore.removeSlide(assetID)
+                publishCurrentTourPack()
+                _tourFeatureError.value = null
+            } catch (error: Exception) {
+                _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Slide removal failed (${error.javaClass.simpleName})")
+            }
+        }
+    }
+
+    override fun importOfflineMap(import: OfflineMapImport) {
+        if (_listenState.value != ListenState.BROADCASTING) return
+        scope.launch(Dispatchers.IO) {
+            _isImportingMap.value = true
+            _offlineMapStatus.value = OfflineMapStatus.Transferring
+            try {
+                contentStore.importOfflineMap(import.styleBytes, import.temporaryArchive)
+                val manifest = contentStore.manifestPayload()
+                assetTransferService.hostTourPack(manifest, contentStore.sourcesByAssetID)
+                tourControlService.updateDeck(manifest.packID, manifest.assets)
+                _readySlideFiles.value = contentStore.sourcesByAssetID
+                refreshOfflineMap()
+                _tourFeatureError.value = null
+            } catch (error: Exception) {
+                _offlineMapStatus.value = OfflineMapStatus.Failed(
+                    error.message ?: error.javaClass.simpleName,
+                )
+                _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Offline map import failed (${error.javaClass.simpleName})")
+            } finally {
+                if (!import.temporaryArchive.delete() && import.temporaryArchive.exists()) {
+                    Log.e(TAG, "Could not remove temporary map import")
+                }
+                _isImportingMap.value = false
+            }
+        }
+    }
+
+    override fun showSlide(assetID: String?) = runPresentationAction {
+        tourControlService.showSlide(assetID)
+    }
+
+    override fun hideSlides() = runPresentationAction(tourControlService::hide)
+
+    override fun previousSlide() = runPresentationAction(tourControlService::goPrevious)
+
+    override fun nextSlide() = runPresentationAction(tourControlService::goNext)
+
+    override fun setVisualFocus(mode: TourVisualMode) = runPresentationAction {
+        tourControlService.setVisualFocus(mode)
+    }
+
+    override fun setTarget(latitude: Double, longitude: Double, label: String) =
+        runPresentationAction { tourControlService.setTarget(latitude, longitude, label) }
+
+    override fun clearTarget() = runPresentationAction(tourControlService::clearTarget)
+
+    override fun shareCurrentBearing() = runPresentationAction {
+        val heading = localGuidanceService.magneticHeadingDegrees.value
+            ?: throw PresentationServiceException("A valid compass heading is required")
+        tourControlService.shareBearing(heading)
+    }
+
+    override fun clearBearing() = runPresentationAction(tourControlService::clearBearing)
+
+    override fun setListenerOutput(output: ListenerOutput) {
+        _listenerOutput.value = output
+        audioEngine.setListenerOutput(output)
     }
 
     override fun leaveChannel() {
@@ -128,7 +431,10 @@ class ChannelService(
         stopCurrentActivity()
         _activeChannelID.value = null
         _listenState.value = ListenState.IDLE
-        Log.i(TAG, "Left channel: ${ch.name}")
+        _tourCode.value = null
+        _connectionState.value = SessionConnectionState.IDLE
+        guestCredential = null
+        Log.i(TAG, "Left channel")
 
         if (ch.createdBy == coordinator.controlPlane.localPeer.id) {
             _channels.value = _channels.value.filter { it.id != ch.id }
@@ -148,6 +454,10 @@ class ChannelService(
     }
 
     private fun stopCurrentActivity() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        _reconnectAttempt.value = 0
+        guestCredential = null
         if (_listenState.value == ListenState.BROADCASTING) {
             audioEngine.stopCapture()
             captureJob?.cancel()
@@ -155,7 +465,71 @@ class ChannelService(
         } else if (_listenState.value == ListenState.LISTENING) {
             audioEngine.stopPlayback()
         }
+        coordinator.activeAudioPlane?.setSessionEventHandler(null)
         coordinator.activeAudioPlane?.stop()
+        tourControlService.stop()
+        assetTransferService.stop()
+        localGuidanceService.stop()
+        _offlineMapConfiguration.value = null
+        _offlineMapStatus.value = OfflineMapStatus.Unavailable
+        participantRegistry = ParticipantRegistry()
+        _listenerCount.value = 0
+        _readyParticipantCount.value = 0
+        _connectionState.value = SessionConnectionState.IDLE
+    }
+
+    private fun refreshOfflineMap() {
+        val manifest = if (isCreator) {
+            runCatching(contentStore::manifestPayload).getOrNull()
+        } else {
+            assetTransferService.manifest
+        }
+        if (manifest == null) {
+            _offlineMapConfiguration.value = null
+            _offlineMapStatus.value = if (_listenState.value == ListenState.LISTENING) {
+                OfflineMapStatus.Transferring
+            } else {
+                OfflineMapStatus.Unavailable
+            }
+            return
+        }
+        val hasStyle = manifest.assets.any { it.kind == com.aessam.toursession.TourAssetKind.MAP_STYLE }
+        val hasArchive = manifest.assets.any { it.kind == com.aessam.toursession.TourAssetKind.MAP_ARCHIVE }
+        if (!hasStyle && !hasArchive) {
+            _offlineMapConfiguration.value = null
+            _offlineMapStatus.value = OfflineMapStatus.Unavailable
+            return
+        }
+        if (!hasStyle || !hasArchive) {
+            val message = "The tour pack contains an incomplete offline map"
+            _offlineMapConfiguration.value = null
+            _offlineMapStatus.value = OfflineMapStatus.Failed(message)
+            _tourFeatureError.value = message
+            return
+        }
+        val files = if (isCreator) contentStore.sourcesByAssetID else assetTransferService.readyFilesByAssetID
+        try {
+            _offlineMapConfiguration.value = OfflineMapPack.resolve(manifest, files)
+            _offlineMapStatus.value = OfflineMapStatus.Ready
+        } catch (error: OfflineMapPackException) {
+            if (error.message?.endsWith("is not ready") == true) {
+                _offlineMapConfiguration.value = null
+                _offlineMapStatus.value = OfflineMapStatus.Transferring
+            } else {
+                _offlineMapConfiguration.value = null
+                _offlineMapStatus.value = OfflineMapStatus.Failed(
+                    error.message ?: error.javaClass.simpleName,
+                )
+                _tourFeatureError.value = error.message
+            }
+        }
+    }
+
+    private fun publishCurrentTourPack() {
+        val manifest = contentStore.manifestPayload()
+        assetTransferService.hostTourPack(manifest, contentStore.sourcesByAssetID)
+        tourControlService.updateDeck(manifest.packID, manifest.assets)
+        _readySlideFiles.value = contentStore.sourcesByAssetID
     }
 
     private fun broadcastChannelAnnounce(channel: Channel) {
@@ -204,12 +578,12 @@ class ChannelService(
                             _channels.value = _channels.value.map {
                                 if (it.id == command.channelID) updated else it
                             }
-                            Log.i(TAG, "Updated megaphone: ${updated.name} (audioHostIP=${command.audioHostIP})")
+                            Log.i(TAG, "Updated discovered megaphone")
 
                             if (_activeChannelID.value == updated.id &&
                                 _listenState.value == ListenState.LISTENING &&
                                 existing.audioHostIP != updated.audioHostIP) {
-                                joinChannel(updated)
+                                _tourCode.value?.let { joinChannel(updated, it) }
                             }
                         } else {
                             val channel = Channel(
@@ -220,7 +594,7 @@ class ChannelService(
                                 audioHostIP = command.audioHostIP
                             )
                             _channels.value = _channels.value + channel
-                            Log.i(TAG, "Discovered megaphone: ${channel.name} (audioHostIP=${command.audioHostIP})")
+                            Log.i(TAG, "Discovered megaphone")
                         }
                     }
                     is BLECommand.ChannelEnded -> {
@@ -229,6 +603,9 @@ class ChannelService(
                             stopCurrentActivity()
                             _activeChannelID.value = null
                             _listenState.value = ListenState.IDLE
+                            _tourCode.value = null
+                            _connectionState.value = SessionConnectionState.IDLE
+                            guestCredential = null
                             Log.i(TAG, "Channel ended")
                         }
                     }
@@ -244,14 +621,110 @@ class ChannelService(
                 when (event) {
                     is PeerEvent.Connected -> {
                         broadcastAllChannels()
-                        _listenerCount.value = coordinator.controlPlane.connectedPeers.value.size
-                    }
-                    is PeerEvent.Disconnected -> {
-                        _listenerCount.value = coordinator.controlPlane.connectedPeers.value.size
                     }
                     else -> {}
                 }
             }
+        }
+    }
+
+    private fun handleAudioSessionEvent(event: AudioSessionEvent) {
+        when (event) {
+            is AudioSessionEvent.Joined -> participantRegistry.register(event.participant)
+            is AudioSessionEvent.Disconnected -> participantRegistry.disconnect(event.connectionID)
+        }
+        _listenerCount.value = participantRegistry.listenerCount
+        Log.i(TAG, "Session membership changed: listeners=${_listenerCount.value}")
+    }
+
+    private fun startGuestTransports(
+        channel: Channel,
+        hostIP: String,
+        sessionID: UUID,
+        participantID: UUID,
+        credential: SessionCredential,
+    ) {
+        tourControlService.configureSession(
+            sessionID,
+            participantID,
+            coordinator.controlPlane.localPeer.displayName,
+            ParticipantPlatform.ANDROID,
+            credential,
+        )
+        assetTransferService.configureSession(
+            sessionID,
+            participantID,
+            coordinator.controlPlane.localPeer.displayName,
+            ParticipantPlatform.ANDROID,
+            credential,
+        )
+        tourControlService.startGuest(hostIP)
+        assetTransferService.joinTour(hostIP)
+
+        val plane = coordinator.selectAudioPlane()
+        plane.configureSession(
+            sessionID = sessionID,
+            participantID = participantID,
+            displayName = coordinator.controlPlane.localPeer.displayName,
+            platform = ParticipantPlatform.ANDROID,
+            credential = credential,
+        )
+        plane.setSessionEventHandler(null)
+        if (plane is UDPAudioPlane) plane.hostIP = hostIP
+        audioEngine.startPlayback()
+        plane.startListening(channelID = channel.id, audioEngine::enqueuePlayback)
+    }
+
+    private fun handleControlConnectionEvent(event: TourControlConnectionEvent) {
+        if (_listenState.value != ListenState.LISTENING) return
+        when (event) {
+            TourControlConnectionEvent.Connected -> {
+                reconnectJob?.cancel()
+                reconnectJob = null
+                _reconnectAttempt.value = 0
+                _connectionState.value = SessionConnectionState.CONNECTED
+                _tourFeatureError.value = null
+            }
+            TourControlConnectionEvent.Disconnected -> scheduleReconnect("Guide connection closed")
+            is TourControlConnectionEvent.Failed -> scheduleReconnect(event.message)
+        }
+    }
+
+    private fun scheduleReconnect(reason: String) {
+        if (reconnectJob != null) return
+        if (_reconnectAttempt.value >= 5) {
+            _connectionState.value = SessionConnectionState.FAILED
+            _tourFeatureError.value = "Could not reconnect to the guide"
+            return
+        }
+        val channel = activeChannel ?: return
+        val credential = guestCredential ?: return
+        val hostIP = channel.audioHostIP ?: return
+        val sessionID = runCatching { UUID.fromString(channel.id) }.getOrNull() ?: return
+        val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
+            .getOrNull() ?: return
+        _reconnectAttempt.value += 1
+        _connectionState.value = SessionConnectionState.RECONNECTING
+        Log.e(TAG, "Session reconnect attempt ${_reconnectAttempt.value}")
+        val delayMilliseconds = (1L shl (_reconnectAttempt.value - 1)) * 1_000L
+        reconnectJob = scope.launch {
+            delay(delayMilliseconds)
+            reconnectJob = null
+            if (_listenState.value != ListenState.LISTENING) return@launch
+            coordinator.activeAudioPlane?.stop()
+            tourControlService.stop()
+            assetTransferService.stop()
+            audioEngine.stopPlayback()
+            startGuestTransports(channel, hostIP, sessionID, participantID, credential)
+        }
+    }
+
+    private fun runPresentationAction(action: () -> Unit) {
+        try {
+            action()
+            _tourFeatureError.value = null
+        } catch (error: Exception) {
+            _tourFeatureError.value = error.message ?: error.javaClass.simpleName
         }
     }
 }

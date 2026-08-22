@@ -1,83 +1,36 @@
 package com.aessam.comeoverhere
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
+import org.maplibre.android.MapLibre
 import androidx.compose.material3.MaterialTheme
-import androidx.core.content.ContextCompat
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.aessam.comeoverhere.core.NetworkCoordinator
-import com.aessam.comeoverhere.service.AudioEngine
-import com.aessam.comeoverhere.service.ChannelService
 import com.aessam.comeoverhere.ui.AppViewModel
 import com.aessam.comeoverhere.ui.AppViewModelFactory
 import com.aessam.comeoverhere.ui.ChannelScreen
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import com.aessam.comeoverhere.ui.WiFiAwareLabScreen
 
 class MainActivity : ComponentActivity() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private lateinit var coordinator: NetworkCoordinator
-    private lateinit var channelService: ChannelService
-    private lateinit var audioEngine: AudioEngine
-
-    private val requiredPermissions: Array<String>
-        get() = arrayOf(Manifest.permission.RECORD_AUDIO)
-
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        if (!results.values.all { it }) {
-            Log.w(TAG, "Some permissions denied: ${results.filter { !it.value }.keys}")
-        }
-        startServices()
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val deviceName = Build.MODEL
-        coordinator = NetworkCoordinator(this, deviceName, scope)
-        audioEngine = AudioEngine()
-        channelService = ChannelService(coordinator, audioEngine, scope)
+        MapLibre.getInstance(this)
+        val channelService = (application as ComeOverHereApp).channelService
 
         setContent {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(factory = AppViewModelFactory(channelService))
-                ChannelScreen(vm)
+                var showWiFiAwareLab by remember { mutableStateOf(false) }
+                if (showWiFiAwareLab) {
+                    WiFiAwareLabScreen(onBack = { showWiFiAwareLab = false })
+                } else {
+                    ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true })
+                }
             }
         }
-
-        requestPermissionsIfNeeded()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        channelService.stop()
-        coordinator.stop()
-    }
-
-    private fun requestPermissionsIfNeeded() {
-        val missing = requiredPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isEmpty()) startServices()
-        else permissionLauncher.launch(missing.toTypedArray())
-    }
-
-    private fun startServices() {
-        coordinator.start()
-        channelService.start()
-        Log.i(TAG, "All services started")
-    }
-
-    companion object {
-        private const val TAG = "MainActivity"
     }
 }

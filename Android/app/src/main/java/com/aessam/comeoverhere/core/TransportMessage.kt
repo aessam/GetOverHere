@@ -114,7 +114,7 @@ fun parseTransportMessage(jsonString: String): TransportMessage? {
             else -> null
         }
     } catch (e: Exception) {
-        android.util.Log.e("TransportMessage", "Parse failed: ${e.message}", e)
+        android.util.Log.e("TransportMessage", "Parse failed: ${e.javaClass.simpleName}")
         null
     }
 }
