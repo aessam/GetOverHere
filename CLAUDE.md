@@ -2,7 +2,7 @@
 
 Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product contract. This repository contains native iOS and Android apps plus equivalent Swift and Kotlin GOH2 session cores.
 
-## Live architecture
+## Current implemented architecture
 
 - Discovery: Bonjour (`LocalControlPlane.swift`) and Android NSD (`LocalControlPlane.kt`) on a shared local Wi-Fi LAN. Internet is not required.
 - Realtime lane: TCP port 50000, guide Float32 PCM audio to authenticated guests.
@@ -15,6 +15,21 @@ Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product c
 
 BLE, Android LocalOnlyHotspot, RAFT, and iOS Multipeer files remain compiled legacy/experimental code but are not selected by `NetworkCoordinator`. Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
 
+The iOS production Wi-Fi Aware lane wrappers currently have no connection owner or product call sites. Do not claim that the normal app works over Aware until the isolated cross-platform probe and production wiring gates pass.
+
+## Selected transport direction
+
+- Wi-Fi Aware is the preferred no-infrastructure realtime/control/asset transport after both physical role directions pass.
+- The existing LAN path is the guaranteed first-class full-capability floor, not an opportunistic legacy route.
+- A bounded bitchat-style BLE overlay is planned for discovery, authentication bootstrap, current control state, membership, and degraded compressed voice if its physical gate passes. It is expected to be the common AP-less route for guests below the Aware OS/hardware floor.
+- Route selection is per participant. Stable session/participant/stream/sequence identity suppresses duplicate delivery across concurrent routes.
+- Aware overflow follows ADR-031: LAN, then validated BLE voice, then explicit control-only participation. Never exceed runtime Aware resources or evict an existing Aware guest.
+- Android LocalOnlyHotspot/Wi-Fi Direct, portable routers, and cross-platform bridging of proprietary peer-to-peer Wi-Fi networks are not selected dependencies.
+- Application payloads require route-independent authenticated encryption; ADR-023 admission authentication alone is insufficient.
+- V1 has session-wide revocation only. End and restart the tour to rotate a leaked code and all derived keys.
+
+`NextSession.md` is the canonical gate-by-gate execution plan. Execute P0 → P3 → P1; P1 is limited to four focused physical sessions or two engineering days. Do not start production Aware or BLE implementation before its preceding physical gate passes.
+
 ## Product boundaries
 
 - Exactly one guide; guests never transmit microphone audio.
@@ -22,7 +37,7 @@ BLE, Android LocalOnlyHotspot, RAFT, and iOS Multipeer files remain compiled leg
 - The guide-selected Slides, Map, or Pointer screen is authoritative; guests may browse locally until the next guide change.
 - Android owns the tour runtime in `ComeOverHereApp`, not `MainActivity`, so recreation cannot end a tour.
 - iOS uses `AppCoordinator`; simulator audio is intentionally unsupported because `AVAudioEngine` can abort below Swift's throwable boundary.
-- No Google Nearby production dependency, backend, account, analytics, cloud relay, or guest mesh.
+- No Google Nearby production dependency, backend, account, analytics, cloud relay, or general-purpose/store-and-forward guest mesh. Only the bounded current-session BLE control/voice overlay in ADR-029 is in scope.
 
 ## Cross-platform contract changes
 

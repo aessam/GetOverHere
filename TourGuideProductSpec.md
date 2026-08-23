@@ -1,11 +1,11 @@
 # GetOverHere Tour Guide Product Specification
 
 **Status:** Authoritative implementation target
-**Date:** 2026-08-21
+**Date:** 2026-08-22
 
 ## Objective
 
-One guide speaks to a local group of iOS and Android guests without Internet access. During the same live session the guide can present slides, drop a geographic target pin, or point along a compass bearing. Guests hear the guide, receive the current visual state, and recover it after joining late or reconnecting.
+One guide speaks to a local group of iOS and Android guests without Internet access. A usable local LAN is the guaranteed full-capability floor. Supported groups may operate without external network hardware through validated Wi-Fi Aware and BLE routes. During the same live session the guide can present slides, drop a geographic target pin, or point along a compass bearing. Guests hear the guide, receive the current visual state, and recover it after joining late or reconnecting.
 
 ## Architecture
 
@@ -25,7 +25,9 @@ graph TD
     AndroidApp[Android app] --> KotlinCore
     iOSApp --> SessionTransport[Realtime / Control / Asset transports]
     AndroidApp --> SessionTransport
-    SessionTransport --> LocalLink[Local Wi-Fi / Wi-Fi Aware]
+    SessionTransport --> LAN[LAN guaranteed floor]
+    SessionTransport --> Aware[Wi-Fi Aware direct no-AP]
+    SessionTransport --> BLE[BLE universal control / gated voice]
 ```
 
 The two session cores are equivalent implementations, not dependencies of each other. Exact fixture equality proves their contract.
@@ -43,6 +45,8 @@ The two session cores are equivalent implementations, not dependencies of each o
 
 - Guide audio continues while maps or slides are visible.
 - Realtime audio has an independent transport lane and cannot wait behind slide or map assets.
+- Realtime frames are compressed, sequenced, authenticated, encrypted, expiry-bounded, and safe to discard when late.
+- The local-LAN route is the guaranteed full-quality audio floor. Wi-Fi Aware is the preferred direct no-AP route. A bounded BLE relay path may provide degraded live audio only after its physical acceptance gate passes.
 - Listener playback defaults to the receiver or connected headset. Speaker mode remains an explicit feedback-prone override.
 - Screen locking must not intentionally stop guide capture or guest playback.
 
@@ -98,8 +102,10 @@ TourPack
 - Wire contracts must contain no participant-location or location-history payload.
 - Location permission descriptions state that location is used only on-device to show the user relative to the shared pin.
 - Session discovery is not authentication. Production onboarding requires possession of a per-tour credential delivered by QR or short code.
+- Admission authentication is not payload confidentiality. Realtime, control, and asset payloads require route-independent authenticated encryption derived from the per-tour credential.
 - Per-tour credentials and derived keys are not stored in `UserDefaults` or plain preferences.
 - Logs contain no credentials, participant locations, slide contents, or persistent personal identifiers.
+- V1 has no individual mid-tour credential revocation. Ending and restarting the tour rotates the code and derived keys for the whole session.
 
 ## Transport Classes
 
@@ -109,11 +115,22 @@ TourPack
 | Reliable control | membership, snapshots, shared screen, pin, bearing, presentation, readiness | Ordered, authenticated, reconnectable |
 | Reliable asset | slide images, map archives, styles | Chunked, resumable, integrity verified, throttled |
 
+## Transport Selection
+
+- Native cross-platform Wi-Fi Aware is the preferred transport for realtime, control, and assets when both devices support and establish it.
+- The existing local-LAN transport remains the guaranteed full-capability floor when devices share a usable LAN. It is maintained and tested as a first-class route.
+- BLE is the universal discovery and bootstrap path and is expected to serve many AP-less guests that do not meet the Aware OS/hardware floor. Its controlled relay overlay carries current authenticated control state and membership; compressed live voice is allowed only if the dedicated physical gate passes.
+- Route selection is per participant. A tour may contain Aware, LAN, and BLE guests simultaneously.
+- Aware admission stops at the guide device's reported current resource limit. An overflow guest tries LAN, then validated BLE voice, then explicit control-only mode with audio unavailable. Existing Aware guests are not evicted.
+- Stable session, participant, stream, and sequence identifiers suppress duplicates across overlapping transports and reconnects.
+- Android LocalOnlyHotspot/Wi-Fi Direct, portable routers, and bridges between Apple peer-to-peer Wi-Fi and Android Wi-Fi Direct are not production dependencies.
+- BLE asset transfer is subordinate to live audio. Full slides and PMTiles prefer Aware/LAN or content prepared before the tour.
+
 ## Product Interface
 
 ### Guide
 
-- Create/end tour and see validated listener count.
+- Create/end tour and see separate validated connected and audio-ready counts when a participant is degraded.
 - Live microphone state remains visible.
 - Open Slides to import, reorder, present, hide, or remove images.
 - Open Map to drop, move, label, or clear the target pin.
@@ -127,6 +144,7 @@ TourPack
 - View the offline map with local user dot, shared pin, label, distance, and local arrow.
 - View a sightline pointer when active.
 - See explicit states for missing pack, unavailable location, poor compass accuracy, and reconnecting.
+- See an explicit control-only/audio-unavailable state when no validated audio route exists.
 
 ## Defaults for Open Product Questions
 
@@ -143,7 +161,8 @@ These defaults are active and do not block implementation:
 
 - Cloud accounts, server storage, cellular dependency, analytics, and remote administration.
 - Sharing participant locations, showing other participants on the map, or recording travel history.
-- Application-level mesh routing through guest phones.
+- General-purpose, unbounded, or store-and-forward mesh routing. The only guest relay in scope is the bounded current-session BLE control/voice overlay defined by ADR-029.
+- Android-hosted Wi-Fi, portable-router setup, or bridging incompatible platform-specific peer-to-peer Wi-Fi networks.
 - Turn-by-turn pedestrian navigation in the initial product.
 - Multiple simultaneous guides or guest microphone access.
 
@@ -151,8 +170,14 @@ These defaults are active and do not block implementation:
 
 1. Swift and Kotlin emit identical bytes for every GOH2 payload and reject the same invalid boundaries.
 2. Host CLIs simulate late join, reconnect, duplicate delivery, reordered delivery, missing assets, and target-state replacement.
-3. iOS Simulator and Android JVM/device tests prove state, cache integrity, and local TCP behavior without radio assumptions.
-4. Physical iPhone and Android tests prove both guide directions while audio, slide changes, target changes, and asset transfers run together.
-5. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, and poor heading accuracy are exercised.
-6. Source and wire audits find no participant-location payload or transmission path.
-7. Completion requires every requirement above to have direct code and runtime evidence recorded in `ExperimentLog.md`.
+3. Host CLIs simulate bounded BLE line, star, overlapping-star, partition, relay/successor loss, duplicate-flood, stale-audio, and route-switch behavior at 1/5/10/20/50 logical nodes.
+4. iOS Simulator and Android JVM/device tests prove state, cache integrity, encryption/replay boundaries, and local transport behavior without radio assumptions.
+5. The isolated physical Wi-Fi Aware lab proves discovery, pairing, NDP establishment, socket traffic, disconnect, and reconnect in both iOS/Android role directions before production promotion.
+6. Physical iPhone and Android tests prove both guide directions while compressed audio, slide changes, target changes, and asset transfers run together across each supported route.
+7. BLE physical gates progress through 2/5/10 mixed iOS/Android devices and record direct and relayed control/voice latency, loss, queue depth, battery, thermal state, and locked/pocketed behavior. BLE voice is removed if its gate fails.
+8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets.
+9. Aware tests exercise capacity-minus-one, capacity, and capacity-plus-one. Overflow follows ADR-031 and never changes the existing Aware participant set.
+10. One guide runs Aware, BLE central, BLE peripheral, LAN, audio encode, and active traffic concurrently for 60 minutes while coexistence loss, thermal state, and battery delta are recorded.
+11. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, poor heading accuracy, and mixed transport availability are exercised.
+12. Source and wire audits find no participant-location payload or transmission path and no plaintext application payload path.
+13. Completion requires every requirement above to have direct code and runtime evidence recorded in `ExperimentLog.md`. Supported capacity equals the largest passing physical gate.

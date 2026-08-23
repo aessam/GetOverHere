@@ -317,3 +317,49 @@ Commands and results:
 4. Third physical iPhone launch check.
    - `devicectl device process launch --terminate-existing com.aens.GetOverHere` again returned `RequestDenied` with reason `Locked`.
    - This is the third consecutive acceptance turn with the same external device-state blocker. Physical iPhone and two-device acceptance cannot progress until Dark knight is unlocked and kept awake.
+
+## 2026-08-22 — Transport direction and production Aware call-site audit
+
+Investigation:
+
+- Reviewed the current product contract, ADRs, lessons, review, execution handoff, recent commits, and both platform transport ownership.
+- Audited the iOS source for production Wi-Fi Aware connection creation and lane construction.
+- Reviewed public bitchat iOS and Android sources at commits `9b84b361225facd8e623f25d76f889d3dc54a879` and `09b481f1ef5852ed50edce987dd719bd9588b125` for BLE controlled flooding, fragmentation, deduplication, fan-out, live AAC voice, and Android Wi-Fi Aware behavior. Source-only shallow clones were created under `/tmp` and removed after inspection; no binaries were downloaded, built, or installed.
+
+Commands and results:
+
+1. `rg -n -S "NetworkListener|NetworkBrowser|WiFiAwareAudioPlane|WiFiAwareSessionControlTransport|WiFiAwareSessionAssetTransport" iOS/GetOverHere -g '*.swift'`
+   - Result: the only production-target Wi-Fi Aware `NetworkListener` and `NetworkBrowser` call sites are in `WiFiAwareLabTransport.swift`. The three production lane classes exist in `WiFiAwareSessionLaneTransport.swift` but have no application call sites; tests are their only constructors.
+2. `rg -n -S "HybridAudioPlane|HybridSessionControlTransport|HybridSessionAssetTransport|HybridSessionRouteController|WiFiAwareAudioPlane\\(|WiFiAwareSessionControlTransport\\(|WiFiAwareSessionAssetTransport\\(" iOS -g '*.swift'`
+   - Result: hybrid and Aware lane construction appears only in `HybridSessionTransportsTests.swift`; the normal iOS app remains local-LAN-only.
+3. Public source review of bitchat `WHITEPAPER.md`, `VoiceBurstPacket.swift`, `PTTAudioFormat.swift`, `TransportConfig.swift`, and the matching Android voice/mesh sources.
+   - Result: both platforms implement the same BLE live-voice packet format using AAC-LC, 16 kHz mono, 16 kb/s, 64 ms access units, TTL routing, deduplication, split horizon, and bounded fan-out. This establishes a concrete implementation reference but provides no GetOverHere physical capacity result.
+4. User physical observations considered in the decision.
+   - Result: Android-hosted Wi-Fi was unstable on the target device and is removed from the selected production direction. A separate cross-platform AirDrop-like application transferred files successfully, increasing confidence in the device pair's Aware capability; this observation has not been independently reproduced in GetOverHere.
+
+Decision and planning result:
+
+- Added ADR-029: Wi-Fi Aware primary, opportunistic LAN, and bounded BLE control/voice fallback with per-participant route selection.
+- Added ADR-030: route-independent application payload encryption.
+- Replaced `NextSession.md` with the gate-by-gate execution plan. No product source code changed and no transport completion claim is made.
+
+## 2026-08-22 — Execution-plan risk and sequencing amendment
+
+Review result:
+
+- Moved transport-neutral encoded/encrypted realtime work from after Aware integration to immediately after the baseline checkpoint: P0 → P3 → P1.
+- Reclassified the existing LAN path from opportunistic rollback to the guaranteed first-class full-capability floor.
+- Added a Wi-Fi Aware stop-loss of four focused physical sessions or two engineering days.
+- Recorded the rough 15–25% planning case in which both no-AP audio routes fail and LAN remains required for audio.
+- Gave BLE voice the same 2/5/10-device physical emphasis as BLE control and added a mixed AP-less, half-locked/pocketed field case.
+- Added ADR-031 for runtime Aware overflow: LAN, then validated BLE voice, then explicit control-only mode.
+- Added the P6 guide-radio coexistence/battery gate and ADR-032 accepting session-wide restart as v1 revocation.
+
+No product source code changed and no transport gate is claimed as passed.
+
+Verification:
+
+1. `scripts/verify_tour_session.sh`
+   - First sandboxed run: Swift protocol tests passed; Gradle could not create its lock under `~/.gradle` because host cache writes were denied.
+   - Host-cache rerun: all seven stages passed, including Swift/Kotlin tests, exact cross-language wire bytes, churn and realtime audits, Android unit/APK integration, and iOS Simulator integration.
+   - Final output: `Tour session verification passed`.

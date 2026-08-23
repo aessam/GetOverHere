@@ -10,6 +10,7 @@
 
 ## ADR-002: BLE for cross-platform discovery
 **Date**: 2026-03-24
+**Status**: Partially superseded by ADR-029. BLE remains the universal discovery/control radio; compressed, expiring live voice is now accepted as a gated fallback experiment.
 **Decision**: Use BLE GATT for cross-platform peer discovery and channel metadata
 **Context**: iOS Multipeer and Android Nearby Connections are incompatible
 **Options**: BLE, shared WiFi hotspot, mDNS
@@ -45,6 +46,7 @@
 
 ## ADR-007: Three-tier architecture — BLE control + WiFi hotspot + TCP audio
 **Date**: 2026-03-24
+**Status**: Superseded by ADR-029. Android-hosted Wi-Fi was unstable in physical use and is not a production dependency.
 **Decision**: BLE as control plane only. Android creates WiFi hotspot. TCP for audio streaming.
 **Context**: BLE GATT can't handle audio bandwidth. L2CAP PSM sharing failed. Classic BT blocked on iOS.
 **Options**: (a) Keep debugging BLE L2CAP, (b) WiFi hotspot + TCP, (c) No cross-platform audio
@@ -53,6 +55,7 @@
 
 ## ADR-008: RAFT leader election for WiFi host selection
 **Date**: 2026-03-24
+**Status**: Superseded by ADR-029. The product has one explicit guide, no elected hotspot host, and only bounded successor selection inside the BLE overlay.
 **Decision**: Simplified RAFT protocol to elect leader who coordinates the network.
 **Context**: Need to decide who becomes WiFi host without conflicts.
 **Rationale**: Term numbers + heartbeat, no log replication. Android preferred as leader.
@@ -105,7 +108,7 @@
 
 ## ADR-015: Native Wi-Fi Aware as an isolated cross-platform experiment
 **Date**: 2026-08-21
-**Status**: Experimental. Do not replace the active tour transport until physical Android-to-iOS gates pass.
+**Status**: Selected primary transport direction by ADR-029, still isolated from production until physical Android-to-iOS gates pass.
 **Decision**: Implement a native Wi-Fi Aware publisher/subscriber lab on both platforms behind a separate UI. Use `_goh-probe._udp`, authenticated platform pairing, a NAN data path, and a shared 28-byte binary frame header. Exercise the path with deterministic 45-byte payloads every 20 ms, representing an 18 kb/s Opus payload rate.
 **Context**: The selected option was direct native Wi-Fi Aware rather than a portable access point. Current vendor documentation does not prove Android-to-iOS interoperability on the target devices, so production integration before a physical result would hide the key risk.
 **Options**: (a) Replace production networking immediately, (b) isolated physical-device lab, (c) portable access point architecture.
@@ -221,3 +224,39 @@
 **Options**: (a) keep slide-first UI inference, (b) infer priority from whichever payload arrived last, (c) transmit the guide's selected screen explicitly.
 **Rationale**: Screen selection is product state, not transport arrival order. A nine-byte versioned payload is smaller and more deterministic than duplicating precedence rules in SwiftUI and Compose.
 **Consequences**: Guests may still browse locally until the next guide change. Existing slide, target, and bearing values remain intact when another tool is foregrounded. Swift and Kotlin exact-byte, stale-state, socket, late-join, and UI tests cover the new message.
+
+## ADR-029: LAN floor with Wi-Fi Aware and bounded BLE no-AP routes
+**Date**: 2026-08-22
+**Status**: Accepted direction; implementation and capacity claims remain gated by `NextSession.md`.
+**Decision**: Keep the existing local-LAN transport as the guaranteed first-class full-capability floor. Use native cross-platform Wi-Fi Aware as the preferred direct no-AP high-bandwidth route and add a bounded BLE controlled-relay overlay for universal discovery, authentication bootstrap, authoritative control state, membership, and gated degraded compressed live voice. Select a route per participant and deduplicate overlapping delivery with stable session, stream, participant, and sequence identifiers. Do not promise AP-less audio for every supported phone.
+**Context**: A portable access point has unacceptable setup and power friction. Android LocalOnlyHotspot/Wi-Fi Direct was unstable on the target device. The target device class successfully transferred files through a separate cross-platform AirDrop-like application, making direct Wi-Fi Aware credible. The current GetOverHere iOS production code does not create an Aware listener or browser; only the lab does. The production floor is iOS 17, so many guests will not support Apple's newer Aware stack. The public-domain bitchat iOS and Android sources demonstrate protocol-compatible BLE controlled flooding and live compressed voice, but not this product's capacity or latency requirements.
+**Options**: (a) require a portable access point, (b) depend on Android-hosted Wi-Fi, (c) use Aware only and lose unsupported guests, (d) use Aware primary plus LAN and bounded BLE fallback, (e) bridge Apple peer-to-peer Wi-Fi and Android Wi-Fi Direct.
+**Rationale**: Option (d) avoids an unstable Android hotspot, preserves the proven full-bandwidth floor, and gives every supported phone a common discovery/control path. BLE voice is treated as expiring realtime traffic with measurable limits, not as proof that BLE can carry arbitrary assets or an unbounded mesh. Platform-specific Wi-Fi islands are not interoperable data paths and are not bridged.
+**Consequences**: Wi-Fi Aware remains outside production until both physical role directions pass the isolated probe, which is limited to four focused sessions or two engineering days. BLE mesh routing is deliberately narrow: one authoritative guide, authenticated current-session packets, bounded TTL and fan-out, split horizon, deduplication, rate limits, successor recovery, and no store-and-forward. BLE voice receives an equal physical field gate because it will be the common AP-less route for Aware-ineligible guests. If Aware or BLE voice fails its gate, that route does not ship; LAN remains fully supported. Full slides and PMTiles prefer Aware/LAN or preloaded content.
+
+## ADR-030: Application payloads require end-to-end encryption
+**Date**: 2026-08-22
+**Status**: Accepted requirement; implementation is part of the transport plan.
+**Decision**: Encrypt realtime, control, and asset payloads at the application layer with keys derived from the per-tour credential. Bind every authenticated-encryption operation to the session, sender, lane, message kind, sequence, and route-independent frame identity. Link-layer BLE, Wi-Fi Aware, or LAN encryption does not replace this requirement.
+**Context**: ADR-023 authenticates admission but explicitly leaves current GOH2 application payloads in plaintext. Multiple radios and relays increase the number of devices and links that can observe traffic. The product carries guide audio, slides, map content, and target state and claims a privacy-first local design.
+**Options**: (a) rely on link encryption, (b) add TLS separately to each connected socket, (c) add route-independent authenticated encryption to GOH2 payloads.
+**Rationale**: Route-independent authenticated encryption preserves confidentiality and integrity when the same logical message moves over Aware, LAN, BLE, or more than one route. It also prevents a BLE relay from reading or modifying forwarded application content.
+**Consequences**: Nonces and replay windows become cross-platform wire contracts with exact Swift/Kotlin fixtures. Keys, nonces, credentials, plaintext payloads, and participant location remain absent from logs. Legacy plaintext sessions cannot interoperate with the encrypted protocol version.
+
+## ADR-031: Aware capacity overflow is routed per participant
+**Date**: 2026-08-22
+**Status**: Accepted product behavior; implementation is part of P6.
+**Decision**: Never exceed the guide device's reported current Aware resources. An overflow guest tries authenticated LAN, then BLE voice if P5 passed, then explicit BLE control-only participation with audio unavailable. Existing Aware guests are not evicted to admit overflow. The guide sees connected and audio-ready counts; transport diagnostics remain hidden.
+**Context**: The target Pixel reports eight maximum NAN data paths, and vendor APIs expose device/runtime capacity rather than a universal group limit. A tour can exceed that capacity even when discovery and protocol behavior are correct.
+**Options**: (a) reject the overflow guest, (b) evict or rotate existing Aware peers, (c) route overflow per participant, (d) exceed the reported limit and rely on runtime failure.
+**Rationale**: Option (c) preserves stable listeners, uses the best validated route available to each guest, and makes degraded service explicit. It also lets mixed-route tour capacity exceed a single device's Aware fan-out without pretending Aware itself supports that count.
+**Consequences**: Capacity-minus-one, capacity, and capacity-plus-one are mandatory gates. A control-only participant is not counted as receiving audio. Supported tour size and supported Aware-direct size are separate measured claims.
+
+## ADR-032: V1 has session-wide revocation only
+**Date**: 2026-08-22
+**Status**: Accepted limitation.
+**Decision**: V1 does not individually evict or rekey one admitted guest during a live tour. Possession of the current tour code grants session membership. If the code leaks or a participant must be revoked, the guide ends and restarts the tour, which rotates the code and all derived keys.
+**Context**: The QR/short-code credential is shared by the tour group. Individual mid-tour revocation requires per-participant key distribution and rekeying that is not otherwise required for v1.
+**Options**: (a) add individual rekeying now, (b) accept session-wide restart as the v1 revocation boundary, (c) provide a cosmetic kick without rotating keys.
+**Rationale**: Option (b) is explicit and secure within the stated limitation. Option (c) would falsely imply that a guest who retains the session secret can no longer decrypt traffic.
+**Consequences**: The guide UI and product documentation must not claim individual eviction. A future protocol version may add participant-specific key wrapping and group rekey without changing the v1 rule retroactively.

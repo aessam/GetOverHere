@@ -179,3 +179,33 @@
 **Root cause**: Shared content state and shared screen state were treated as the same concern. Live payload order and late-join snapshot order could therefore produce different visible results.
 **Resolution**: Add a versioned Slides/Map/Pointer shared-screen snapshot, apply it on both guests, and send it last during late-join restoration. Keep the content snapshots independent.
 **Decision**: If a remote action changes what another device should display, transmit that choice as explicit recoverable state rather than reconstructing it from event order.
+
+## 35. Transport lane wrappers do not establish a transport
+**What happened**: Authenticated iOS Wi-Fi Aware audio, control, and asset lane classes and hybrid route tests existed, but the normal app still failed without infrastructure Wi-Fi.
+**Root cause**: The only iOS `NetworkListener` and `NetworkBrowser` using Wi-Fi Aware belonged to the diagnostic lab. Production never instantiated the lane wrappers and had no owner for pairing, the initial Aware connection, accepted connections, or reconnect.
+**Resolution**: Separate connection ownership from lane framing explicitly in the plan. Do not promote Aware until the isolated physical probe passes; then add one production owner that supplies established connections to the existing lane implementations.
+**Decision**: A transport integration is incomplete until a production call-site audit proves discovery/connection ownership, data-plane establishment, framing, service wiring, and lifecycle are all reachable from the product flow.
+
+## 36. “BLE cannot stream audio” was too broad
+**What happened**: Earlier work attempted raw or unsuitable BLE audio paths and concluded that BLE was control-only. Later source review found protocol-compatible iOS and Android bitchat implementations that send 16 kb/s AAC live voice through a controlled BLE relay graph.
+**Root cause**: The earlier conclusion combined a failed L2CAP attempt, raw-audio bandwidth, and an unstructured GATT design into a universal statement about compressed expiring voice.
+**Resolution**: Keep BLE's limited bandwidth as a hard constraint, but test a purpose-built realtime format with compression, sequence numbers, expiry, bounded queues, controlled fan-out, and no late retransmission.
+**Decision**: BLE voice is a gated degraded fallback, not a capacity assumption. If physical latency, loss, background, thermal, or queue tests fail, BLE remains control-only.
+
+## 37. A documented Android hotspot API is not a stable product network
+**What happened**: Android LocalOnlyHotspot/Wi-Fi Direct could be created in code, but physical use destabilized the target device's Wi-Fi behavior.
+**Root cause**: API availability did not guarantee reliable coexistence with the device's current Wi-Fi state, firmware, and other radio modes.
+**Resolution**: Remove Android-hosted Wi-Fi from the selected production direction. Preserve it only as legacy code until the replacement architecture passes and cleanup is separately authorized.
+**Decision**: A phone-hosted network becomes a product dependency only after repeated physical lifecycle, coexistence, reconnect, and background tests on the supported device matrix.
+
+## 38. Speculative radio work must not block transport-neutral product debt
+**What happened**: The first plan put the 35%-risk Wi-Fi Aware lab before encoded, sequenced, encrypted realtime framing that could be completed and proven on the working LAN path.
+**Root cause**: Phase order followed the desired future transport rather than dependency order and certainty.
+**Resolution**: Move realtime compression, framing, expiry, and route-independent encryption immediately after the baseline checkpoint. Run the Aware lab only after the working product has that foundation.
+**Decision**: Execute certain transport-neutral improvements before speculative radio integration when the radio depends on the improved protocol but the protocol does not depend on the radio.
+
+## 39. Runtime radio limits require explicit overflow behavior
+**What happened**: The target Pixel reported eight maximum NAN data paths while the plan listed Aware group gates above eight without defining what happened to the next guest.
+**Root cause**: Aggregate tour capacity and one transport's direct-peer capacity were treated as the same number.
+**Resolution**: Stop Aware admission at runtime capacity and route each overflow guest to LAN, then validated BLE voice, then explicit control-only mode.
+**Decision**: Every runtime capacity limit needs a user-visible capacity-plus-one behavior before scale testing. Never silently overcommit the radio or count a control-only guest as receiving audio.

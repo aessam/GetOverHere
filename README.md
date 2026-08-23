@@ -1,6 +1,6 @@
 # GetOverHere
 
-Offline tour-guide broadcasting for iOS and Android. One guide speaks; guests listen and receive synchronized slides, a shared map target, or a sightline pointer. A tour uses a local Wi-Fi network and does not require Internet access, accounts, a backend, or analytics.
+Offline tour-guide broadcasting for iOS and Android. One guide speaks; guests listen and receive synchronized slides, a shared map target, or a sightline pointer. The current verified build uses a local Wi-Fi LAN, which remains the guaranteed full-capability floor. Wi-Fi Aware and a bounded BLE control/voice route are gated options for tours without an access point. No route requires Internet access, accounts, a backend, or analytics.
 
 ## Product
 
@@ -14,7 +14,7 @@ Offline tour-guide broadcasting for iOS and Android. One guide speaks; guests li
 
 The authoritative requirements and acceptance gates are in [TourGuideProductSpec.md](TourGuideProductSpec.md). Architecture decisions are in [ADR.md](ADR.md), and executed evidence is in [ExperimentLog.md](ExperimentLog.md).
 
-## Live architecture
+## Current verified architecture
 
 ```text
                          local Wi-Fi LAN
@@ -32,7 +32,24 @@ The authoritative requirements and acceptance gates are in [TourGuideProductSpec
 
 Bonjour on iOS and NSD on Android discover guide sessions. Possession of a random per-tour short code is required before any lane admits a guest. Control and assets cannot block audio because each has an independent authenticated connection. Slide and map assets are content-addressed, chunked, resumable, and SHA-256 verified.
 
-The operator currently provides the local network, normally with a pocket access point. Native Wi-Fi Aware is isolated behind a diagnostic lab and is not a production dependency. The app does not implement mesh routing.
+The current production path needs an existing local LAN. Native Wi-Fi Aware is isolated behind a diagnostic lab and is not yet a production dependency.
+
+## Selected transport architecture
+
+```text
+BLE controlled relay overlay
+  ├── discovery and authentication bootstrap
+  ├── authoritative control and membership
+  └── degraded compressed voice after physical acceptance
+                    │
+                    ▼
+Per-participant route
+  ├── Wi-Fi Aware preferred direct no-AP
+  ├── local LAN guaranteed full-capability floor
+  └── BLE degraded voice after physical acceptance
+```
+
+Android-hosted Wi-Fi and portable routers are not selected dependencies. The BLE overlay is bounded to the active tour and does not provide general-purpose or store-and-forward mesh routing. Aware and BLE voice must pass their physical gates before the product claims no-AP audio for a device or group; otherwise LAN remains required for audio. [NextSession.md](NextSession.md) contains the execution order and acceptance gates.
 
 ## Repository
 
