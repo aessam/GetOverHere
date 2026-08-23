@@ -103,13 +103,16 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 
 ### P3 — Harden transport-neutral payloads and replace raw PCM/TCP audio
 
-- Define one cross-platform encoded realtime frame with stream ID, sequence, capture timestamp, codec configuration, expiry, nonce, and authentication tag.
+- Lock the frame rules before fixtures: one logical frame is encrypted exactly once at creation, then the byte-identical sealed frame is routed one or many times. Socket writers never encrypt or choose nonces.
+- Make the encrypted protocol a hard version break. A legacy or unsupported major produces an explicit version-mismatch event and user state rather than a generic connection/radio failure.
+- Probe installed native encoders and decoders first. Query Apple Audio Format Services on the physical iPhone and Android `MediaCodecList` on the physical Pixel before a codec identifier enters the wire fixture; do not add `libopus` during this spike.
+- Select the codec from that evidence: native Opus with 20 ms frames is preferred; native AAC-LC 16 kHz/16 kb/s is the fallback if the supported-device native Opus gate fails.
+- Define one cross-platform encoded realtime frame with stream ID, sequence, capture timestamp, codec configuration, expiry, and sealed payload.
 - Add route-independent authenticated encryption for realtime, control, and asset payloads; remove every plaintext application payload path from the working LAN product.
-- Select the codec through a focused spike: Opus 20 ms is preferred; native AAC-LC 16 kHz/16 kb/s is the proven BLE fallback if Opus interoperability or dependency cost fails the gate.
 - Use datagrams where the transport supports them, a bounded jitter buffer, packet-loss concealment, and stale-frame dropping.
 - Preserve receiver/headset default output and the background audio lifecycle.
 
-**Gate P3:** exact Swift/Kotlin frame and encryption fixtures pass; the source/wire verifier finds no plaintext application payload path; 30-minute physical LAN audio passes in both guide directions; mouth-to-ear latency, loss, jitter depth, thermal state, and battery delta are recorded; an injected loss burst never creates an unbounded playback backlog.
+**Gate P3:** native codec capability and encode/decode probes are recorded for both physical target devices; exact Swift/Kotlin frame, byte-identical multi-route ciphertext, tamper/replay, and version-rejection fixtures pass; the source/wire verifier finds no plaintext application payload path; 30-minute physical LAN audio passes in both guide directions; mouth-to-ear latency, loss, jitter depth, thermal state, and battery delta are recorded; an injected loss burst never creates an unbounded playback backlog.
 
 ### P1 — Reproduce and repair the isolated Wi-Fi Aware lab
 

@@ -241,7 +241,7 @@
 **Context**: ADR-023 authenticates admission but explicitly leaves current GOH2 application payloads in plaintext. Multiple radios and relays increase the number of devices and links that can observe traffic. The product carries guide audio, slides, map content, and target state and claims a privacy-first local design.
 **Options**: (a) rely on link encryption, (b) add TLS separately to each connected socket, (c) add route-independent authenticated encryption to GOH2 payloads.
 **Rationale**: Route-independent authenticated encryption preserves confidentiality and integrity when the same logical message moves over Aware, LAN, BLE, or more than one route. It also prevents a BLE relay from reading or modifying forwarded application content.
-**Consequences**: Nonces and replay windows become cross-platform wire contracts with exact Swift/Kotlin fixtures. Keys, nonces, credentials, plaintext payloads, and participant location remain absent from logs. Legacy plaintext sessions cannot interoperate with the encrypted protocol version.
+**Consequences**: Encryption happens once when the logical frame is created. A sealed frame is immutable and the same encoded bytes are reused across Aware, LAN, BLE, retries, and overlapping delivery; socket writers never encrypt or allocate nonces. Nonces are derived from the key and immutable route-independent frame identity. Reusing an identity with different plaintext is rejected before encryption. Nonces and replay windows become cross-platform wire contracts with exact Swift/Kotlin fixtures. Keys, nonces, credentials, plaintext payloads, and participant location remain absent from logs. Legacy plaintext sessions cannot interoperate with the encrypted protocol version.
 
 ## ADR-031: Aware capacity overflow is routed per participant
 **Date**: 2026-08-22
@@ -260,3 +260,12 @@
 **Options**: (a) add individual rekeying now, (b) accept session-wide restart as the v1 revocation boundary, (c) provide a cosmetic kick without rotating keys.
 **Rationale**: Option (b) is explicit and secure within the stated limitation. Option (c) would falsely imply that a guest who retains the session secret can no longer decrypt traffic.
 **Consequences**: The guide UI and product documentation must not claim individual eviction. A future protocol version may add participant-specific key wrapping and group rekey without changing the v1 rule retroactively.
+
+## ADR-033: Encrypted GOH2 is an explicit protocol-version break
+**Date**: 2026-08-23
+**Status**: Accepted P3 contract.
+**Decision**: Increment the GOH2 protocol major for encrypted application frames. Decode exposes the local and remote major in a typed compatibility error. Every LAN/Aware/BLE transport maps that error to an explicit version-mismatch event, and the product UI tells the user to update the older build. It must not report the failure as discovery, authentication, or radio loss.
+**Context**: ADR-030 prohibits legacy plaintext interoperability. The existing decoder already rejects another major, but transport call sites collapse decode failures into generic connection errors. That makes a deliberate protocol break look like another network failure.
+**Options**: (a) silently close legacy peers, (b) accept plaintext as fallback, (c) reject with a typed compatibility state.
+**Rationale**: Option (c) keeps the no-plaintext invariant and makes the expected upgrade failure diagnosable. An already-shipped old build cannot be taught the new message, but every new build can identify a legacy inbound frame and expose the correct local state.
+**Consequences**: Swift and Kotlin require exact tests for legacy-major rejection and the transport-to-product error mapping. No compatibility shim or plaintext downgrade is allowed.

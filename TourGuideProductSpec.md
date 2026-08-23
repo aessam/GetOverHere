@@ -103,6 +103,8 @@ TourPack
 - Location permission descriptions state that location is used only on-device to show the user relative to the shared pin.
 - Session discovery is not authentication. Production onboarding requires possession of a per-tour credential delivered by QR or short code.
 - Admission authentication is not payload confidentiality. Realtime, control, and asset payloads require route-independent authenticated encryption derived from the per-tour credential.
+- A logical application frame is encrypted once at creation and remains byte-identical across every route. Transport writers cannot reseal it or allocate a new nonce.
+- Legacy plaintext protocol majors are rejected with an explicit version-mismatch state. There is no plaintext downgrade.
 - Per-tour credentials and derived keys are not stored in `UserDefaults` or plain preferences.
 - Logs contain no credentials, participant locations, slide contents, or persistent personal identifiers.
 - V1 has no individual mid-tour credential revocation. Ending and restarting the tour rotates the code and derived keys for the whole session.
@@ -180,4 +182,5 @@ These defaults are active and do not block implementation:
 10. One guide runs Aware, BLE central, BLE peripheral, LAN, audio encode, and active traffic concurrently for 60 minutes while coexistence loss, thermal state, and battery delta are recorded.
 11. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, poor heading accuracy, and mixed transport availability are exercised.
 12. Source and wire audits find no participant-location payload or transmission path and no plaintext application payload path.
-13. Completion requires every requirement above to have direct code and runtime evidence recorded in `ExperimentLog.md`. Supported capacity equals the largest passing physical gate.
+13. Exact fixtures prove that one logical frame has byte-identical ciphertext on every route, identity reuse with different plaintext fails, and a legacy major becomes a user-visible version mismatch.
+14. Completion requires every requirement above to have direct code and runtime evidence recorded in `ExperimentLog.md`. Supported capacity equals the largest passing physical gate.

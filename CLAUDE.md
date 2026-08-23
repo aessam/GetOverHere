@@ -26,6 +26,8 @@ The iOS production Wi-Fi Aware lane wrappers currently have no connection owner 
 - Aware overflow follows ADR-031: LAN, then validated BLE voice, then explicit control-only participation. Never exceed runtime Aware resources or evict an existing Aware guest.
 - Android LocalOnlyHotspot/Wi-Fi Direct, portable routers, and cross-platform bridging of proprietary peer-to-peer Wi-Fi networks are not selected dependencies.
 - Application payloads require route-independent authenticated encryption; ADR-023 admission authentication alone is insufficient.
+- Encrypt a logical frame once at creation and route the immutable sealed bytes. Socket writers never encrypt or allocate nonces. Reusing one frame identity with different plaintext is a fatal protocol error.
+- Encrypted GOH2 is a hard major-version break. New builds expose legacy peers as an explicit version mismatch and never downgrade to plaintext.
 - V1 has session-wide revocation only. End and restart the tour to rotate a leaked code and all derived keys.
 
 `NextSession.md` is the canonical gate-by-gate execution plan. Execute P0 → P3 → P1; P1 is limited to four focused physical sessions or two engineering days. Do not start production Aware or BLE implementation before its preceding physical gate passes.

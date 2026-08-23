@@ -389,3 +389,28 @@ Commands and results:
    - Result: all seven stages passed. Final output: `Tour session verification passed`.
 
 P0 provides the reusable capture path and preserves the passing baseline. The first complete two-device artifact will be captured when both devices are connected and unlocked during P3; no radio or physical-audio gate is claimed here.
+
+## 2026-08-23 — P3 pre-fixture contract and native-codec research
+
+Decisions locked before wire fixtures:
+
+- Encrypt once at logical-frame creation and route the immutable sealed bytes. Transport/socket writers do not encrypt or allocate nonces.
+- Derive the nonce from the key and immutable route-independent identity. A second plaintext for an already-used identity is rejected before encryption.
+- Increment the GOH2 protocol major for encrypted frames and map legacy-major decode to an explicit product version-mismatch state. Plaintext downgrade is forbidden.
+- Probe installed native codecs before selecting a realtime codec or adding a dependency.
+
+Primary-source findings:
+
+- Apple documents `kAudioFormatOpus` and `kAudioFormatProperty_EncodeFormatIDs`/`kAudioFormatProperty_Encoders`; the physical device still must prove an installed encoder and a real encode/decode roundtrip.
+- Android documents `MediaCodecList.findEncoderForFormat` and codec enumeration through `codecInfos`/`isEncoder`/`supportedTypes`.
+- Android's supported-media table guarantees Opus encoding on handhelds/tablets from Android 10 and Opus decoding from Android 5. The app's Android 8 minimum still requires runtime negotiation; the target Pixel must be probed directly.
+- No `libopus` dependency is authorized during the native-codec spike.
+
+Sources:
+
+- https://developer.apple.com/documentation/coreaudiotypes/kaudioformatopus
+- https://developer.apple.com/documentation/audiotoolbox/kaudioformatproperty_encodeformatids
+- https://developer.apple.com/documentation/audiotoolbox/kaudioformatproperty_encoders
+- https://developer.android.com/media/platform/supported-formats
+- https://developer.android.com/reference/android/media/MediaCodecList
+- https://developer.android.com/reference/android/media/MediaCodecInfo
