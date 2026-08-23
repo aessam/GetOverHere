@@ -414,3 +414,24 @@ Sources:
 - https://developer.android.com/media/platform/supported-formats
 - https://developer.android.com/reference/android/media/MediaCodecList
 - https://developer.android.com/reference/android/media/MediaCodecInfo
+
+## 2026-08-23 — P3 native-codec capability probe
+
+Implementation:
+
+- Added an iOS `AudioFormatGetProperty` probe for installed Opus and AAC-LC encoders/decoders.
+- Added an Android `MediaCodecList.findEncoderForFormat`/`findDecoderForFormat` probe for the intended 16 kHz mono Opus and AAC-LC formats.
+- Added focused Swift Testing and Android instrumentation tests. No codec dependency, GOH2 wire change, or codec selection was made.
+
+Commands and results:
+
+1. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereCodecProbeDerived test -only-testing:GetOverHereTests/NativeAudioCodecCapabilitiesTests`
+   - Result: passed on the iPhone 17 Pro simulator.
+2. `env JAVA_HOME=/Applications/Android\\ Studio.app/Contents/jbr/Contents/Home ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin assembleDebugAndroidTest`
+   - Result: passed; the app and instrumentation probe compiled and the test APK assembled.
+3. `/Users/aessam/Library/Android/sdk/platform-tools/adb devices -l`
+   - Result: no Android device was attached, so no Android codec capability result is claimed.
+4. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -derivedDataPath /tmp/GetOverHerePhysicalCodecProbeDerived test -only-testing:GetOverHereTests/NativeAudioCodecCapabilitiesTests`
+   - Result: failed before test execution because `Dark knight` was locked and development services could not start. No physical iOS codec capability result is claimed.
+
+P3 remains stopped before the codec-dependent wire fixture until both physical probes run.
