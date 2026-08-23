@@ -8,7 +8,10 @@ DerivedData/
 .DS_Store
 
 # Claude
-.claude/settings.local.json
+.claude/
+
+# Local review input
+/Review-22Aug26.md
 
 # Android local build cache
 Android/.gradle/

@@ -363,3 +363,29 @@ Verification:
    - First sandboxed run: Swift protocol tests passed; Gradle could not create its lock under `~/.gradle` because host cache writes were denied.
    - Host-cache rerun: all seven stages passed, including Swift/Kotlin tests, exact cross-language wire bytes, churn and realtime audits, Android unit/APK integration, and iOS Simulator integration.
    - Final output: `Tour session verification passed`.
+
+## 2026-08-23 — P0 physical-test harness
+
+Implementation:
+
+- Added `scripts/capture_physical_test.sh` with explicit `start`, `mark`, `status`, and `stop` commands.
+- The harness validates every selected device before creating a run directory, writes raw output only outside the repository, snapshots public iOS device/process state and Android battery/thermal/connectivity/Wi-Fi/Wi-Fi Aware/Bluetooth/audio state, and backgrounds the iOS app console and Android logcat.
+- The harness never clears logs, terminates an existing app, collects sysdiagnose, or inspects private frameworks or binaries.
+- Added `.claude/` and `/Review-22Aug26.md` to `.gitignore` so the tracked-tree signal remains clean without deleting either local input.
+
+Commands and results:
+
+1. `bash -n scripts/capture_physical_test.sh`
+   - Result: passed.
+2. `scripts/capture_physical_test.sh start`
+   - Result: rejected the missing device selection before creating output.
+3. `scripts/capture_physical_test.sh status --run-dir /Users/aessam/tmp/ios-macos-apps/GetOverHere/PhysicalRuns/test`
+   - Result: rejected a raw-log directory inside the repository.
+4. `scripts/capture_physical_test.sh start --android-serial definitely-missing --run-dir /tmp/GetOverHerePhysicalRuns/missing-android-2`
+   - Result: rejected the missing Android device and left no partial directory.
+5. `scripts/capture_physical_test.sh start --ios-device 00008150-001208901AC0401C --run-dir /tmp/GetOverHerePhysicalRuns/p0-ios-smoke-20260823`
+   - Result: correctly failed before capture because the physical iPhone was locked and its developer disk image could not be mounted. No partial directory was created. Android was not attached, so no Android physical capture is claimed.
+6. `scripts/verify_tour_session.sh`
+   - Result: all seven stages passed. Final output: `Tour session verification passed`.
+
+P0 provides the reusable capture path and preserves the passing baseline. The first complete two-device artifact will be captured when both devices are connected and unlocked during P3; no radio or physical-audio gate is claimed here.

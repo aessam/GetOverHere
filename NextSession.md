@@ -93,6 +93,8 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 
 ### P0 — Baseline and traceability
 
+**Result:** Harness and baseline verifier passed on 2026-08-23. The harness correctly rejected a missing Android device and a locked iPhone before starting capture; a complete two-device capture remains part of the first physical P3 run.
+
 - Commit this planning/ADR/lesson update as one documentation checkpoint after approval.
 - Preserve the working LAN path as the rollback baseline.
 - Add a reusable physical-test script that captures app events and platform radio logs without inspecting private frameworks or binaries.
