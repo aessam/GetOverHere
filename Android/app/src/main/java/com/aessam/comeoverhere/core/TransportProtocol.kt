@@ -107,6 +107,7 @@ sealed class AudioSessionEvent {
     data class Joined(val participant: ParticipantSession) : AudioSessionEvent()
     data class Disconnected(val connectionID: String) : AudioSessionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : AudioSessionEvent()
+    data class Failed(val message: String) : AudioSessionEvent()
 }
 
 // MARK: - Reliable Session Control Transport

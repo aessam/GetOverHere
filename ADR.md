@@ -236,7 +236,7 @@
 
 ## ADR-030: Application payloads require end-to-end encryption
 **Date**: 2026-08-22
-**Status**: Accepted requirement; implementation is part of the transport plan.
+**Status**: Implemented on the production LAN lanes; multi-route delivery remains part of P6.
 **Decision**: Encrypt realtime, control, and asset payloads at the application layer with keys derived from the per-tour credential. Bind every authenticated-encryption operation to the session, sender, lane, message kind, sequence, and route-independent frame identity. Link-layer BLE, Wi-Fi Aware, or LAN encryption does not replace this requirement.
 **Context**: ADR-023 authenticates admission but explicitly leaves current GOH2 application payloads in plaintext. Multiple radios and relays increase the number of devices and links that can observe traffic. The product carries guide audio, slides, map content, and target state and claims a privacy-first local design.
 **Options**: (a) rely on link encryption, (b) add TLS separately to each connected socket, (c) add route-independent authenticated encryption to GOH2 payloads.
@@ -278,3 +278,12 @@
 **Options**: (a) retain Float32 PCM, (b) add libopus, (c) use native codecs with a canonical PCM16 boundary and codec-specific configuration.
 **Rationale**: Option (c) removes the raw-wire bandwidth problem without adding a dependency and keeps the Swift/Kotlin transport contract codec-neutral. PCM16 is the native Android capture/playback representation and is directly supported by Apple's converter stack.
 **Consequences**: Simulator/emulator roundtrips prove API integration only. Physical targets must still prove codec availability, quality, latency, thermal behavior, and background operation before P3 passes. Unsupported native Opus negotiates AAC-LC explicitly; there is no silent raw-PCM fallback.
+
+## ADR-035: Unqualified audio transports fail closed
+**Date**: 2026-08-27
+**Status**: Accepted and implemented.
+**Decision**: A compiled transport that cannot consume the encrypted GOH2 v3 realtime format must reject audio explicitly. It may not retain a raw or plaintext compatibility path. Wi-Fi Aware control and asset lanes use the same sealed frame contract as LAN; Wi-Fi Aware audio remains disabled until the route-neutral producer can hand it the already-sealed frame. The retired Multipeer audio implementation cannot transmit.
+**Context**: Migrating the active LAN transport was insufficient for the source-level security invariant. Dormant Wi-Fi Aware and Multipeer implementations still contained raw-audio write paths that could become reachable through a future selection change.
+**Options**: (a) leave dormant plaintext paths compiled, (b) duplicate encoding and encryption inside each radio writer, (c) seal supported lanes and fail closed where route-neutral integration is not complete.
+**Rationale**: Option (c) prevents downgrade and nonce divergence without pretending the production Aware connection owner exists. Encryption remains a frame-creation responsibility, not a socket-write responsibility.
+**Consequences**: `scripts/verify_no_plaintext_session_paths.sh` rejects plaintext envelope decoding, direct raw audio writes, missing seal/open operations in production payload transports, and accidental reachability of retired wrappers. P1/P2 must integrate Aware audio through a shared pre-sealed frame owner rather than re-encrypting per route.

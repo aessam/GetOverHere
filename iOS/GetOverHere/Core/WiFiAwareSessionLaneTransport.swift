@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 import TourSessionCore
 
 @available(iOS 26.4, *)
@@ -9,6 +10,7 @@ private enum WiFiAwareLaneEvent: Sendable {
     case envelopeReceived(SessionEnvelope)
     case guestDisconnected(participantID: UUID, connectionID: String)
     case disconnected
+    case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
     case failed(String)
 }
 
@@ -44,6 +46,9 @@ private final class WiFiAwareAuthenticatedLaneTransport {
     private var guestTask: Task<Void, Never>?
     private var sendTail: Task<Void, Never>?
     private var sendSequence: UInt64 = 1
+    private var outboundSealer: SessionFrameSealer?
+    private var outboundStreamID = UUID()
+    private var inboundOpener: SessionFrameOpener?
 
     private(set) var isActive = false
 
@@ -73,27 +78,33 @@ private final class WiFiAwareAuthenticatedLaneTransport {
     }
 
     func startGuide() {
-        guard configuration != nil else {
+        guard let configuration else {
             emit(.failed("Aware session is not configured"))
             return
         }
         role = .guide
         sendSequence = 1
+        outboundSealer = SessionFrameSealer(credential: configuration.credential)
+        outboundStreamID = UUID()
+        inboundOpener = SessionFrameOpener(credential: configuration.credential)
         isActive = true
     }
 
     func startGuest() {
-        guard configuration != nil else {
+        guard let configuration else {
             emit(.failed("Aware session is not configured"))
             return
         }
         role = .guest
         sendSequence = 1
+        outboundSealer = SessionFrameSealer(credential: configuration.credential)
+        outboundStreamID = UUID()
+        inboundOpener = SessionFrameOpener(credential: configuration.credential)
         isActive = true
     }
 
     func acceptGuideConnection(_ connection: NetworkConnection<TCP>) {
-        guard role == .guide, isActive, let configuration else { return }
+        guard role == .guide, isActive, let configuration, let inboundOpener else { return }
         let connectionID = connection.id
         guard guideTasks[connectionID] == nil else { return }
         let applicationLane = applicationLane
@@ -115,12 +126,10 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 await self?.registerGuideConnection(connection, participant: participant)
 
                 while !Task.isCancelled {
-                    let envelope = try SessionEnvelope.decode(
-                        try await Self.readFrame(
-                            from: connection,
-                            maximumSize: maximumFrameSize
-                        )
-                    )
+                    guard let envelope = try Self.openFrame(
+                        try await Self.readFrame(from: connection, maximumSize: maximumFrameSize),
+                        using: inboundOpener
+                    ) else { continue }
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == participant.participantID,
                           envelope.lane == applicationLane,
@@ -134,6 +143,11 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 }
             } catch is CancellationError {
                 // Expected during route replacement or shutdown.
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                await self?.emit(.versionMismatch(
+                    remoteMajor: remoteMajor,
+                    localMajor: SealedSessionEnvelope.majorVersion
+                ))
             } catch {
                 await self?.emit(.failed("Aware guest lane failed"))
             }
@@ -142,7 +156,7 @@ private final class WiFiAwareAuthenticatedLaneTransport {
     }
 
     func connectGuest(_ connection: NetworkConnection<TCP>) {
-        guard role == .guest, isActive, let configuration else { return }
+        guard role == .guest, isActive, let configuration, let inboundOpener else { return }
         guestTask?.cancel()
         guestConnection = connection
         let applicationLane = applicationLane
@@ -158,12 +172,10 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 authenticated = true
                 await self?.emit(.connected)
                 while !Task.isCancelled {
-                    let envelope = try SessionEnvelope.decode(
-                        try await Self.readFrame(
-                            from: connection,
-                            maximumSize: maximumFrameSize
-                        )
-                    )
+                    guard let envelope = try Self.openFrame(
+                        try await Self.readFrame(from: connection, maximumSize: maximumFrameSize),
+                        using: inboundOpener
+                    ) else { continue }
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == guideID,
                           envelope.lane == applicationLane,
@@ -176,6 +188,11 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 }
             } catch is CancellationError {
                 // Expected during route replacement or shutdown.
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                await self?.emit(.versionMismatch(
+                    remoteMajor: remoteMajor,
+                    localMajor: SealedSessionEnvelope.majorVersion
+                ))
             } catch {
                 await self?.emit(.failed("Aware guide lane failed"))
             }
@@ -194,17 +211,21 @@ private final class WiFiAwareAuthenticatedLaneTransport {
             emit(.failed("Aware message used the wrong lane"))
             return
         }
-        guard isActive, let configuration else { return }
+        guard isActive, let configuration, let outboundSealer else { return }
 
         let encoded: Data
         do {
-            encoded = try SessionEnvelope(
+            let logical = try SessionEnvelope(
                 lane: applicationLane,
                 kind: kind,
                 sequence: sendSequence,
                 sessionID: configuration.sessionID,
                 senderID: configuration.participantID,
                 payload: payload
+            )
+            encoded = try outboundSealer.seal(
+                logical,
+                streamID: outboundStreamID
             ).encode()
         } catch {
             emit(.failed("Aware envelope encoding failed"))
@@ -251,6 +272,8 @@ private final class WiFiAwareAuthenticatedLaneTransport {
         guestConnection = nil
         sendTail?.cancel()
         sendTail = nil
+        outboundSealer = nil
+        inboundOpener = nil
     }
 
     private func registerGuideConnection(
@@ -324,11 +347,27 @@ private final class WiFiAwareAuthenticatedLaneTransport {
         return frame
     }
 
+    nonisolated private static func openFrame(
+        _ frame: Data,
+        using opener: SessionFrameOpener
+    ) throws -> SessionEnvelope? {
+        let sealed = try SealedSessionEnvelope.decode(frame)
+        switch try opener.open(sealed) {
+        case let .opened(envelope):
+            return envelope
+        case .duplicate:
+            return nil
+        }
+    }
+
     nonisolated private static func authenticateGuest(
         connection: NetworkConnection<TCP>,
         configuration: Configuration,
         applicationLane: SessionLane
     ) async throws -> (envelope: SessionEnvelope, payload: HelloPayload) {
+        let guideSealer = SessionFrameSealer(credential: configuration.credential)
+        let guestOpener = SessionFrameOpener(credential: configuration.credential)
+        let handshakeStreamID = UUID()
         let challengeNonce = SessionAuthenticator.randomNonce()
         let challenge = try AuthChallengePayload(
             requestedLane: applicationLane,
@@ -342,10 +381,17 @@ private final class WiFiAwareAuthenticatedLaneTransport {
             senderID: configuration.participantID,
             payload: challenge.encode()
         )
-        try await writeFrame(challengeEnvelope.encode(), to: connection)
-        let envelope = try SessionEnvelope.decode(
-            try await readFrame(from: connection, maximumSize: 65_536)
-        )
+        let sealedChallenge = try guideSealer.seal(
+            challengeEnvelope,
+            streamID: handshakeStreamID
+        ).encode()
+        try await writeFrame(sealedChallenge, to: connection)
+        guard let envelope = try openFrame(
+            try await readFrame(from: connection, maximumSize: 65_536),
+            using: guestOpener
+        ) else {
+            throw WiFiAwareLaneError.authenticationFailed
+        }
         let hello = try HelloPayload.decode(envelope.payload)
         guard envelope.sessionID == configuration.sessionID,
               envelope.kind == .hello,
@@ -385,7 +431,7 @@ private final class WiFiAwareAuthenticatedLaneTransport {
         let welcome = try SessionEnvelope(
             lane: .control,
             kind: .welcome,
-            sequence: 0,
+            sequence: 1,
             sessionID: configuration.sessionID,
             senderID: configuration.participantID,
             payload: try WelcomePayload(
@@ -394,7 +440,11 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 credentialProof: guideProof
             ).encode()
         )
-        try await writeFrame(welcome.encode(), to: connection)
+        let sealedWelcome = try guideSealer.seal(
+            welcome,
+            streamID: handshakeStreamID
+        ).encode()
+        try await writeFrame(sealedWelcome, to: connection)
         return (envelope, hello)
     }
 
@@ -403,9 +453,13 @@ private final class WiFiAwareAuthenticatedLaneTransport {
         configuration: Configuration,
         applicationLane: SessionLane
     ) async throws -> UUID {
-        let challengeEnvelope = try SessionEnvelope.decode(
-            try await readFrame(from: connection, maximumSize: 65_536)
-        )
+        let guideOpener = SessionFrameOpener(credential: configuration.credential)
+        guard let challengeEnvelope = try openFrame(
+            try await readFrame(from: connection, maximumSize: 65_536),
+            using: guideOpener
+        ) else {
+            throw WiFiAwareLaneError.authenticationFailed
+        }
         guard challengeEnvelope.sessionID == configuration.sessionID,
               challengeEnvelope.kind == .authChallenge,
               challengeEnvelope.lane == .control,
@@ -447,10 +501,15 @@ private final class WiFiAwareAuthenticatedLaneTransport {
             senderID: configuration.participantID,
             payload: hello.encode()
         )
-        try await writeFrame(helloEnvelope.encode(), to: connection)
-        let welcomeEnvelope = try SessionEnvelope.decode(
-            try await readFrame(from: connection, maximumSize: 65_536)
-        )
+        let guestSealer = SessionFrameSealer(credential: configuration.credential)
+        let sealedHello = try guestSealer.seal(helloEnvelope, streamID: UUID()).encode()
+        try await writeFrame(sealedHello, to: connection)
+        guard let welcomeEnvelope = try openFrame(
+            try await readFrame(from: connection, maximumSize: 65_536),
+            using: guideOpener
+        ) else {
+            throw WiFiAwareLaneError.authenticationFailed
+        }
         guard welcomeEnvelope.sessionID == configuration.sessionID,
               welcomeEnvelope.kind == .welcome,
               welcomeEnvelope.lane == .control,
@@ -525,7 +584,8 @@ final class WiFiAwareAudioPlane: AudioPlane {
     }
 
     func sendAudio(_ data: Data) {
-        lane.send(kind: .audioFrame, payload: data)
+        Logger.audio.error("Wi-Fi Aware raw audio is disabled until encoded route integration")
+        sessionEventHandler?(.failed("Wi-Fi Aware audio is not available in this build"))
     }
 
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void) {
@@ -554,8 +614,12 @@ final class WiFiAwareAudioPlane: AudioPlane {
             sessionEventHandler?(.disconnected(connectionID: connectionID))
         case let .envelopeReceived(envelope):
             guard envelope.kind == .audioFrame, envelope.lane == .realtime else { return }
-            onAudio?(envelope.payload)
-        case .connected, .disconnected, .failed:
+            sessionEventHandler?(.failed("Wi-Fi Aware encoded audio is not available in this build"))
+        case let .versionMismatch(remoteMajor, localMajor):
+            sessionEventHandler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
+        case let .failed(message):
+            sessionEventHandler?(.failed(message))
+        case .connected, .disconnected:
             break
         }
     }
@@ -610,6 +674,8 @@ final class WiFiAwareSessionControlTransport: SessionControlTransport {
         case let .envelopeReceived(envelope): handler?(.envelopeReceived(envelope))
         case let .guestDisconnected(participantID, _): handler?(.guestDisconnected(participantID: participantID))
         case .disconnected: handler?(.disconnected)
+        case let .versionMismatch(remoteMajor, localMajor):
+            handler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
         case let .failed(message): handler?(.failed(message))
         }
     }
@@ -666,6 +732,8 @@ final class WiFiAwareSessionAssetTransport: SessionAssetTransport {
         case let .envelopeReceived(envelope): handler?(.envelopeReceived(envelope))
         case let .guestDisconnected(participantID, _): handler?(.guestDisconnected(participantID: participantID))
         case .disconnected: handler?(.disconnected)
+        case let .versionMismatch(remoteMajor, localMajor):
+            handler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
         case let .failed(message): handler?(.failed(message))
         }
     }

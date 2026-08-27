@@ -1,7 +1,13 @@
 package com.aessam.comeoverhere
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.aessam.comeoverhere.service.NativeRealtimeAudioCodecFactory
+import com.aessam.comeoverhere.core.NativeRealtimeAudioCodecFactory
+import com.aessam.comeoverhere.core.RealtimeAudioDecoderInterface
+import com.aessam.comeoverhere.core.AudioQuality
+import com.aessam.comeoverhere.core.AudioSessionEvent
+import com.aessam.comeoverhere.core.UDPAudioPlane
+import com.aessam.toursession.ParticipantPlatform
+import com.aessam.toursession.SessionCredential
 import com.aessam.toursession.SessionAudioCodec
 import com.aessam.toursession.SessionCapability
 import org.junit.Assert.assertTrue
@@ -9,6 +15,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -27,9 +36,52 @@ class NativeRealtimeAudioCodecTest {
         }
     }
 
+    @Test
+    fun nativeCodecCrossesEncryptedRealtimeTransport() {
+        val port = 50_034
+        val guide = UDPAudioPlane(audioPort = port)
+        val guest = UDPAudioPlane(audioPort = port)
+        val sessionID = UUID.randomUUID()
+        val credential = SessionCredential.derive("23456789AB", sessionID)
+        val joined = CountDownLatch(1)
+        val audioReceived = CountDownLatch(1)
+        try {
+            guide.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guide",
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            guide.setSessionEventHandler { event ->
+                if (event is AudioSessionEvent.Joined) joined.countDown()
+            }
+            guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
+
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guest",
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            guest.startListening(sessionID.toString()) { pcm ->
+                if (pcm.isNotEmpty() && pcm.size % Short.SIZE_BYTES == 0) audioReceived.countDown()
+            }
+
+            assertTrue("Native-codec guest did not join", joined.await(5, TimeUnit.SECONDS))
+            repeat(12) { frameIndex -> guide.sendAudio(sineFrame(640, frameIndex)) }
+            assertTrue("Decoded PCM did not cross the transport", audioReceived.await(5, TimeUnit.SECONDS))
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+
     private fun assertCodecRoundtrip(codec: SessionAudioCodec) {
         val encoder = NativeRealtimeAudioCodecFactory.makeEncoder(codec)
-        var decoder = null as com.aessam.comeoverhere.service.RealtimeAudioDecoderInterface?
+        var decoder = null as RealtimeAudioDecoderInterface?
         var producedPacketCount = 0
         var encodedByteCount = 0
         var decodedByteCount = 0

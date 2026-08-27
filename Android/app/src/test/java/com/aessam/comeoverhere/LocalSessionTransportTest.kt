@@ -7,10 +7,17 @@ import com.aessam.comeoverhere.core.LocalSessionAssetTransport
 import com.aessam.comeoverhere.core.SessionAssetEvent
 import com.aessam.comeoverhere.core.SessionControlEvent
 import com.aessam.comeoverhere.core.UDPAudioPlane
+import com.aessam.comeoverhere.core.NativeEncodedAudioPacket
+import com.aessam.comeoverhere.core.RealtimeAudioCodecProvider
+import com.aessam.comeoverhere.core.RealtimeAudioDecoderInterface
+import com.aessam.comeoverhere.core.RealtimeAudioEncoderInterface
 import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.SessionMessageKind
 import com.aessam.toursession.SessionCredential
 import com.aessam.toursession.SealedSessionEnvelope
+import com.aessam.toursession.SessionAudioCodec
+import com.aessam.toursession.SessionAudioCodecConfiguration
+import com.aessam.toursession.SessionCapability
 import com.aessam.toursession.SessionEnvelope
 import com.aessam.toursession.AssetRequestPayload
 import com.aessam.toursession.TourAssetDescriptor
@@ -38,8 +45,9 @@ import javax.net.SocketFactory
 class LocalSessionTransportTest {
     @Test
     fun goh2HelloRegistersGuestAndRealtimePayloadArrives() {
-        val guide = UDPAudioPlane()
-        val guest = UDPAudioPlane()
+        val provider = PassThroughRealtimeAudioCodecProvider()
+        val guide = UDPAudioPlane(provider)
+        val guest = UDPAudioPlane(provider)
         val sessionID = UUID.randomUUID()
         val guestID = UUID.randomUUID()
         val credential = testCredential(sessionID)
@@ -79,11 +87,67 @@ class LocalSessionTransportTest {
             assertTrue("Guest did not join", joined.await(3, TimeUnit.SECONDS))
             val expected = byteArrayOf(0x10, 0x20, 0x30, 0x40)
             guide.sendAudio(expected)
+            guide.sendAudio(expected)
+            guide.sendAudio(expected)
             assertTrue("Audio did not arrive", audioReceived.await(3, TimeUnit.SECONDS))
             assertArrayEquals(expected, receivedPayload.get())
         } finally {
             guest.stop()
             guide.stop()
+        }
+    }
+
+    @Test
+    fun audioLaneReportsLegacyProtocolVersionExplicitly() {
+        val port = 50_033
+        val server = ServerSocket(port)
+        val serverThread = Thread {
+            server.accept().use { socket ->
+                DataOutputStream(socket.getOutputStream()).use { output ->
+                    val legacyHeader = byteArrayOf(
+                        0x47,
+                        0x4f,
+                        0x48,
+                        0x32,
+                        SessionEnvelope.MAJOR_VERSION.toByte(),
+                    )
+                    output.writeInt(legacyHeader.size)
+                    output.write(legacyHeader)
+                    output.flush()
+                }
+            }
+        }.apply { start() }
+        val guest = UDPAudioPlane(
+            codecProvider = PassThroughRealtimeAudioCodecProvider(),
+            audioPort = port,
+        )
+        val sessionID = UUID.randomUUID()
+        val mismatch = CountDownLatch(1)
+        val received = AtomicReference<AudioSessionEvent.VersionMismatch>()
+        try {
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guest",
+                ParticipantPlatform.ANDROID,
+                testCredential(sessionID),
+            )
+            guest.setSessionEventHandler { event ->
+                if (event is AudioSessionEvent.VersionMismatch) {
+                    received.set(event)
+                    mismatch.countDown()
+                }
+            }
+            guest.startListening(sessionID.toString()) {}
+
+            assertTrue("Audio version mismatch was not reported", mismatch.await(3, TimeUnit.SECONDS))
+            assertEquals(SessionEnvelope.MAJOR_VERSION, received.get().remoteMajor)
+            assertEquals(SealedSessionEnvelope.MAJOR_VERSION, received.get().localMajor)
+        } finally {
+            guest.stop()
+            server.close()
+            serverThread.join(1_000)
         }
     }
 
@@ -400,4 +464,41 @@ private class CountingSocketFactory : SocketFactory() {
         localAddress: InetAddress,
         localPort: Int,
     ): Socket = delegate.createSocket(address, port, localAddress, localPort)
+}
+
+private class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvider {
+    override fun sessionCapabilities(): Long =
+        SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit
+
+    override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface =
+        PassThroughRealtimeAudioEncoder(codec)
+
+    override fun makeDecoder(
+        configuration: SessionAudioCodecConfiguration,
+    ): RealtimeAudioDecoderInterface = PassThroughRealtimeAudioDecoder(configuration)
+}
+
+private class PassThroughRealtimeAudioEncoder(
+    override val codec: SessionAudioCodec,
+) : RealtimeAudioEncoderInterface {
+    override val inputPCMByteCount: Int = 4
+    private val configuration = SessionAudioCodecConfiguration(
+        codec,
+        16_000,
+        1,
+        20,
+        20_000,
+    )
+
+    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket =
+        NativeEncodedAudioPacket(configuration, pcm16LittleEndian.copyOf())
+
+    override fun close() = Unit
+}
+
+private class PassThroughRealtimeAudioDecoder(
+    override val configuration: SessionAudioCodecConfiguration,
+) : RealtimeAudioDecoderInterface {
+    override fun decode(packet: ByteArray): ByteArray = packet.copyOf()
+    override fun close() = Unit
 }

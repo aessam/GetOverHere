@@ -1,5 +1,6 @@
 import MultipeerConnectivity
 import Foundation
+import Observation
 import os
 
 /// MultipeerConnectivity-based audio plane for iOS↔iOS.
@@ -13,7 +14,7 @@ final class MultipeerAudioPlane: NSObject, AudioPlane {
     private let session: MCSession
     private let advertiser: MCNearbyServiceAdvertiser
     private let browser: MCNearbyServiceBrowser
-    nonisolated(unsafe) private var onAudioCallback: (@Sendable (Data) -> Void)?
+    @ObservationIgnored private var onAudioCallback: (@Sendable (Data) -> Void)?
 
     private static let serviceType = "goh-audio"
 
@@ -39,8 +40,7 @@ final class MultipeerAudioPlane: NSObject, AudioPlane {
     }
 
     func sendAudio(_ data: Data) {
-        guard isActive, !session.connectedPeers.isEmpty else { return }
-        try? session.send(data, toPeers: session.connectedPeers, with: .unreliable)
+        Logger.audio.error("Multipeer raw audio is disabled by encrypted GOH2 v3")
     }
 
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void) {

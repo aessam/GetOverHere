@@ -1,10 +1,11 @@
-package com.aessam.comeoverhere.service
+package com.aessam.comeoverhere.core
 
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import com.aessam.comeoverhere.service.NativeAudioCodecCapabilities
 import com.aessam.toursession.SessionAudioCodec
 import com.aessam.toursession.SessionAudioCodecConfiguration
 import com.aessam.toursession.SessionCapability
@@ -29,14 +30,20 @@ interface RealtimeAudioDecoderInterface : Closeable {
     fun decode(packet: ByteArray): ByteArray?
 }
 
-object NativeRealtimeAudioCodecFactory {
-    fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface =
+interface RealtimeAudioCodecProvider {
+    fun sessionCapabilities(): Long
+    fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface
+    fun makeDecoder(configuration: SessionAudioCodecConfiguration): RealtimeAudioDecoderInterface
+}
+
+object NativeRealtimeAudioCodecFactory : RealtimeAudioCodecProvider {
+    override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface =
         AndroidNativeRealtimeAudioEncoder(codec)
 
-    fun makeDecoder(configuration: SessionAudioCodecConfiguration): RealtimeAudioDecoderInterface =
+    override fun makeDecoder(configuration: SessionAudioCodecConfiguration): RealtimeAudioDecoderInterface =
         AndroidNativeRealtimeAudioDecoder(configuration)
 
-    fun sessionCapabilities(): Long {
+    override fun sessionCapabilities(): Long {
         val native = NativeAudioCodecCapabilities.current()
         var result = 0L
         if (native.opusEncoder != null) result = result or SessionCapability.OPUS_ENCODER.bit

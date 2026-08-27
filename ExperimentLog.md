@@ -526,3 +526,32 @@ Commands and results:
    - Result: passed.
 2. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereP3PCM16 build`
    - Result: passed.
+
+## 2026-08-27 — P3 encrypted encoded LAN integration checkpoint
+
+Implementation:
+
+- Integrated native Opus/AAC-LC negotiation, exact PCM16 frame accumulation, encoded GOH2 audio payloads, encrypt-once sealing, duplicate rejection, and bounded jitter into both LAN audio transports.
+- Reused one sealed frame for every LAN listener that negotiated the same codec. Codec-specific streams have independent identities and sequences.
+- Added explicit audio-lane legacy-version rejection and propagated typed failure state to both product services.
+- Moved native codec implementations beside the transport boundary and added injectable codec providers for deterministic socket tests.
+- Sealed iOS Wi-Fi Aware control and asset lanes. Disabled raw Wi-Fi Aware and Multipeer audio until a route-neutral sealed-frame producer owns concurrent route delivery.
+- Added `scripts/verify_no_plaintext_session_paths.sh` and made it stage 6 of the full verifier.
+- Replaced cross-device wall-clock expiry comparison with monotonic sender/receiver timelines and minimum-observed-offset compensation.
+
+Commands and results:
+
+1. `swift test --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereP3ClockSwift`
+   - Result: 24 tests passed, including deliberate sender/receiver clock skew, excess-delay expiry, encrypted identity, replay, and bounded jitter.
+2. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :tour-session-core:test :app:testDebugUnitTest --tests com.aessam.comeoverhere.LocalSessionTransportTest`
+   - Result: passed, including the matching Kotlin clock-skew contract and encrypted encoded LAN loopback.
+3. `adb -s emulator-5554 shell am instrument -w -e class com.aessam.comeoverhere.NativeRealtimeAudioCodecTest com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner`
+   - Result: `OK (3 tests)` on the Android 16 ARM64 emulator. Native Opus, AAC-LC, and encrypted native-codec LAN transport passed. The attached physical Pixel was not targeted.
+4. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereP3FinalIOS test -only-testing:GetOverHereTests`
+   - Result: passed after replacing cross-task mutable callbacks with a lock-protected callback store.
+5. `scripts/verify_no_plaintext_session_paths.sh`
+   - Result: passed. No plaintext GOH2 decode/write path or raw Float32 audio path was found in the enumerated production transports.
+6. `scripts/verify_tour_session.sh`
+   - Result: all eight current-tree stages passed, including exact Swift/Kotlin encrypted bytes, clock-skew/expiry behavior, Android encrypted LAN loopback and APK, the plaintext-path audit, and the full iOS Simulator suite. Final output: `Tour session verification passed`.
+
+This completes the non-hardware P3 implementation on the LAN floor. Gate P3 remains open until its physical codec, 30-minute audio, loss, mouth-to-ear latency, background, thermal, and battery measurements pass.

@@ -37,10 +37,10 @@ if [[ ! -x "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
     exit 1
 fi
 
-echo "[1/7] Swift protocol and registry tests"
+echo "[1/8] Swift protocol and registry tests"
 swift test --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH"
 
-echo "[2/7] Kotlin protocol and registry tests"
+echo "[2/8] Kotlin protocol and registry tests"
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew :tour-session-core:test :tour-session-cli:installDist
@@ -52,7 +52,7 @@ run_kotlin() {
     JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$@"
 }
 
-echo "[3/7] Exact Swift/Kotlin wire bytes"
+echo "[3/8] Exact Swift/Kotlin wire bytes"
 SWIFT_HEX="$($SWIFT_BIN fixture)"
 KOTLIN_HEX="$(run_kotlin fixture)"
 if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then
@@ -74,7 +74,7 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
-echo "[4/7] Cross-language decode and participant churn"
+echo "[4/8] Cross-language decode and participant churn"
 SWIFT_DESCRIPTION="$($SWIFT_BIN decode "$KOTLIN_HEX")"
 KOTLIN_DESCRIPTION="$(run_kotlin decode "$SWIFT_HEX")"
 if [[ "$SWIFT_DESCRIPTION" != "$KOTLIN_DESCRIPTION" ]]; then
@@ -99,7 +99,7 @@ for COUNT in 1 8 20 50; do
     fi
 done
 
-echo "[5/7] Realtime loss, duplicate, and reorder audit"
+echo "[5/8] Realtime loss, duplicate, and reorder audit"
 EXPECTED_FAULTS="unique=5|duplicates=1|reordered=1|missing=2"
 if [[ "$($SWIFT_BIN faults)" != "$EXPECTED_FAULTS" || "$(run_kotlin faults)" != "$EXPECTED_FAULTS" ]]; then
     echo "error: realtime fault audit mismatch" >&2
@@ -180,13 +180,16 @@ if ! rg -q '\.iOS\(\.v17\),' "$SWIFT_PACKAGE/Package.swift"; then
     exit 1
 fi
 
-echo "[6/7] Android app integration, TCP loopback, and APK"
+echo "[6/8] Encrypted production session-path audit"
+"$PROJECT_ROOT/scripts/verify_no_plaintext_session_paths.sh"
+
+echo "[7/8] Android app integration, TCP loopback, and APK"
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew testDebugUnitTest assembleDebug
 )
 
-echo "[7/7] iOS app unit/integration suite in Simulator"
+echo "[8/8] iOS app unit/integration suite in Simulator"
 DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \
 CLANG_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
 SWIFT_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \

@@ -14,8 +14,9 @@ struct LocalSessionTransportTests {
     @Test("GOH2 hello registers the guest and realtime payload arrives")
     @MainActor
     func helloAndAudioRoundtrip() async throws {
-        let guide = UDPAudioPlane()
-        let guest = UDPAudioPlane()
+        let provider = PassThroughRealtimeAudioCodecProvider()
+        let guide = UDPAudioPlane(codecProvider: provider)
+        let guest = UDPAudioPlane(codecProvider: provider)
         let sessionID = UUID()
         let guideID = UUID()
         let guestID = UUID()
@@ -62,7 +63,108 @@ struct LocalSessionTransportTests {
         #expect(participant.displayName == "Guest")
 
         guide.sendAudio(payload)
+        guide.sendAudio(payload)
+        guide.sendAudio(payload)
         #expect(try await next(from: audio) == payload)
+    }
+
+    @Test("Audio lane reports a legacy protocol version explicitly")
+    @MainActor
+    func audioLaneReportsLegacyVersion() async throws {
+        let port: UInt16 = 50_033
+        let serverFD = try legacyVersionServer(port: port)
+        let serverTask = Task { @concurrent in
+            let clientFD = Darwin.accept(serverFD, nil, nil)
+            guard clientFD >= 0 else { return }
+            defer { close(clientFD) }
+            let legacyHeader = Data([0x47, 0x4f, 0x48, 0x32, SessionEnvelope.majorVersion])
+            _ = writeTestFrame(fd: clientFD, data: legacyHeader)
+        }
+        defer {
+            shutdown(serverFD, SHUT_RDWR)
+            close(serverFD)
+            serverTask.cancel()
+        }
+
+        let sessionID = UUID()
+        let guest = UDPAudioPlane(
+            port: port,
+            codecProvider: PassThroughRealtimeAudioCodecProvider()
+        )
+        let (events, continuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        defer {
+            guest.stop()
+            continuation.finish()
+        }
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: try transportCredential(sessionID)
+        )
+        guest.setSessionEventHandler { continuation.yield($0) }
+        guest.startListening(channelID: sessionID.uuidString) { _ in }
+
+        let event = try await next(from: events)
+        guard case let .versionMismatch(remoteMajor, localMajor) = event else {
+            Issue.record("Expected an explicit audio version mismatch")
+            return
+        }
+        #expect(remoteMajor == SessionEnvelope.majorVersion)
+        #expect(localMajor == SealedSessionEnvelope.majorVersion)
+    }
+
+    @Test("Native codec crosses the encrypted realtime transport")
+    @MainActor
+    func nativeCodecEncryptedAudioRoundtrip() async throws {
+        let port: UInt16 = 50_034
+        let guide = UDPAudioPlane(port: port)
+        let guest = UDPAudioPlane(port: port)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let (events, eventContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        let (audio, audioContinuation) = AsyncStream.makeStream(of: Data.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            eventContinuation.finish()
+            audioContinuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.setSessionEventHandler { eventContinuation.yield($0) }
+        guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
+
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: credential
+        )
+        guest.startListening(channelID: sessionID.uuidString) { audioContinuation.yield($0) }
+        guard case .joined = try await next(from: events) else {
+            Issue.record("Expected native-codec guest admission")
+            return
+        }
+
+        let samples = (0 ..< 320).map { index in
+            Int16(sin(Double(index) * 0.17) * Double(Int16.max / 4))
+        }
+        let pcm = samples.withUnsafeBytes { Data($0) }
+        for _ in 0 ..< 12 { guide.sendAudio(pcm) }
+        let decoded = try await next(from: audio)
+        #expect(!decoded.isEmpty)
+        #expect(decoded.count.isMultiple(of: MemoryLayout<Int16>.size))
     }
 
     @Test("Independent GOH2 control lane authenticates both directions")
@@ -478,5 +580,54 @@ private func writeTestFrame(fd: Int32, data: Data) -> Bool {
             offset += count
         }
         return true
+    }
+}
+
+private final class PassThroughRealtimeAudioCodecProvider: RealtimeAudioCodecProviderInterface {
+    func sessionCapabilities() -> SessionCapabilities {
+        [.opusEncoder, .opusDecoder]
+    }
+
+    func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface {
+        try PassThroughRealtimeAudioEncoder(codec: codec)
+    }
+
+    func makeDecoder(
+        configuration: SessionAudioCodecConfiguration
+    ) -> any RealtimeAudioDecoderInterface {
+        PassThroughRealtimeAudioDecoder(configuration: configuration)
+    }
+}
+
+private final class PassThroughRealtimeAudioEncoder: RealtimeAudioEncoderInterface {
+    let codec: SessionAudioCodec
+    let inputPCMByteCount = 4
+    private let configuration: SessionAudioCodecConfiguration
+
+    init(codec: SessionAudioCodec) throws {
+        self.codec = codec
+        configuration = try SessionAudioCodecConfiguration(
+            codec: codec,
+            sampleRate: 16_000,
+            channelCount: 1,
+            frameDurationMilliseconds: 20,
+            bitRate: 20_000
+        )
+    }
+
+    func encode(pcm16LittleEndian: Data) -> NativeEncodedAudioPacket? {
+        NativeEncodedAudioPacket(configuration: configuration, bytes: pcm16LittleEndian)
+    }
+}
+
+private final class PassThroughRealtimeAudioDecoder: RealtimeAudioDecoderInterface {
+    let configuration: SessionAudioCodecConfiguration
+
+    init(configuration: SessionAudioCodecConfiguration) {
+        self.configuration = configuration
+    }
+
+    func decode(packet: Data) -> Data? {
+        packet
     }
 }

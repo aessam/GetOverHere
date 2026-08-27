@@ -56,12 +56,18 @@ public enum EncodedAudioFrameOfferResult: Equatable, Sendable {
 }
 
 public struct EncodedAudioJitterBuffer: Sendable {
+    private struct BufferedFrame: Sendable {
+        let payload: EncodedAudioFramePayload
+        let localDeadlineNanoseconds: UInt64
+    }
+
     public let targetFrameCount: Int
     public let maximumFrameCount: Int
 
-    private var frames: [UInt64: EncodedAudioFramePayload] = [:]
+    private var frames: [UInt64: BufferedFrame] = [:]
     private var expectedSequence: UInt64?
     private var hasStarted = false
+    private var minimumClockOffsetNanoseconds: Int64?
 
     public init(targetFrameCount: Int, maximumFrameCount: Int) throws {
         guard targetFrameCount > 0, maximumFrameCount >= targetFrameCount else {
@@ -82,12 +88,18 @@ public struct EncodedAudioJitterBuffer: Sendable {
         _ frame: SequencedEncodedAudioFrame,
         nowNanoseconds: UInt64
     ) -> EncodedAudioFrameOfferResult {
-        guard !frame.payload.isExpired(atNanoseconds: nowNanoseconds) else { return .expired }
         if frames[frame.sequence] != nil { return .duplicate }
         if hasStarted, let expectedSequence, frame.sequence < expectedSequence { return .duplicate }
+        guard let deadline = localDeadline(
+            for: frame.payload,
+            receivedAtNanoseconds: nowNanoseconds
+        ) else { return .expired }
         guard frames.count < maximumFrameCount else { return .capacityExceeded }
 
-        frames[frame.sequence] = frame.payload
+        frames[frame.sequence] = BufferedFrame(
+            payload: frame.payload,
+            localDeadlineNanoseconds: deadline
+        )
         if !hasStarted {
             expectedSequence = min(expectedSequence ?? frame.sequence, frame.sequence)
         }
@@ -109,18 +121,45 @@ public struct EncodedAudioJitterBuffer: Sendable {
             guard frames.count >= targetFrameCount, let next = frames.keys.min() else { return nil }
             sequence = next
         }
-        guard let payload = frames.removeValue(forKey: sequence) else { return nil }
+        guard let buffered = frames.removeValue(forKey: sequence) else { return nil }
         expectedSequence = sequence == UInt64.max ? nil : sequence + 1
-        return SequencedEncodedAudioFrame(sequence: sequence, payload: payload)
+        return SequencedEncodedAudioFrame(sequence: sequence, payload: buffered.payload)
     }
 
     public mutating func reset() {
         frames.removeAll(keepingCapacity: true)
         expectedSequence = nil
         hasStarted = false
+        minimumClockOffsetNanoseconds = nil
     }
 
     private mutating func discardExpiredFrames(nowNanoseconds: UInt64) {
-        frames = frames.filter { !$0.value.isExpired(atNanoseconds: nowNanoseconds) }
+        frames = frames.filter { $0.value.localDeadlineNanoseconds > nowNanoseconds }
+    }
+
+    /// Maps the sender's monotonic capture timeline to receiver-local time.
+    /// Delay above the minimum observed clock offset consumes frame lifetime.
+    private mutating func localDeadline(
+        for payload: EncodedAudioFramePayload,
+        receivedAtNanoseconds: UInt64
+    ) -> UInt64? {
+        guard let received = Int64(exactly: receivedAtNanoseconds),
+              let captured = Int64(exactly: payload.capturedAtNanoseconds) else {
+            return nil
+        }
+        let (observedOffset, offsetOverflow) = received.subtractingReportingOverflow(captured)
+        guard !offsetOverflow else { return nil }
+
+        let baseline = min(minimumClockOffsetNanoseconds ?? observedOffset, observedOffset)
+        minimumClockOffsetNanoseconds = baseline
+        let (excessDelay, delayOverflow) = observedOffset.subtractingReportingOverflow(baseline)
+        guard !delayOverflow, excessDelay >= 0 else { return nil }
+
+        let lifetime = payload.expiresAtNanoseconds - payload.capturedAtNanoseconds
+        let delay = UInt64(excessDelay)
+        guard delay < lifetime else { return nil }
+        let remaining = lifetime - delay
+        let (deadline, deadlineOverflow) = receivedAtNanoseconds.addingReportingOverflow(remaining)
+        return deadlineOverflow ? UInt64.max : deadline
     }
 }

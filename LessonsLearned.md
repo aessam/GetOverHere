@@ -215,3 +215,13 @@
 **Root cause**: Byte offsets were treated as collection indices after mutation.
 **Resolution**: Extract each complete frame with `prefix`, copy it into a rebased `Data`, then remove that frame. The focused Swift and Kotlin accumulator/jitter tests cover split and coalesced capture chunks.
 **Decision**: Use collection indices or prefix/drop operations for mutable `Data`; never assume `startIndex == 0` after slicing or removal.
+
+## 41. A security invariant must include dormant transport writers
+**What happened**: LAN audio, control, and assets were migrated to encrypted GOH2 v3, but source review still found raw audio writers in inactive Wi-Fi Aware and Multipeer implementations. A later route-selection change could have restored plaintext without touching the working LAN code.
+**Resolution**: Seal the supported Wi-Fi Aware control and asset lanes, disable unqualified Aware and Multipeer audio, and add a reusable source audit that enumerates every production payload transport.
+**Decision**: Dormant compiled transports fail closed. A no-plaintext claim requires both wire tests and a source-level writer audit.
+
+## 42. Realtime expiry cannot compare unsynchronized phone clocks
+**What happened**: The first encoded LAN integration stamped a 500 ms absolute wall-clock expiry on the guide and compared it directly with the guest's wall clock. Device clock skew could make every otherwise valid frame appear expired.
+**Resolution**: Use each device's monotonic clock and map the sender timeline to receiver-local time from the minimum observed clock offset. Only network and queue delay above that baseline consumes the frame lifetime. Swift and Kotlin tests use a deliberately large clock offset and still expire excess delay deterministically.
+**Decision**: Cross-device realtime deadlines require clock-offset compensation or receiver-local residence time. Never compare raw device clocks directly.

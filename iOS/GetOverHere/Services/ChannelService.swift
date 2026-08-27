@@ -190,7 +190,8 @@ final class ChannelService {
                 credential: credential
             )
             plane.setSessionEventHandler { [weak self] event in
-                Task { @MainActor in self?.handleAudioSessionEvent(event) }
+                guard let self else { return }
+                Task { @MainActor [self] in self.handleAudioSessionEvent(event) }
             }
             plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
             startCapturing(plane: plane, channelID: channel.id)
@@ -594,6 +595,9 @@ final class ChannelService {
         case let .versionMismatch(remoteMajor, localMajor):
             connectionState = .failed
             tourFeatureError = "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
+        case let .failed(message):
+            connectionState = .failed
+            tourFeatureError = message
         }
     }
 

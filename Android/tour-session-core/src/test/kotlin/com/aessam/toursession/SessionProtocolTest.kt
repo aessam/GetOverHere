@@ -189,7 +189,18 @@ class SessionProtocolTest {
         )
         assertEquals(
             EncodedAudioFrameOfferResult.EXPIRED,
-            full.offer(SequencedEncodedAudioFrame(4, payload), nowNanoseconds = 1_000),
+            full.offer(SequencedEncodedAudioFrame(4, payload), nowNanoseconds = 1_100),
+        )
+
+        val skewed = EncodedAudioJitterBuffer(targetFrameCount = 1, maximumFrameCount = 2)
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            skewed.offer(SequencedEncodedAudioFrame(1, payload), nowNanoseconds = 10_000),
+        )
+        assertEquals(1L, skewed.popReady(nowNanoseconds = 10_899)?.sequence)
+        assertEquals(
+            EncodedAudioFrameOfferResult.EXPIRED,
+            skewed.offer(SequencedEncodedAudioFrame(2, payload), nowNanoseconds = 11_000),
         )
     }
 

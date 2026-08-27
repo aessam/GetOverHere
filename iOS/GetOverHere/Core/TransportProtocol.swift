@@ -94,7 +94,7 @@ extension BLECommand: Codable {
 
 enum AudioQuality: String, Codable, Sendable, CaseIterable {
     case standard  // 16 kHz mono PCM16 codec input, ~32 KB/s before encoding
-    case hd        // 44.1kHz stereo float32, ~353 KB/s — WiFi only
+    case hd        // 44.1 kHz stereo PCM16 codec input, ~176 KB/s before encoding
 
     var sampleRate: Double {
         switch self {
@@ -169,6 +169,7 @@ enum AudioSessionEvent: Sendable {
     case joined(ParticipantSession)
     case disconnected(connectionID: String)
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
+    case failed(String)
 }
 
 extension AudioPlane {

@@ -3,7 +3,7 @@ import AVFAudio
 import Foundation
 import TourSessionCore
 
-enum NativeRealtimeAudioCodecError: Error, Equatable, CustomStringConvertible {
+nonisolated enum NativeRealtimeAudioCodecError: Error, Equatable, CustomStringConvertible {
     case unsupportedCodec(SessionAudioCodec)
     case converterUnavailable(SessionAudioCodec)
     case invalidPCMByteCount(expected: Int, actual: Int)
@@ -26,23 +26,47 @@ enum NativeRealtimeAudioCodecError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-struct NativeEncodedAudioPacket: Equatable, Sendable {
+nonisolated struct NativeEncodedAudioPacket: Equatable, Sendable {
     let configuration: SessionAudioCodecConfiguration
     let bytes: Data
 }
 
-protocol RealtimeAudioEncoderInterface: AnyObject {
+nonisolated protocol RealtimeAudioEncoderInterface: AnyObject {
     var codec: SessionAudioCodec { get }
     var inputPCMByteCount: Int { get }
     func encode(pcm16LittleEndian: Data) throws -> NativeEncodedAudioPacket?
 }
 
-protocol RealtimeAudioDecoderInterface: AnyObject {
+nonisolated protocol RealtimeAudioDecoderInterface: AnyObject {
     var configuration: SessionAudioCodecConfiguration { get }
     func decode(packet: Data) throws -> Data?
 }
 
-enum NativeRealtimeAudioCodecFactory {
+nonisolated protocol RealtimeAudioCodecProviderInterface: Sendable {
+    func sessionCapabilities() throws -> SessionCapabilities
+    func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface
+    func makeDecoder(
+        configuration: SessionAudioCodecConfiguration
+    ) throws -> any RealtimeAudioDecoderInterface
+}
+
+nonisolated struct NativeRealtimeAudioCodecProvider: RealtimeAudioCodecProviderInterface {
+    func sessionCapabilities() throws -> SessionCapabilities {
+        try NativeRealtimeAudioCodecFactory.sessionCapabilities()
+    }
+
+    func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface {
+        try NativeRealtimeAudioCodecFactory.makeEncoder(codec: codec)
+    }
+
+    func makeDecoder(
+        configuration: SessionAudioCodecConfiguration
+    ) throws -> any RealtimeAudioDecoderInterface {
+        try NativeRealtimeAudioCodecFactory.makeDecoder(configuration: configuration)
+    }
+}
+
+nonisolated enum NativeRealtimeAudioCodecFactory {
     static func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface {
         try AppleNativeRealtimeAudioEncoder(codec: codec)
     }
@@ -64,7 +88,7 @@ enum NativeRealtimeAudioCodecFactory {
     }
 }
 
-private final class AppleNativeRealtimeAudioEncoder: RealtimeAudioEncoderInterface {
+nonisolated private final class AppleNativeRealtimeAudioEncoder: RealtimeAudioEncoderInterface {
     let codec: SessionAudioCodec
     let inputPCMByteCount: Int
 
@@ -204,7 +228,7 @@ private final class AppleNativeRealtimeAudioEncoder: RealtimeAudioEncoderInterfa
     }
 }
 
-private final class AppleNativeRealtimeAudioDecoder: RealtimeAudioDecoderInterface {
+nonisolated private final class AppleNativeRealtimeAudioDecoder: RealtimeAudioDecoderInterface {
     let configuration: SessionAudioCodecConfiguration
 
     private let inputFormat: AVAudioFormat

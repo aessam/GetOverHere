@@ -151,7 +151,12 @@ struct SessionProtocolTests {
         #expect(full.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 200) == .accepted)
         #expect(full.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 200) == .accepted)
         #expect(full.offer(.init(sequence: 3, payload: payload), nowNanoseconds: 200) == .capacityExceeded)
-        #expect(full.offer(.init(sequence: 4, payload: payload), nowNanoseconds: 1_000) == .expired)
+        #expect(full.offer(.init(sequence: 4, payload: payload), nowNanoseconds: 1_100) == .expired)
+
+        var skewed = try EncodedAudioJitterBuffer(targetFrameCount: 1, maximumFrameCount: 2)
+        #expect(skewed.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 10_000) == .accepted)
+        #expect(skewed.popReady(nowNanoseconds: 10_899)?.sequence == 1)
+        #expect(skewed.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 11_000) == .expired)
     }
 
     @Test("Message kinds cannot enter the wrong lane")

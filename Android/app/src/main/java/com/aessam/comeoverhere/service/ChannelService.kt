@@ -714,6 +714,10 @@ class ChannelService(
                     "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
                     "Update the older app."
             }
+            is AudioSessionEvent.Failed -> {
+                _connectionState.value = SessionConnectionState.FAILED
+                _tourFeatureError.value = event.message
+            }
         }
         _listenerCount.value = participantRegistry.listenerCount
         Log.i(TAG, "Session membership changed: listeners=${_listenerCount.value}")

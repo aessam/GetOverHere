@@ -1,7 +1,7 @@
 import AudioToolbox
 import Foundation
 
-enum NativeAudioCodecCapabilityError: Error, Equatable, CustomStringConvertible {
+nonisolated enum NativeAudioCodecCapabilityError: Error, Equatable, CustomStringConvertible {
     case propertyInfo(property: AudioFormatPropertyID, status: OSStatus)
     case propertyRead(property: AudioFormatPropertyID, status: OSStatus)
     case invalidPropertySize(property: AudioFormatPropertyID, size: UInt32)
@@ -18,7 +18,7 @@ enum NativeAudioCodecCapabilityError: Error, Equatable, CustomStringConvertible 
     }
 }
 
-struct NativeAudioCodecCapabilities: Equatable, Sendable {
+nonisolated struct NativeAudioCodecCapabilities: Equatable, Sendable {
     let opusEncoder: Bool
     let opusDecoder: Bool
     let aacLCEncoder: Bool
