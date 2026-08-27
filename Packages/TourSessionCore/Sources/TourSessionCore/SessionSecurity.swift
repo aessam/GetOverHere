@@ -22,7 +22,7 @@ public struct SessionCredential: Equatable, Sendable {
     public static let shortCodeLength = 10
     public static let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ".utf8)
 
-    fileprivate let key: Data
+    let key: Data
 
     public static func derive(shortCode: String, sessionID: UUID) throws -> SessionCredential {
         let normalized = normalize(shortCode)

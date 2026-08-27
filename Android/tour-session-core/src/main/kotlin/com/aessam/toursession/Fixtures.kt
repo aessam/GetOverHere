@@ -9,6 +9,7 @@ object TourSessionFixtures {
     val deckId: UUID = UUID.fromString("12345678-90ab-cdef-1234-567890abcdef")
     val targetId: UUID = UUID.fromString("abcdef01-2345-6789-abcd-ef0123456789")
     val packId: UUID = UUID.fromString("87654321-0fed-cba9-8765-43210fedcba9")
+    val streamId: UUID = UUID.fromString("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
 
     fun helloEnvelope(): SessionEnvelope = SessionEnvelope(
         lane = SessionLane.CONTROL,
@@ -46,6 +47,47 @@ object TourSessionFixtures {
             "requestedLane=${hello.requestedLane.wireName}",
         ).joinToString("|")
     }
+
+    fun encryptedHelloFixture(): SealedSessionEnvelope =
+        SessionFrameSealer(fixtureCredential()).seal(helloEnvelope(), streamId)
+
+    fun describeEncryptedHello(encoded: ByteArray): String {
+        val sealed = SealedSessionEnvelope.decode(encoded)
+        val opened = SessionFrameOpener(fixtureCredential()).open(sealed)
+        check(opened is SessionFrameOpenResult.Opened) { "a fresh fixture cannot be a duplicate" }
+        val envelope = opened.envelope
+        if (envelope.kind != SessionMessageKind.HELLO) {
+            throw SessionProtocolException("expected hello, got ${envelope.kind.wireName}")
+        }
+        val hello = HelloPayload.decode(envelope.payload)
+        return listOf(
+            "version=${SealedSessionEnvelope.MAJOR_VERSION}.${SealedSessionEnvelope.MINOR_VERSION}",
+            "session=${envelope.sessionId.toString().lowercase()}",
+            "sender=${envelope.senderId.toString().lowercase()}",
+            "stream=${sealed.streamId.toString().lowercase()}",
+            "lane=${envelope.lane.wireName}",
+            "kind=${envelope.kind.wireName}",
+            "sequence=${envelope.sequence}",
+            "role=${hello.role.wireName}",
+            "platform=${hello.platform.wireName}",
+            "name=${hello.displayName}",
+            "capabilities=${hello.capabilities}",
+            "requestedLane=${hello.requestedLane.wireName}",
+        ).joinToString("|")
+    }
+
+    fun encodedAudioFixture(): EncodedAudioFramePayload = EncodedAudioFramePayload(
+        SessionAudioCodecConfiguration(
+            SessionAudioCodec.OPUS,
+            16_000,
+            1,
+            20,
+            20_000,
+        ),
+        1_000_000_000,
+        1_250_000_000,
+        byteArrayOf(0xf8.toByte(), 0xff.toByte(), 0xfe.toByte(), 1, 2, 3),
+    )
 
     fun simulateParticipants(count: Int): String {
         require(count >= 0)
@@ -236,6 +278,8 @@ object TourSessionFixtures {
         )
         return "${guestProof.lowercaseHex()}|${guideProof.lowercaseHex()}"
     }
+
+    fun fixtureCredential(): SessionCredential = SessionCredential.derive("23456789AB", sessionId)
 
     fun simulateRecovery(): String {
         val guidePresentation = PresentationSnapshotPayload(

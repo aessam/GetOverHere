@@ -7,6 +7,7 @@ public enum TourSessionFixtures {
     public static let deckID = UUID(uuidString: "12345678-90AB-CDEF-1234-567890ABCDEF")!
     public static let targetID = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
     public static let packID = UUID(uuidString: "87654321-0FED-CBA9-8765-43210FEDCBA9")!
+    public static let streamID = UUID(uuidString: "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0")!
 
     public static func helloEnvelope() throws -> SessionEnvelope {
         let hello = try HelloPayload(
@@ -46,6 +47,52 @@ public enum TourSessionFixtures {
             "capabilities=\(hello.capabilities)",
             "requestedLane=\(hello.requestedLane)",
         ].joined(separator: "|")
+    }
+
+    public static func encryptedHelloFixture() throws -> SealedSessionEnvelope {
+        let sealer = SessionFrameSealer(credential: try fixtureCredential())
+        return try sealer.seal(helloEnvelope(), streamID: streamID)
+    }
+
+    public static func describeEncryptedHello(_ encoded: Data) throws -> String {
+        let sealed = try SealedSessionEnvelope.decode(encoded)
+        let opener = SessionFrameOpener(credential: try fixtureCredential())
+        guard case let .opened(envelope) = try opener.open(sealed) else {
+            preconditionFailure("a fresh fixture cannot be a duplicate")
+        }
+        guard envelope.kind == .hello else {
+            throw SessionProtocolError.unknownMessageKind(envelope.kind.rawValue)
+        }
+        let hello = try HelloPayload.decode(envelope.payload)
+        return [
+            "version=\(SealedSessionEnvelope.majorVersion).\(SealedSessionEnvelope.minorVersion)",
+            "session=\(envelope.sessionID.uuidString.lowercased())",
+            "sender=\(envelope.senderID.uuidString.lowercased())",
+            "stream=\(sealed.streamID.uuidString.lowercased())",
+            "lane=\(envelope.lane)",
+            "kind=\(envelope.kind)",
+            "sequence=\(envelope.sequence)",
+            "role=\(hello.role)",
+            "platform=\(hello.platform)",
+            "name=\(hello.displayName)",
+            "capabilities=\(hello.capabilities)",
+            "requestedLane=\(hello.requestedLane)",
+        ].joined(separator: "|")
+    }
+
+    public static func encodedAudioFixture() throws -> EncodedAudioFramePayload {
+        try EncodedAudioFramePayload(
+            configuration: SessionAudioCodecConfiguration(
+                codec: .opus,
+                sampleRate: 16_000,
+                channelCount: 1,
+                frameDurationMilliseconds: 20,
+                bitRate: 20_000
+            ),
+            capturedAtNanoseconds: 1_000_000_000,
+            expiresAtNanoseconds: 1_250_000_000,
+            encodedBytes: Data([0xF8, 0xFF, 0xFE, 0x01, 0x02, 0x03])
+        )
     }
 
     public static func simulateParticipants(count: Int) -> String {
@@ -255,6 +302,10 @@ public enum TourSessionFixtures {
             guideNonce: guideNonce
         )
         return "\(guestProof.lowercaseHex)|\(guideProof.lowercaseHex)"
+    }
+
+    public static func fixtureCredential() throws -> SessionCredential {
+        try SessionCredential.derive(shortCode: "23456789AB", sessionID: sessionID)
     }
 
     public static func simulateRecovery() throws -> String {

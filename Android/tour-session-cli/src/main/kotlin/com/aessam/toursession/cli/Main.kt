@@ -10,10 +10,16 @@ fun main(arguments: Array<String>) {
     try {
         when (val command = arguments.firstOrNull()) {
             "fixture" -> println(TourSessionFixtures.helloEnvelope().encode().lowercaseHex())
+            "encrypted-fixture" -> println(TourSessionFixtures.encryptedHelloFixture().encode().lowercaseHex())
             "decode" -> {
                 if (arguments.size != 2) fail("decode requires one hex argument")
                 println(TourSessionFixtures.describeHello(arguments[1].hexToByteArray()))
             }
+            "decode-encrypted" -> {
+                if (arguments.size != 2) fail("decode-encrypted requires one hex argument")
+                println(TourSessionFixtures.describeEncryptedHello(arguments[1].hexToByteArray()))
+            }
+            "audio-fixture" -> println(TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex())
             "simulate" -> {
                 val count = arguments.getOrNull(1)?.toIntOrNull()
                 if (arguments.size != 2 || count == null || count < 0) {
@@ -26,7 +32,7 @@ fun main(arguments: Array<String>) {
             "auth" -> println(TourSessionFixtures.authenticationFixtureHex())
             "recovery" -> println(TourSessionFixtures.simulateRecovery())
             "focus" -> println(TourSessionFixtures.simulateVisualFocus())
-            null -> fail("usage: tour-session-kotlin fixture | decode HEX | simulate COUNT | faults | state | auth | recovery | focus")
+            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX | decode-encrypted HEX | audio-fixture | simulate COUNT | faults | state | auth | recovery | focus")
             else -> fail("unknown command: $command")
         }
     } catch (error: Exception) {

@@ -435,3 +435,32 @@ Commands and results:
    - Result: failed before test execution because `Dark knight` was locked and development services could not start. No physical iOS codec capability result is claimed.
 
 P3 remains stopped before the codec-dependent wire fixture until both physical probes run.
+
+## 2026-08-26 — P3 encrypted-frame and encoded-audio contract checkpoint
+
+Scope adjustment:
+
+- Hardware is unavailable. Physical codec, RF, latency, background, thermal, and battery gates remain pending by explicit user direction.
+- P3 implementation proceeds with deterministic shared-core tests, iOS Simulator, and Android emulator/device-test infrastructure. No physical result is inferred from those environments.
+
+Implementation:
+
+- Added a version-3 encrypted session envelope while retaining `GOH2` magic so legacy major `2` can be rejected as an explicit version mismatch.
+- Added route-independent frame identity using session, sender, stream, lane, kind, flags, and sequence.
+- Added encrypt-once AES-256-GCM sealing with a nonce derived from the tour key and immutable frame identity. Re-sealing identical plaintext returns byte-identical ciphertext; different plaintext under a used identity is rejected.
+- Added authenticated header fields, tamper rejection, wrong-tour-key rejection, and duplicate detection.
+- Added cross-platform Opus/AAC-LC capability bits, codec selection, and an encoded-audio payload with codec configuration, capture time, expiry, and encoded bytes.
+- Added deterministic Swift/Kotlin CLI fixtures and extended `scripts/verify_tour_session.sh` to compare encrypted frame bytes, encoded-audio bytes, and cross-language encrypted decode results.
+
+Commands and results:
+
+1. `swift test --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereP3CoreSwift`
+   - Result: passed, including encryption identity, tamper, replay, version mismatch, audio payload, and codec negotiation tests.
+2. `env JAVA_HOME=/Applications/Android\\ Studio.app/Contents/jbr/Contents/Home ./gradlew :tour-session-core:test :tour-session-cli:installDist`
+   - Result: passed with the matching Kotlin contract tests.
+3. Swift/Kotlin `encrypted-fixture` and `audio-fixture` CLI outputs
+   - Result: exact byte equality for AES-GCM encrypted session frames and encoded-audio payloads.
+4. `scripts/verify_tour_session.sh`
+   - Result: all seven stages passed, including both cores, cross-language fixtures, Android app/APK integration, and the iOS Simulator test suite.
+
+This checkpoint defines and proves the new contract. Existing application transports still use the legacy plaintext envelope until the next focused integration checkpoint; no production encryption claim is made yet.

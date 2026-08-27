@@ -60,11 +60,32 @@ if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then
     exit 1
 fi
 
+SWIFT_ENCRYPTED_HEX="$($SWIFT_BIN encrypted-fixture)"
+KOTLIN_ENCRYPTED_HEX="$(run_kotlin encrypted-fixture)"
+if [[ "$SWIFT_ENCRYPTED_HEX" != "$KOTLIN_ENCRYPTED_HEX" ]]; then
+    echo "error: Swift and Kotlin encoded different encrypted session bytes" >&2
+    exit 1
+fi
+
+SWIFT_AUDIO_HEX="$($SWIFT_BIN audio-fixture)"
+KOTLIN_AUDIO_HEX="$(run_kotlin audio-fixture)"
+if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
+    echo "error: Swift and Kotlin encoded different realtime audio bytes" >&2
+    exit 1
+fi
+
 echo "[4/7] Cross-language decode and participant churn"
 SWIFT_DESCRIPTION="$($SWIFT_BIN decode "$KOTLIN_HEX")"
 KOTLIN_DESCRIPTION="$(run_kotlin decode "$SWIFT_HEX")"
 if [[ "$SWIFT_DESCRIPTION" != "$KOTLIN_DESCRIPTION" ]]; then
     echo "error: Swift and Kotlin decoded different GOH2 values" >&2
+    exit 1
+fi
+
+SWIFT_ENCRYPTED_DESCRIPTION="$($SWIFT_BIN decode-encrypted "$KOTLIN_ENCRYPTED_HEX")"
+KOTLIN_ENCRYPTED_DESCRIPTION="$(run_kotlin decode-encrypted "$SWIFT_ENCRYPTED_HEX")"
+if [[ "$SWIFT_ENCRYPTED_DESCRIPTION" != "$KOTLIN_ENCRYPTED_DESCRIPTION" ]]; then
+    echo "error: Swift and Kotlin decoded different encrypted session values" >&2
     exit 1
 fi
 

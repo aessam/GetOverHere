@@ -93,7 +93,7 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 
 ### P0 — Baseline and traceability
 
-**Result:** Harness and baseline verifier passed on 2026-08-23. The harness correctly rejected a missing Android device and a locked iPhone before starting capture; a complete two-device capture remains part of the first physical P3 run.
+**Result:** P0 is complete. Harness and baseline verifier passed on 2026-08-23. The harness correctly rejected a missing Android device and a locked iPhone before starting capture. The first complete two-device artifact belongs to the deferred P3 physical gate, not P0.
 
 - Commit this planning/ADR/lesson update as one documentation checkpoint after approval.
 - Preserve the working LAN path as the rollback baseline.
@@ -102,6 +102,8 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 **Gate P0:** clean focused commit; existing `scripts/verify_tour_session.sh` remains green.
 
 ### P3 — Harden transport-neutral payloads and replace raw PCM/TCP audio
+
+**Progress:** The version-3 encrypted-frame, encrypt-once identity, replay/tamper, codec-negotiation, and encoded-audio contracts pass exact Swift/Kotlin fixtures as of 2026-08-26. Application transport integration and native codec operation remain in progress. Hardware-only gates are deferred until devices are available.
 
 - Lock the frame rules before fixtures: one logical frame is encrypted exactly once at creation, then the byte-identical sealed frame is routed one or many times. Socket writers never encrypt or choose nonces.
 - Make the encrypted protocol a hard version break. A legacy or unsupported major produces an explicit version-mismatch event and user state rather than a generic connection/radio failure.

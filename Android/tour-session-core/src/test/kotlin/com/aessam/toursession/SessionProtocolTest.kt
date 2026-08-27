@@ -4,6 +4,8 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
 
@@ -17,6 +19,102 @@ class SessionProtocolTest {
         )
         assertEquals(TourSessionFixtures.helloEnvelope(), SessionEnvelope.decode(encoded))
         assertArrayEquals(encoded, SessionEnvelope.decode(encoded).encode())
+    }
+
+    @Test
+    fun encryptedFrameIsRouteIndependentAuthenticatedAndReplayDetectable() {
+        val credential = TourSessionFixtures.fixtureCredential()
+        val sealer = SessionFrameSealer(credential)
+        val logical = TourSessionFixtures.helloEnvelope()
+        val first = sealer.seal(logical, TourSessionFixtures.streamId)
+        val second = sealer.seal(logical, TourSessionFixtures.streamId)
+
+        assertEquals(first, second)
+        assertArrayEquals(first.encode(), second.encode())
+        assertEquals(
+            "474f4832030002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050c7f03f42d9429524530ad6b2fdb72701e968b7d8c8b1f471366936db8c9e278bbea83db185892b7bfa27420165562877df907c7b735db72a8949fc7eb4fa46c3014b980fc13031a2c526ef32871ef1ad",
+            first.encode().lowercaseHex(),
+        )
+        assertFalse(String(first.encode(), Charsets.ISO_8859_1).contains("Guest 7"))
+
+        val opener = SessionFrameOpener(credential)
+        val opened = opener.open(first)
+        assertTrue(opened is SessionFrameOpenResult.Opened)
+        assertEquals(SealedSessionEnvelope.MAJOR_VERSION, (opened as SessionFrameOpenResult.Opened).envelope.majorVersion)
+        assertArrayEquals(logical.payload, opened.envelope.payload)
+        assertEquals(SessionFrameOpenResult.Duplicate(first.identity), opener.open(second))
+
+        val changed = logical.copy(payload = "different plaintext".toByteArray())
+        val reuse = assertThrows(SessionFrameSecurityException::class.java) {
+            sealer.seal(changed, TourSessionFixtures.streamId)
+        }
+        assertEquals("session frame identity was reused: ${first.identity}", reuse.message)
+    }
+
+    @Test
+    fun encryptedFrameRejectsTamperingAndAnotherTourCredential() {
+        val sealed = TourSessionFixtures.encryptedHelloFixture()
+        val tampered = sealed.encode().also { bytes ->
+            bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+        }
+        val decodedTampered = SealedSessionEnvelope.decode(tampered)
+        val correctOpener = SessionFrameOpener(TourSessionFixtures.fixtureCredential())
+        assertEquals(
+            "session frame authentication failed",
+            assertThrows(SessionFrameSecurityException::class.java) {
+                correctOpener.open(decodedTampered)
+            }.message,
+        )
+
+        val wrongCredential = SessionCredential.derive("23456789AC", TourSessionFixtures.sessionId)
+        val wrongOpener = SessionFrameOpener(wrongCredential)
+        assertEquals(
+            "session frame authentication failed",
+            assertThrows(SessionFrameSecurityException::class.java) {
+                wrongOpener.open(sealed)
+            }.message,
+        )
+    }
+
+    @Test
+    fun encryptedProtocolRejectsLegacyMajorExplicitly() {
+        val bytes = TourSessionFixtures.encryptedHelloFixture().encode().also {
+            it[4] = SessionEnvelope.MAJOR_VERSION.toByte()
+        }
+        val error = assertThrows(UnsupportedSessionVersionException::class.java) {
+            SealedSessionEnvelope.decode(bytes)
+        }
+        assertEquals(SessionEnvelope.MAJOR_VERSION, error.receivedMajorVersion)
+        assertEquals(SealedSessionEnvelope.MAJOR_VERSION, error.supportedMajorVersion)
+    }
+
+    @Test
+    fun encodedAudioFrameAndCodecNegotiationAreDeterministic() {
+        val fixture = TourSessionFixtures.encodedAudioFixture()
+        assertEquals(
+            "0100003e8001001400004e20000000003b9aca00000000004a817c8000000006f8fffe010203",
+            fixture.encode().lowercaseHex(),
+        )
+        assertEquals(EncodedAudioFramePayload.FIXED_HEADER_SIZE + fixture.encodedBytes.size, fixture.encode().size)
+        assertEquals(fixture, EncodedAudioFramePayload.decode(fixture.encode()))
+        assertFalse(fixture.isExpired(fixture.expiresAtNanoseconds - 1))
+        assertTrue(fixture.isExpired(fixture.expiresAtNanoseconds))
+
+        val all = SessionCapability.entries.fold(0L) { value, capability -> value or capability.bit }
+        assertEquals(SessionAudioCodec.OPUS, SessionAudioCodecNegotiation.preferredCodec(all, all))
+        assertEquals(
+            SessionAudioCodec.AAC_LC,
+            SessionAudioCodecNegotiation.preferredCodec(
+                SessionCapability.AAC_LC_ENCODER.bit,
+                SessionCapability.AAC_LC_DECODER.bit,
+            ),
+        )
+        assertThrows(EncodedAudioFrameException::class.java) {
+            SessionAudioCodecNegotiation.preferredCodec(
+                SessionCapability.OPUS_ENCODER.bit,
+                SessionCapability.AAC_LC_DECODER.bit,
+            )
+        }
     }
 
     @Test

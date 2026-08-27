@@ -11,6 +11,100 @@ struct SessionProtocolTests {
         #expect(try SessionEnvelope.decode(encoded) == TourSessionFixtures.helloEnvelope())
     }
 
+    @Test("Encrypted frame is route-independent, authenticated, and replay-detectable")
+    func encryptedFrameContract() throws {
+        let credential = try TourSessionFixtures.fixtureCredential()
+        let sealer = SessionFrameSealer(credential: credential)
+        let logical = try TourSessionFixtures.helloEnvelope()
+        let first = try sealer.seal(logical, streamID: TourSessionFixtures.streamID)
+        let second = try sealer.seal(logical, streamID: TourSessionFixtures.streamID)
+
+        #expect(first == second)
+        #expect(first.encode() == second.encode())
+        #expect(first.encode().lowercaseHex == "474f4832030002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050c7f03f42d9429524530ad6b2fdb72701e968b7d8c8b1f471366936db8c9e278bbea83db185892b7bfa27420165562877df907c7b735db72a8949fc7eb4fa46c3014b980fc13031a2c526ef32871ef1ad")
+        #expect(first.encode().range(of: Data("Guest 7".utf8)) == nil)
+
+        let opener = SessionFrameOpener(credential: credential)
+        #expect(try opener.open(first) == .opened(try SessionEnvelope(
+            majorVersion: SealedSessionEnvelope.majorVersion,
+            minorVersion: SealedSessionEnvelope.minorVersion,
+            lane: logical.lane,
+            kind: logical.kind,
+            flags: logical.flags,
+            sequence: logical.sequence,
+            sessionID: logical.sessionID,
+            senderID: logical.senderID,
+            payload: logical.payload
+        )))
+        #expect(try opener.open(second) == .duplicate(first.identity))
+
+        let changed = try SessionEnvelope(
+            lane: logical.lane,
+            kind: logical.kind,
+            flags: logical.flags,
+            sequence: logical.sequence,
+            sessionID: logical.sessionID,
+            senderID: logical.senderID,
+            payload: Data("different plaintext".utf8)
+        )
+        #expect(throws: SessionFrameSecurityError.identityReuse(first.identity)) {
+            try sealer.seal(changed, streamID: TourSessionFixtures.streamID)
+        }
+    }
+
+    @Test("Encrypted frame rejects tampering and another tour credential")
+    func encryptedFrameAuthentication() throws {
+        let sealed = try TourSessionFixtures.encryptedHelloFixture()
+        var tampered = sealed.encode()
+        tampered[tampered.index(before: tampered.endIndex)] ^= 0x01
+        let decodedTampered = try SealedSessionEnvelope.decode(tampered)
+        let correctOpener = SessionFrameOpener(credential: try TourSessionFixtures.fixtureCredential())
+        #expect(throws: SessionFrameSecurityError.authenticationFailed) {
+            try correctOpener.open(decodedTampered)
+        }
+
+        let wrongCredential = try SessionCredential.derive(
+            shortCode: "23456789AC",
+            sessionID: TourSessionFixtures.sessionID
+        )
+        let wrongOpener = SessionFrameOpener(credential: wrongCredential)
+        #expect(throws: SessionFrameSecurityError.authenticationFailed) {
+            try wrongOpener.open(sealed)
+        }
+    }
+
+    @Test("Encrypted protocol rejects a legacy major explicitly")
+    func encryptedVersionMismatch() throws {
+        var bytes = try TourSessionFixtures.encryptedHelloFixture().encode()
+        bytes[4] = SessionEnvelope.majorVersion
+        #expect(throws: SessionProtocolError.unsupportedMajorVersion(SessionEnvelope.majorVersion)) {
+            try SealedSessionEnvelope.decode(bytes)
+        }
+    }
+
+    @Test("Encoded audio frame and codec negotiation are deterministic")
+    func encodedAudioFrame() throws {
+        let fixture = try TourSessionFixtures.encodedAudioFixture()
+        #expect(fixture.encode().lowercaseHex == "0100003e8001001400004e20000000003b9aca00000000004a817c8000000006f8fffe010203")
+        #expect(fixture.encode().count == EncodedAudioFramePayload.fixedHeaderSize + fixture.encodedBytes.count)
+        #expect(try EncodedAudioFramePayload.decode(fixture.encode()) == fixture)
+        #expect(!fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds - 1))
+        #expect(fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds))
+
+        let all: SessionCapabilities = [.opusEncoder, .opusDecoder, .aacLCEncoder, .aacLCDecoder]
+        #expect(try SessionAudioCodecNegotiation.preferredCodec(sender: all, receiver: all) == .opus)
+        #expect(try SessionAudioCodecNegotiation.preferredCodec(
+            sender: [.aacLCEncoder],
+            receiver: [.aacLCDecoder]
+        ) == .aacLC)
+        #expect(throws: EncodedAudioFrameError.noCommonCodec) {
+            try SessionAudioCodecNegotiation.preferredCodec(
+                sender: [.opusEncoder],
+                receiver: [.aacLCDecoder]
+            )
+        }
+    }
+
     @Test("Message kinds cannot enter the wrong lane")
     func wrongLaneRejected() throws {
         #expect(throws: SessionProtocolError.wrongLane(kind: .audioFrame, actual: .control)) {

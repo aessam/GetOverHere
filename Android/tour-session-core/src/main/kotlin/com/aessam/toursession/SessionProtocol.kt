@@ -87,7 +87,12 @@ enum class ParticipantPlatform(val rawValue: Int) {
     }
 }
 
-class SessionProtocolException(message: String) : IllegalArgumentException(message)
+open class SessionProtocolException(message: String) : IllegalArgumentException(message)
+
+class UnsupportedSessionVersionException(
+    val receivedMajorVersion: Int,
+    val supportedMajorVersion: Int,
+) : SessionProtocolException("unsupported major version $receivedMajorVersion; this build requires $supportedMajorVersion")
 
 data class SessionEnvelope(
     val majorVersion: Int = MAJOR_VERSION,
