@@ -10,6 +10,11 @@ import com.aessam.toursession.SessionEnvelope
 import com.aessam.toursession.SessionLane
 import com.aessam.toursession.SessionMessageKind
 import com.aessam.toursession.SessionRole
+import com.aessam.toursession.SealedSessionEnvelope
+import com.aessam.toursession.SessionFrameOpenResult
+import com.aessam.toursession.SessionFrameOpener
+import com.aessam.toursession.SessionFrameSealer
+import com.aessam.toursession.UnsupportedSessionVersionException
 import com.aessam.toursession.WelcomePayload
 import java.io.EOFException
 import java.io.InputStream
@@ -58,6 +63,8 @@ private class LocalAuthenticatedSessionTransport(
     @Volatile private var clientSocket: Socket? = null
     @Volatile private var clientOutput: OutputStream? = null
     @Volatile private var guestSocketFactory: SocketFactory = SocketFactory.getDefault()
+    @Volatile private var outboundSealer: SessionFrameSealer? = null
+    @Volatile private var outboundStreamID: UUID = UUID.randomUUID()
 
     val isActive: Boolean get() = active.get()
     @Volatile var hostIP: String? = null
@@ -100,6 +107,9 @@ private class LocalAuthenticatedSessionTransport(
         }
         serverSocket = server
         sequence.set(1)
+        outboundSealer = SessionFrameSealer(configured.credential)
+        outboundStreamID = UUID.randomUUID()
+        val inboundOpener = SessionFrameOpener(configured.credential)
         val epoch = runEpoch.incrementAndGet()
         active.set(true)
 
@@ -114,7 +124,7 @@ private class LocalAuthenticatedSessionTransport(
                     break
                 }
                 daemonThread("session-control-guest") {
-                    handleGuest(socket, configured, epoch)
+                    handleGuest(socket, configured, epoch, inboundOpener)
                 }
             }
         }
@@ -135,6 +145,9 @@ private class LocalAuthenticatedSessionTransport(
         active.set(false)
         closeSockets()
         sequence.set(1)
+        outboundSealer = SessionFrameSealer(configured.credential)
+        outboundStreamID = UUID.randomUUID()
+        val inboundOpener = SessionFrameOpener(configured.credential)
         val epoch = runEpoch.incrementAndGet()
         active.set(true)
         daemonThread("session-control-guide") {
@@ -155,7 +168,7 @@ private class LocalAuthenticatedSessionTransport(
 
                 val input = socket.getInputStream()
                 while (isRunActive(epoch)) {
-                    val envelope = SessionEnvelope.decode(readFrame(input, MAXIMUM_FRAME_SIZE))
+                    val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener) ?: continue
                     if (
                         envelope.sessionId != configured.sessionID ||
                         envelope.senderId != guideID ||
@@ -167,6 +180,15 @@ private class LocalAuthenticatedSessionTransport(
                         throw IllegalArgumentException("control envelope is not from the authenticated guide")
                     }
                     emit(SessionControlEvent.EnvelopeReceived(envelope))
+                }
+            } catch (error: UnsupportedSessionVersionException) {
+                if (isRunActive(epoch)) {
+                    emit(
+                        SessionControlEvent.VersionMismatch(
+                            error.receivedMajorVersion,
+                            error.supportedMajorVersion,
+                        ),
+                    )
                 }
             } catch (error: Exception) {
                 if (isRunActive(epoch)) {
@@ -196,14 +218,25 @@ private class LocalAuthenticatedSessionTransport(
             emit(SessionControlEvent.Failed("Session: transport is not active"))
             return
         }
-        val envelope = SessionEnvelope(
+        val logicalEnvelope = SessionEnvelope(
             lane = applicationLane,
             kind = kind,
             sequence = sequence.getAndIncrement(),
             sessionId = configured.sessionID,
             senderId = configured.participantID,
             payload = payload,
-        ).encode()
+        )
+        val sealer = outboundSealer
+        if (sealer == null) {
+            emit(SessionControlEvent.Failed("Session: frame encryption is not configured"))
+            return
+        }
+        val envelope = try {
+            sealer.seal(logicalEnvelope, outboundStreamID).encode()
+        } catch (error: Exception) {
+            emit(SessionControlEvent.Failed("Session: envelope failed: ${error.message}"))
+            return
+        }
 
         val guideDestinations = clients.filter {
             participantID == null || it.participant.participantId == participantID
@@ -241,7 +274,12 @@ private class LocalAuthenticatedSessionTransport(
         closeSockets()
     }
 
-    private fun handleGuest(socket: Socket, configured: Configuration, epoch: Long) {
+    private fun handleGuest(
+        socket: Socket,
+        configured: Configuration,
+        epoch: Long,
+        inboundOpener: SessionFrameOpener,
+    ) {
         var client: ClientConnection? = null
         try {
             socket.soTimeout = 5_000
@@ -268,7 +306,7 @@ private class LocalAuthenticatedSessionTransport(
 
             val input = socket.getInputStream()
             while (isRunActive(epoch)) {
-                val envelope = SessionEnvelope.decode(readFrame(input, MAXIMUM_FRAME_SIZE))
+                val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener) ?: continue
                 if (
                     envelope.sessionId != configured.sessionID ||
                     envelope.senderId != participant.participantId ||
@@ -281,6 +319,15 @@ private class LocalAuthenticatedSessionTransport(
                 }
                 emit(SessionControlEvent.EnvelopeReceived(envelope))
                 if (envelope.kind == SessionMessageKind.LEAVE) break
+            }
+        } catch (error: UnsupportedSessionVersionException) {
+            if (isRunActive(epoch)) {
+                emit(
+                    SessionControlEvent.VersionMismatch(
+                        error.receivedMajorVersion,
+                        error.supportedMajorVersion,
+                    ),
+                )
             }
         } catch (error: Exception) {
             if (isRunActive(epoch) && error !is EOFException) {
@@ -339,8 +386,14 @@ private class LocalAuthenticatedSessionTransport(
             senderId = configured.participantID,
             payload = challenge.encode(),
         )
-        writeFrame(output, challengeEnvelope.encode())
-        val envelope = SessionEnvelope.decode(readFrame(socket.getInputStream(), HELLO_MAXIMUM_SIZE))
+        val guideSealer = SessionFrameSealer(configured.credential)
+        val guestOpener = SessionFrameOpener(configured.credential)
+        val guideStreamID = UUID.randomUUID()
+        writeFrame(output, guideSealer.seal(challengeEnvelope, guideStreamID).encode())
+        val envelope = openFrame(
+            readFrame(socket.getInputStream(), HELLO_MAXIMUM_SIZE),
+            guestOpener,
+        ) ?: throw IllegalArgumentException("duplicate guest hello")
         val hello = HelloPayload.decode(envelope.payload)
         if (
             envelope.sessionId != configured.sessionID ||
@@ -382,12 +435,12 @@ private class LocalAuthenticatedSessionTransport(
         val welcome = SessionEnvelope(
             lane = SessionLane.CONTROL,
             kind = SessionMessageKind.WELCOME,
-            sequence = 0,
+            sequence = 1,
             sessionId = configured.sessionID,
             senderId = configured.participantID,
             payload = WelcomePayload(applicationLane, guideNonce, guideProof).encode(),
         )
-        writeFrame(output, welcome.encode())
+        writeFrame(output, guideSealer.seal(welcome, guideStreamID).encode())
         return envelope to hello
     }
 
@@ -396,7 +449,11 @@ private class LocalAuthenticatedSessionTransport(
         output: OutputStream,
         configured: Configuration,
     ): UUID {
-        val challengeEnvelope = SessionEnvelope.decode(readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE))
+        val guideOpener = SessionFrameOpener(configured.credential)
+        val challengeEnvelope = openFrame(
+            readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
+            guideOpener,
+        ) ?: throw IllegalArgumentException("duplicate authentication challenge")
         if (
             challengeEnvelope.sessionId != configured.sessionID ||
             challengeEnvelope.kind != SessionMessageKind.AUTH_CHALLENGE ||
@@ -440,8 +497,12 @@ private class LocalAuthenticatedSessionTransport(
             senderId = configured.participantID,
             payload = hello.encode(),
         )
-        writeFrame(output, helloEnvelope.encode())
-        val welcomeEnvelope = SessionEnvelope.decode(readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE))
+        val guestSealer = SessionFrameSealer(configured.credential)
+        writeFrame(output, guestSealer.seal(helloEnvelope, UUID.randomUUID()).encode())
+        val welcomeEnvelope = openFrame(
+            readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
+            guideOpener,
+        ) ?: throw IllegalArgumentException("duplicate welcome envelope")
         if (
             welcomeEnvelope.sessionId != configured.sessionID ||
             welcomeEnvelope.kind != SessionMessageKind.WELCOME ||
@@ -469,6 +530,12 @@ private class LocalAuthenticatedSessionTransport(
         }
         return challengeEnvelope.senderId
     }
+
+    private fun openFrame(frame: ByteArray, opener: SessionFrameOpener): SessionEnvelope? =
+        when (val result = opener.open(SealedSessionEnvelope.decode(frame))) {
+            is SessionFrameOpenResult.Opened -> result.envelope
+            is SessionFrameOpenResult.Duplicate -> null
+        }
 
     private companion object {
         const val MAXIMUM_FRAME_SIZE = 1_048_576
@@ -591,5 +658,6 @@ private fun SessionControlEvent.toAssetEvent(): SessionAssetEvent = when (this) 
     is SessionControlEvent.EnvelopeReceived -> SessionAssetEvent.EnvelopeReceived(envelope)
     is SessionControlEvent.GuestDisconnected -> SessionAssetEvent.GuestDisconnected(participantID)
     SessionControlEvent.Disconnected -> SessionAssetEvent.Disconnected
+    is SessionControlEvent.VersionMismatch -> SessionAssetEvent.VersionMismatch(remoteMajor, localMajor)
     is SessionControlEvent.Failed -> SessionAssetEvent.Failed(message)
 }

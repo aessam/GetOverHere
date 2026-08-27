@@ -591,6 +591,9 @@ final class ChannelService {
             participantRegistry.disconnect(connectionID: connectionID)
             listenerCount = participantRegistry.listenerCount
             Logger.channel.info("Session connection left; listeners=\(self.listenerCount)")
+        case let .versionMismatch(remoteMajor, localMajor):
+            connectionState = .failed
+            tourFeatureError = "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
         }
     }
 
@@ -647,6 +650,11 @@ final class ChannelService {
             tourFeatureError = nil
         case .disconnected:
             scheduleReconnect(reason: "Guide connection closed")
+        case let .versionMismatch(remoteMajor, localMajor):
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            connectionState = .failed
+            tourFeatureError = "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
         case let .failed(message):
             scheduleReconnect(reason: message)
         }

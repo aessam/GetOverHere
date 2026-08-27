@@ -27,6 +27,7 @@ enum class PresentationServiceRole { GUIDE, GUEST }
 sealed class TourControlConnectionEvent {
     data object Connected : TourControlConnectionEvent()
     data object Disconnected : TourControlConnectionEvent()
+    data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : TourControlConnectionEvent()
     data class Failed(val message: String) : TourControlConnectionEvent()
 }
 
@@ -336,6 +337,13 @@ class TourControlService(
                 }.onFailure(::report)
             }
             is SessionControlEvent.GuestDisconnected -> Unit
+            is SessionControlEvent.VersionMismatch -> {
+                val message = versionMismatchMessage(event.remoteMajor, event.localMajor)
+                report(message)
+                connectionEventHandler?.invoke(
+                    TourControlConnectionEvent.VersionMismatch(event.remoteMajor, event.localMajor),
+                )
+            }
             is SessionControlEvent.Failed -> {
                 report(event.message)
                 connectionEventHandler?.invoke(TourControlConnectionEvent.Failed(event.message))
@@ -354,6 +362,9 @@ class TourControlService(
     private fun orderedSlides(assets: List<TourAssetDescriptor>): List<TourAssetDescriptor> =
         assets.filter { it.kind == TourAssetKind.SLIDE }
             .sortedWith(compareBy<TourAssetDescriptor> { it.order }.thenBy { it.assetID })
+
+    private fun versionMismatchMessage(remoteMajor: Int, localMajor: Int): String =
+        "Tour protocol version mismatch (remote $remoteMajor, local $localMajor). Update the older app."
 
     private fun coordinateE7(value: Double, range: IntRange, name: String): Int {
         val scaled = value * 10_000_000

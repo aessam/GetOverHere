@@ -10,6 +10,8 @@ import com.aessam.comeoverhere.core.UDPAudioPlane
 import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.SessionMessageKind
 import com.aessam.toursession.SessionCredential
+import com.aessam.toursession.SealedSessionEnvelope
+import com.aessam.toursession.SessionEnvelope
 import com.aessam.toursession.AssetRequestPayload
 import com.aessam.toursession.TourAssetDescriptor
 import com.aessam.toursession.TourAssetKind
@@ -28,7 +30,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.Socket
+import java.io.DataOutputStream
 import javax.net.SocketFactory
 
 class LocalSessionTransportTest {
@@ -230,6 +234,57 @@ class LocalSessionTransportTest {
         } finally {
             guest.stop()
             guide.stop()
+        }
+    }
+
+    @Test
+    fun controlLaneReportsLegacyProtocolVersionExplicitly() {
+        val port = 50_032
+        val server = ServerSocket(port)
+        val serverThread = Thread {
+            server.accept().use { socket ->
+                DataOutputStream(socket.getOutputStream()).use { output ->
+                    val legacyHeader = byteArrayOf(
+                        0x47,
+                        0x4f,
+                        0x48,
+                        0x32,
+                        SessionEnvelope.MAJOR_VERSION.toByte(),
+                    )
+                    output.writeInt(legacyHeader.size)
+                    output.write(legacyHeader)
+                    output.flush()
+                }
+            }
+        }.apply { start() }
+        val guest = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val mismatch = CountDownLatch(1)
+        val received = AtomicReference<SessionControlEvent.VersionMismatch>()
+        try {
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guest",
+                ParticipantPlatform.ANDROID,
+                testCredential(sessionID),
+            )
+            guest.setEventHandler { event ->
+                if (event is SessionControlEvent.VersionMismatch) {
+                    received.set(event)
+                    mismatch.countDown()
+                }
+            }
+            guest.startGuest()
+
+            assertTrue("Version mismatch was not reported", mismatch.await(3, TimeUnit.SECONDS))
+            assertEquals(SessionEnvelope.MAJOR_VERSION, received.get().remoteMajor)
+            assertEquals(SealedSessionEnvelope.MAJOR_VERSION, received.get().localMajor)
+        } finally {
+            guest.stop()
+            server.close()
+            serverThread.join(1_000)
         }
     }
 

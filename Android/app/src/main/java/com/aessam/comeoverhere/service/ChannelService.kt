@@ -708,6 +708,12 @@ class ChannelService(
         when (event) {
             is AudioSessionEvent.Joined -> participantRegistry.register(event.participant)
             is AudioSessionEvent.Disconnected -> participantRegistry.disconnect(event.connectionID)
+            is AudioSessionEvent.VersionMismatch -> {
+                _connectionState.value = SessionConnectionState.FAILED
+                _tourFeatureError.value =
+                    "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
+                    "Update the older app."
+            }
         }
         _listenerCount.value = participantRegistry.listenerCount
         Log.i(TAG, "Session membership changed: listeners=${_listenerCount.value}")
@@ -866,6 +872,14 @@ class ChannelService(
                 if (_connectionState.value == SessionConnectionState.CONNECTED) {
                     scheduleReconnect("Guide connection closed")
                 }
+            }
+            is TourControlConnectionEvent.VersionMismatch -> {
+                reconnectJob?.cancel()
+                reconnectJob = null
+                _connectionState.value = SessionConnectionState.FAILED
+                _tourFeatureError.value =
+                    "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
+                    "Update the older app."
             }
             is TourControlConnectionEvent.Failed -> {
                 val channel = activeChannel ?: return

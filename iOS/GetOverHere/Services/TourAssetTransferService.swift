@@ -178,6 +178,8 @@ final class TourAssetTransferService {
             readyParticipantIDs.remove(participantID)
         case .connected, .disconnected:
             break
+        case let .versionMismatch(remoteMajor, localMajor):
+            report("Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app.")
         case let .failed(message):
             report(message)
         }

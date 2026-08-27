@@ -492,3 +492,22 @@ Commands and results:
    - Result: all seven stages passed, including 24 Swift core tests, the matching Kotlin core suite, exact cross-language frame checks, Android app/APK integration, and the full iOS Simulator suite. Final output: `Tour session verification passed`.
 
 Simulator and emulator results validate code paths, wire configuration, compression, and bounded buffering. They do not satisfy the physical codec, audio quality, mouth-to-ear latency, RF, background, thermal, or battery parts of Gate P3.
+
+## 2026-08-26 — P3 encrypted LAN control and asset checkpoint
+
+Implementation:
+
+- Migrated LAN control and asset handshakes and application frames from plaintext GOH2 v2 envelopes to immutable AES-GCM-sealed GOH2 v3 frames.
+- Reset stream identities and replay windows for each transport start/reconnect and ignored authenticated duplicate frames.
+- Added typed version-mismatch events through transport and service layers. A new build receiving a legacy v2 frame reports `remote 2, local 3` and does not downgrade or reconnect-loop.
+- Added Swift and Kotlin socket tests for encrypted bidirectional control, targeted asset transfer, wrong credentials, and explicit legacy-major rejection.
+
+Commands and results:
+
+1. `env JAVA_HOME=/Applications/Android\ Studio.app/Contents/jbr/Contents/Home ./gradlew :app:testDebugUnitTest --tests com.aessam.comeoverhere.LocalSessionTransportTest --tests com.aessam.comeoverhere.TourAssetTransferServiceTest`
+   - Result: passed, 6 focused transport/asset tests.
+2. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereP3EncryptedLocal2 test -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/TourAssetTransferServiceTests`
+   - Result: passed, 6 focused transport/asset tests on the iPhone 17 Pro simulator.
+3. The first combined iOS run timed out in the asset readiness test while the simulator was starting under concurrent load. The unchanged asset suite then passed in isolation in 0.134 seconds and passed again in the final combined run in 0.042 seconds.
+
+Realtime audio and Wi-Fi Aware lane integration remain outside this checkpoint. No claim is made that every application payload path is encrypted yet.

@@ -10,6 +10,7 @@ enum PresentationServiceRole {
 enum TourControlConnectionEvent: Sendable {
     case connected
     case disconnected
+    case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
     case failed(String)
 }
 
@@ -332,6 +333,10 @@ final class TourControlService {
             }
         case let .guestDisconnected(participantID):
             _ = participantID
+        case let .versionMismatch(remoteMajor, localMajor):
+            let message = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
+            report(message)
+            connectionEventHandler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
         case let .failed(message):
             report(message)
             connectionEventHandler?(.failed(message))
@@ -350,6 +355,10 @@ final class TourControlService {
         assets.filter { $0.kind == .slide }.sorted {
             ($0.order, $0.assetID) < ($1.order, $1.assetID)
         }
+    }
+
+    private static func versionMismatchMessage(remoteMajor: UInt8, localMajor: UInt8) -> String {
+        "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
     }
 
     private static func nowMilliseconds() -> UInt64 {

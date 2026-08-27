@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import TourSessionCore
@@ -231,6 +232,53 @@ struct LocalSessionTransportTests {
         #expect(message.contains("invalid welcome"))
     }
 
+    @Test("Control lane reports a legacy protocol version explicitly")
+    @MainActor
+    func controlLaneReportsLegacyVersion() async throws {
+        let port: UInt16 = 50_032
+        let serverFD = try legacyVersionServer(port: port)
+        let serverTask = Task { @concurrent in
+            let clientFD = Darwin.accept(serverFD, nil, nil)
+            guard clientFD >= 0 else { return }
+            defer { close(clientFD) }
+            let legacyHeader = Data([0x47, 0x4f, 0x48, 0x32, SessionEnvelope.majorVersion])
+            _ = writeTestFrame(fd: clientFD, data: legacyHeader)
+        }
+        defer {
+            shutdown(serverFD, SHUT_RDWR)
+            close(serverFD)
+            serverTask.cancel()
+        }
+
+        let sessionID = UUID()
+        let guest = LocalSessionControlTransport(port: port)
+        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            guest.stop()
+            continuation.finish()
+        }
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: try transportCredential(sessionID)
+        )
+        guest.setEventHandler { continuation.yield($0) }
+        guest.startGuest()
+
+        let event = try await nextControlEvent(from: events) {
+            if case .versionMismatch = $0 { true } else { false }
+        }
+        guard case let .versionMismatch(remoteMajor, localMajor) = event else {
+            Issue.record("Expected an explicit version mismatch")
+            return
+        }
+        #expect(remoteMajor == SessionEnvelope.majorVersion)
+        #expect(localMajor == SealedSessionEnvelope.majorVersion)
+    }
+
     @Test("Independent GOH2 asset lane supports targeted manifests and guest requests")
     @MainActor
     func assetLaneRoundtrip() async throws {
@@ -384,4 +432,51 @@ struct LocalSessionTransportTests {
 
 private func transportCredential(_ sessionID: UUID) throws -> SessionCredential {
     try SessionCredential.derive(shortCode: "23456789AB", sessionID: sessionID)
+}
+
+private enum TestSocketError: Error {
+    case create
+    case bind
+    case listen
+}
+
+private func legacyVersionServer(port: UInt16) throws -> Int32 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { throw TestSocketError.create }
+    var yes: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+    let result = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    guard result == 0 else {
+        close(fd)
+        throw TestSocketError.bind
+    }
+    guard Darwin.listen(fd, 1) == 0 else {
+        close(fd)
+        throw TestSocketError.listen
+    }
+    return fd
+}
+
+private func writeTestFrame(fd: Int32, data: Data) -> Bool {
+    var length = UInt32(data.count).bigEndian
+    let frame = Data(bytes: &length, count: MemoryLayout<UInt32>.size) + data
+    return frame.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return false }
+        var offset = 0
+        while offset < frame.count {
+            let count = Darwin.send(fd, base.advanced(by: offset), frame.count - offset, MSG_NOSIGNAL)
+            guard count > 0 else { return false }
+            offset += count
+        }
+        return true
+    }
 }

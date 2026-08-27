@@ -168,6 +168,7 @@ protocol AudioPlane: AnyObject {
 enum AudioSessionEvent: Sendable {
     case joined(ParticipantSession)
     case disconnected(connectionID: String)
+    case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
 }
 
 extension AudioPlane {
@@ -190,6 +191,7 @@ enum SessionControlEvent: Sendable {
     case envelopeReceived(SessionEnvelope)
     case guestDisconnected(participantID: UUID)
     case disconnected
+    case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
     case failed(String)
 }
 
@@ -217,6 +219,7 @@ enum SessionAssetEvent: Sendable {
     case envelopeReceived(SessionEnvelope)
     case guestDisconnected(participantID: UUID)
     case disconnected
+    case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
     case failed(String)
 }
 

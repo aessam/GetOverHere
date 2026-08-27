@@ -106,6 +106,7 @@ interface AudioPlane {
 sealed class AudioSessionEvent {
     data class Joined(val participant: ParticipantSession) : AudioSessionEvent()
     data class Disconnected(val connectionID: String) : AudioSessionEvent()
+    data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : AudioSessionEvent()
 }
 
 // MARK: - Reliable Session Control Transport
@@ -116,6 +117,7 @@ sealed class SessionControlEvent {
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionControlEvent()
     data class GuestDisconnected(val participantID: UUID) : SessionControlEvent()
     data object Disconnected : SessionControlEvent()
+    data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionControlEvent()
     data class Failed(val message: String) : SessionControlEvent()
 }
 
@@ -144,6 +146,7 @@ sealed class SessionAssetEvent {
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionAssetEvent()
     data class GuestDisconnected(val participantID: UUID) : SessionAssetEvent()
     data object Disconnected : SessionAssetEvent()
+    data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionAssetEvent()
     data class Failed(val message: String) : SessionAssetEvent()
 }
 

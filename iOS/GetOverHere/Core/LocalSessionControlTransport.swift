@@ -29,6 +29,8 @@ private final class LocalAuthenticatedSessionTransport {
     private var acceptTask: Task<Void, Never>?
     private var guestTask: Task<Void, Never>?
     private var sendSequence: UInt64 = 1
+    private var outboundSealer: SessionFrameSealer?
+    private var outboundStreamID = UUID()
 
     private(set) var isActive = false
     var hostIP: String?
@@ -94,6 +96,9 @@ private final class LocalAuthenticatedSessionTransport {
 
         isActive = true
         sendSequence = 1
+        outboundSealer = SessionFrameSealer(credential: configuration.credential)
+        outboundStreamID = UUID()
+        let inboundOpener = SessionFrameOpener(credential: configuration.credential)
         let listeningFD = serverFD
         let expectedApplicationLane = applicationLane
 
@@ -110,11 +115,22 @@ private final class LocalAuthenticatedSessionTransport {
                 Self.setNoDelay(fd: acceptedFD)
 
                 Task { @concurrent [weak self] in
-                    guard let hello = Self.authenticateGuest(
-                        fd: acceptedFD,
-                        configuration: configuration,
-                        requestedLane: expectedApplicationLane
-                    ) else {
+                    let hello: (participantID: UUID, displayName: String, platform: ParticipantPlatform)
+                    do {
+                        hello = try Self.authenticateGuest(
+                            fd: acceptedFD,
+                            configuration: configuration,
+                            requestedLane: expectedApplicationLane
+                        )
+                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                        await self?.emit(.versionMismatch(
+                            remoteMajor: remoteMajor,
+                            localMajor: SealedSessionEnvelope.majorVersion
+                        ))
+                        close(acceptedFD)
+                        return
+                    } catch {
+                        fputs("Session: invalid guest hello (\(String(describing: type(of: error))))\n", stderr)
                         close(acceptedFD)
                         return
                     }
@@ -131,7 +147,9 @@ private final class LocalAuthenticatedSessionTransport {
                     while !Task.isCancelled,
                           let frame = Self.readFrame(fd: acceptedFD, maximumSize: 1_048_576) {
                         do {
-                            let envelope = try SessionEnvelope.decode(frame)
+                            guard let envelope = try Self.openFrame(frame, using: inboundOpener) else {
+                                continue
+                            }
                             guard envelope.sessionID == configuration.sessionID,
                                   envelope.senderID == participant.participantID,
                                   envelope.lane == expectedApplicationLane,
@@ -142,6 +160,12 @@ private final class LocalAuthenticatedSessionTransport {
                             }
                             await self?.emit(.envelopeReceived(envelope))
                             if envelope.kind == .leave { break }
+                        } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                            await self?.emit(.versionMismatch(
+                                remoteMajor: remoteMajor,
+                                localMajor: SealedSessionEnvelope.majorVersion
+                            ))
+                            break
                         } catch {
                             await self?.emit(.failed("Session: invalid guest envelope: \(error.localizedDescription)"))
                             break
@@ -166,6 +190,9 @@ private final class LocalAuthenticatedSessionTransport {
         stop()
         isActive = true
         sendSequence = 1
+        outboundSealer = SessionFrameSealer(credential: configuration.credential)
+        outboundStreamID = UUID()
+        let inboundOpener = SessionFrameOpener(credential: configuration.credential)
         let controlPort = port
         let maximumFrameSize = maximumFrameSize
         let expectedApplicationLane = applicationLane
@@ -211,6 +238,14 @@ private final class LocalAuthenticatedSessionTransport {
                     requestedLane: expectedApplicationLane,
                     maximumFrameSize: maximumFrameSize
                 )
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                close(fd)
+                await self?.clearClientFD(fd)
+                await self?.emit(.versionMismatch(
+                    remoteMajor: remoteMajor,
+                    localMajor: SealedSessionEnvelope.majorVersion
+                ))
+                return
             } catch {
                 close(fd)
                 await self?.clearClientFD(fd)
@@ -222,7 +257,9 @@ private final class LocalAuthenticatedSessionTransport {
             while !Task.isCancelled,
                   let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) {
                 do {
-                    let envelope = try SessionEnvelope.decode(frame)
+                    guard let envelope = try Self.openFrame(frame, using: inboundOpener) else {
+                        continue
+                    }
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == guideID,
                           envelope.lane == expectedApplicationLane,
@@ -232,6 +269,12 @@ private final class LocalAuthenticatedSessionTransport {
                         break
                     }
                     await self?.emit(.envelopeReceived(envelope))
+                } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                    await self?.emit(.versionMismatch(
+                        remoteMajor: remoteMajor,
+                        localMajor: SealedSessionEnvelope.majorVersion
+                    ))
+                    break
                 } catch {
                     await self?.emit(.failed("Session: invalid guide envelope: \(error.localizedDescription)"))
                     break
@@ -257,9 +300,9 @@ private final class LocalAuthenticatedSessionTransport {
             return
         }
 
-        let envelope: SessionEnvelope
+        let frame: Data
         do {
-            envelope = try SessionEnvelope(
+            let envelope = try SessionEnvelope(
                 lane: applicationLane,
                 kind: kind,
                 sequence: sendSequence,
@@ -267,6 +310,11 @@ private final class LocalAuthenticatedSessionTransport {
                 senderID: configuration.participantID,
                 payload: payload
             )
+            guard let outboundSealer else {
+                emit(.failed("Session: frame encryption is not configured"))
+                return
+            }
+            frame = try outboundSealer.seal(envelope, streamID: outboundStreamID).encode()
         } catch {
             emit(.failed("Session: envelope failed: \(error.localizedDescription)"))
             return
@@ -284,7 +332,6 @@ private final class LocalAuthenticatedSessionTransport {
             destinations = []
         }
         guard !destinations.isEmpty else { return }
-        let frame = envelope.encode()
         sendQueue.async { [weak self] in
             let dead = destinations.filter { !Self.writeFrame(fd: $0, data: frame) }
             guard !dead.isEmpty else { return }
@@ -375,78 +422,87 @@ private final class LocalAuthenticatedSessionTransport {
         fd: Int32,
         configuration: Configuration,
         requestedLane: SessionLane
-    ) -> (participantID: UUID, displayName: String, platform: ParticipantPlatform)? {
+    ) throws -> (participantID: UUID, displayName: String, platform: ParticipantPlatform) {
         setReceiveTimeout(fd: fd, seconds: 5)
         defer { setReceiveTimeout(fd: fd, seconds: 0) }
-        do {
-            let challengeNonce = SessionAuthenticator.randomNonce()
-            let challenge = try AuthChallengePayload(
-                requestedLane: requestedLane,
-                challengeNonce: challengeNonce
-            )
-            let challengeEnvelope = try SessionEnvelope(
-                lane: .control,
-                kind: .authChallenge,
-                sequence: 0,
-                sessionID: configuration.sessionID,
-                senderID: configuration.participantID,
-                payload: challenge.encode()
-            )
-            guard writeFrame(fd: fd, data: challengeEnvelope.encode()),
-                  let frame = readFrame(fd: fd, maximumSize: 65_536) else { return nil }
-            let envelope = try SessionEnvelope.decode(frame)
-            guard envelope.sessionID == configuration.sessionID,
-                  envelope.kind == .hello,
-                  envelope.lane == .control,
-                  envelope.senderID != configuration.participantID else { return nil }
-            let hello = try HelloPayload.decode(envelope.payload)
-            guard hello.role == .guest, hello.requestedLane == requestedLane else { return nil }
-            let expectedProof = try SessionAuthenticator.guestProof(
-                credential: configuration.credential,
-                sessionID: configuration.sessionID,
-                guideID: configuration.participantID,
-                participantID: envelope.senderID,
-                requestedLane: requestedLane,
-                challengeNonce: challengeNonce,
-                clientNonce: hello.clientNonce,
-                role: hello.role,
-                platform: hello.platform,
-                capabilities: hello.capabilities,
-                displayName: hello.displayName
-            )
-            guard SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof) else {
-                return nil
-            }
-            let guideNonce = SessionAuthenticator.randomNonce()
-            let guideProof = try SessionAuthenticator.guideProof(
-                credential: configuration.credential,
-                sessionID: configuration.sessionID,
-                guideID: configuration.participantID,
-                participantID: envelope.senderID,
-                requestedLane: requestedLane,
-                challengeNonce: challengeNonce,
-                clientNonce: hello.clientNonce,
-                guideNonce: guideNonce
-            )
-            let welcomePayload = try WelcomePayload(
-                requestedLane: requestedLane,
-                guideNonce: guideNonce,
-                credentialProof: guideProof
-            )
-            let welcome = try SessionEnvelope(
-                lane: .control,
-                kind: .welcome,
-                sequence: 0,
-                sessionID: configuration.sessionID,
-                senderID: configuration.participantID,
-                payload: welcomePayload.encode()
-            )
-            guard writeFrame(fd: fd, data: welcome.encode()) else { return nil }
-            return (envelope.senderID, hello.displayName, hello.platform)
-        } catch {
-            fputs("Session: invalid guest hello (\(String(describing: type(of: error))))\n", stderr)
-            return nil
+
+        let guideSealer = SessionFrameSealer(credential: configuration.credential)
+        let guestOpener = SessionFrameOpener(credential: configuration.credential)
+        let handshakeStreamID = UUID()
+        let challengeNonce = SessionAuthenticator.randomNonce()
+        let challenge = try AuthChallengePayload(
+            requestedLane: requestedLane,
+            challengeNonce: challengeNonce
+        )
+        let challengeEnvelope = try SessionEnvelope(
+            lane: .control,
+            kind: .authChallenge,
+            sequence: 0,
+            sessionID: configuration.sessionID,
+            senderID: configuration.participantID,
+            payload: challenge.encode()
+        )
+        let sealedChallenge = try guideSealer.seal(challengeEnvelope, streamID: handshakeStreamID).encode()
+        guard writeFrame(fd: fd, data: sealedChallenge),
+              let frame = readFrame(fd: fd, maximumSize: 65_536),
+              let envelope = try openFrame(frame, using: guestOpener) else {
+            throw ControlTransportError.invalidWelcome
         }
+        guard envelope.sessionID == configuration.sessionID,
+              envelope.kind == .hello,
+              envelope.lane == .control,
+              envelope.senderID != configuration.participantID else {
+            throw ControlTransportError.invalidWelcome
+        }
+        let hello = try HelloPayload.decode(envelope.payload)
+        guard hello.role == .guest, hello.requestedLane == requestedLane else {
+            throw ControlTransportError.invalidWelcome
+        }
+        let expectedProof = try SessionAuthenticator.guestProof(
+            credential: configuration.credential,
+            sessionID: configuration.sessionID,
+            guideID: configuration.participantID,
+            participantID: envelope.senderID,
+            requestedLane: requestedLane,
+            challengeNonce: challengeNonce,
+            clientNonce: hello.clientNonce,
+            role: hello.role,
+            platform: hello.platform,
+            capabilities: hello.capabilities,
+            displayName: hello.displayName
+        )
+        guard SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof) else {
+            throw ControlTransportError.invalidWelcome
+        }
+        let guideNonce = SessionAuthenticator.randomNonce()
+        let guideProof = try SessionAuthenticator.guideProof(
+            credential: configuration.credential,
+            sessionID: configuration.sessionID,
+            guideID: configuration.participantID,
+            participantID: envelope.senderID,
+            requestedLane: requestedLane,
+            challengeNonce: challengeNonce,
+            clientNonce: hello.clientNonce,
+            guideNonce: guideNonce
+        )
+        let welcomePayload = try WelcomePayload(
+            requestedLane: requestedLane,
+            guideNonce: guideNonce,
+            credentialProof: guideProof
+        )
+        let welcome = try SessionEnvelope(
+            lane: .control,
+            kind: .welcome,
+            sequence: 1,
+            sessionID: configuration.sessionID,
+            senderID: configuration.participantID,
+            payload: welcomePayload.encode()
+        )
+        let sealedWelcome = try guideSealer.seal(welcome, streamID: handshakeStreamID).encode()
+        guard writeFrame(fd: fd, data: sealedWelcome) else {
+            throw ControlTransportError.handshakeWriteFailed
+        }
+        return (envelope.senderID, hello.displayName, hello.platform)
     }
 
     nonisolated private static func authenticateGuide(
@@ -458,7 +514,10 @@ private final class LocalAuthenticatedSessionTransport {
         guard let challengeFrame = readFrame(fd: fd, maximumSize: maximumFrameSize) else {
             throw ControlTransportError.invalidWelcome
         }
-        let challengeEnvelope = try SessionEnvelope.decode(challengeFrame)
+        let guideOpener = SessionFrameOpener(credential: configuration.credential)
+        guard let challengeEnvelope = try openFrame(challengeFrame, using: guideOpener) else {
+            throw ControlTransportError.invalidWelcome
+        }
         guard challengeEnvelope.sessionID == configuration.sessionID,
               challengeEnvelope.kind == .authChallenge,
               challengeEnvelope.lane == .control,
@@ -498,11 +557,16 @@ private final class LocalAuthenticatedSessionTransport {
             senderID: configuration.participantID,
             payload: hello.encode()
         )
-        guard writeFrame(fd: fd, data: helloEnvelope.encode()),
+        let guestSealer = SessionFrameSealer(credential: configuration.credential)
+        let guestStreamID = UUID()
+        let sealedHello = try guestSealer.seal(helloEnvelope, streamID: guestStreamID).encode()
+        guard writeFrame(fd: fd, data: sealedHello),
               let welcomeFrame = readFrame(fd: fd, maximumSize: maximumFrameSize) else {
             throw ControlTransportError.handshakeWriteFailed
         }
-        let welcomeEnvelope = try SessionEnvelope.decode(welcomeFrame)
+        guard let welcomeEnvelope = try openFrame(welcomeFrame, using: guideOpener) else {
+            throw ControlTransportError.invalidWelcome
+        }
         guard welcomeEnvelope.sessionID == configuration.sessionID,
               welcomeEnvelope.kind == .welcome,
               welcomeEnvelope.lane == .control,
@@ -525,6 +589,19 @@ private final class LocalAuthenticatedSessionTransport {
             throw ControlTransportError.invalidWelcome
         }
         return challengeEnvelope.senderID
+    }
+
+    nonisolated private static func openFrame(
+        _ frame: Data,
+        using opener: SessionFrameOpener
+    ) throws -> SessionEnvelope? {
+        let sealed = try SealedSessionEnvelope.decode(frame)
+        switch try opener.open(sealed) {
+        case let .opened(envelope):
+            return envelope
+        case .duplicate:
+            return nil
+        }
     }
 
     nonisolated private static func setNoDelay(fd: Int32) {
@@ -681,6 +758,8 @@ private extension SessionAssetEvent {
             self = .guestDisconnected(participantID: participantID)
         case .disconnected:
             self = .disconnected
+        case let .versionMismatch(remoteMajor, localMajor):
+            self = .versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor)
         case let .failed(message):
             self = .failed(message)
         }
