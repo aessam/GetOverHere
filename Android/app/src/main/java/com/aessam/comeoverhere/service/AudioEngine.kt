@@ -15,8 +15,8 @@ import java.nio.ByteOrder
 import kotlin.math.sqrt
 
 /**
- * Audio capture and playback engine matching iOS wire format:
- * 16kHz mono float32 (~64 KB/s).
+ * Audio capture and playback engine matching the shared codec boundary:
+ * 16 kHz mono signed PCM16 little-endian.
  *
  * Android AudioRecord supports 16kHz natively — no converter needed (unlike iOS).
  */
@@ -43,7 +43,7 @@ class AudioEngine(context: Context) {
         const val CHANNEL_IN = AudioFormat.CHANNEL_IN_MONO
         const val CHANNEL_OUT = AudioFormat.CHANNEL_OUT_MONO
         const val CAPTURE_ENCODING = AudioFormat.ENCODING_PCM_16BIT
-        const val PLAYBACK_ENCODING = AudioFormat.ENCODING_PCM_FLOAT
+        const val PLAYBACK_ENCODING = AudioFormat.ENCODING_PCM_16BIT
         const val BUFFER_SIZE_FACTOR = 2
         private val PRIVATE_DEVICE_TYPES = setOf(
             AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
@@ -55,7 +55,7 @@ class AudioEngine(context: Context) {
     }
 
     /**
-     * Start capturing audio. Returns a Flow of float32 byte arrays (wire format).
+     * Start capturing audio. Returns PCM16 little-endian byte arrays for the codec.
      */
     fun startCapture(): Flow<ByteArray> = flow {
         enterCommunicationMode()
@@ -94,10 +94,8 @@ class AudioEngine(context: Context) {
         record.startRecording()
         isCapturing = true
         emittedPacketCount = 0
-        Log.i(TAG, "Capture started: ${SAMPLE_RATE}Hz mono pcm16 -> float32 wire")
+        Log.i(TAG, "Capture started: ${SAMPLE_RATE}Hz mono PCM16")
 
-        // 115 samples × 4 bytes = 460 bytes audio. With 36 channelID + 2 headers = 498 bytes.
-        // Fits in one BLE MTU (512). Critical for cross-platform audio.
         val pcmBuffer = ShortArray(160)
         try {
             while (isCapturing) {
@@ -108,10 +106,9 @@ class AudioEngine(context: Context) {
                     val rms = computeRms(pcmBuffer, read)
                     if (rms < noiseGateThreshold) continue
 
-                    // Convert PCM16 samples to float32 wire format expected by iOS.
-                    val byteBuffer = ByteBuffer.allocate(read * 4).order(ByteOrder.LITTLE_ENDIAN)
+                    val byteBuffer = ByteBuffer.allocate(read * Short.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
                     for (i in 0 until read) {
-                        byteBuffer.putFloat((pcmBuffer[i] / Short.MAX_VALUE.toFloat()).coerceIn(-1f, 1f))
+                        byteBuffer.putShort(pcmBuffer[i])
                     }
                     emittedPacketCount += 1
                     if (emittedPacketCount == 1) {
@@ -163,7 +160,7 @@ class AudioEngine(context: Context) {
         audioTrack = track
         isPlaying = true
         applyListenerOutputRoute()
-        Log.i(TAG, "Playback started: ${SAMPLE_RATE}Hz mono float32")
+        Log.i(TAG, "Playback started: ${SAMPLE_RATE}Hz mono PCM16")
     }
 
     fun setListenerOutput(output: ListenerOutput) {
@@ -173,13 +170,11 @@ class AudioEngine(context: Context) {
 
     fun enqueuePlayback(data: ByteArray) {
         val track = audioTrack ?: return
-        // Convert byte array back to float array
-        val floatBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        val floatArray = FloatArray(data.size / 4)
-        for (i in floatArray.indices) {
-            floatArray[i] = floatBuffer.getFloat()
+        if (data.isEmpty() || data.size % Short.SIZE_BYTES != 0) {
+            Log.e(TAG, "Rejected invalid PCM16 playback packet: ${data.size} bytes")
+            return
         }
-        track.write(floatArray, 0, floatArray.size, AudioTrack.WRITE_NON_BLOCKING)
+        track.write(data, 0, data.size, AudioTrack.WRITE_NON_BLOCKING)
     }
 
     fun stopPlayback() {

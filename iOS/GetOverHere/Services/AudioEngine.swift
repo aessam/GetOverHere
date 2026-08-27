@@ -32,15 +32,14 @@ final class AudioEngine {
     private var routeChangeObserver: NSObjectProtocol?
     private var configChangeObserver: NSObjectProtocol?
 
-    // Canonical wire format — all audio is normalized to this before sending.
-    // 16kHz mono float32: good for voice, ~64 KB/s, works regardless of
-    // whether sender/receiver uses AirPods, speaker, or any other hardware.
+    // Canonical codec boundary: 16 kHz mono signed PCM16 little-endian.
+    // Network transports encode this PCM before sending it.
     nonisolated static var wireFormat: AVAudioFormat {
         AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
+            commonFormat: .pcmFormatInt16,
             sampleRate: 16_000,
             channels: 1,
-            interleaved: false
+            interleaved: true
         )!
     }
 
@@ -83,7 +82,7 @@ final class AudioEngine {
 
         inputNode.installTap(
             onBus: 0,
-            bufferSize: 345, // ~7ms at 48kHz → ~115 frames at 16kHz → ~460 bytes (fits in one BLE MTU)
+            bufferSize: 345, // ~7 ms at 48 kHz; the codec accumulator forms exact frames.
             format: nil
         ) { @Sendable [converterRef, continuationLock] buffer, _ in
             // Noise gate: compute RMS and drop quiet buffers (echo, background noise)
@@ -319,18 +318,18 @@ final class AudioEngine {
         return output
     }
 
-    // MARK: - Serialization (float32 mono)
+    // MARK: - Serialization (PCM16 mono)
 
     nonisolated private static func bufferToData(_ buffer: AVAudioPCMBuffer) -> Data? {
-        guard let channelData = buffer.floatChannelData else { return nil }
-        let frameLength = Int(buffer.frameLength)
-        guard frameLength > 0 else { return nil }
-        return Data(bytes: channelData[0], count: frameLength * MemoryLayout<Float>.size)
+        let audioBuffer = buffer.mutableAudioBufferList.pointee.mBuffers
+        guard let bytes = audioBuffer.mData, audioBuffer.mDataByteSize > 0 else { return nil }
+        return Data(bytes: bytes, count: Int(audioBuffer.mDataByteSize))
     }
 
     nonisolated private static func dataToBuffer(_ data: Data) -> AVAudioPCMBuffer? {
+        guard data.count.isMultiple(of: MemoryLayout<Int16>.size) else { return nil }
         let format = wireFormat
-        let frameCount = AVAudioFrameCount(data.count / MemoryLayout<Float>.size)
+        let frameCount = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
         guard frameCount > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             return nil
@@ -338,7 +337,9 @@ final class AudioEngine {
         buffer.frameLength = frameCount
         data.withUnsafeBytes { rawBuffer in
             guard let source = rawBuffer.baseAddress else { return }
-            memcpy(buffer.floatChannelData![0], source, data.count)
+            guard let destination = buffer.mutableAudioBufferList.pointee.mBuffers.mData else { return }
+            memcpy(destination, source, data.count)
+            buffer.mutableAudioBufferList.pointee.mBuffers.mDataByteSize = UInt32(data.count)
         }
         return buffer
     }

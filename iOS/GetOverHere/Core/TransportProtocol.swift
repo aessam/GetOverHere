@@ -93,7 +93,7 @@ extension BLECommand: Codable {
 }
 
 enum AudioQuality: String, Codable, Sendable, CaseIterable {
-    case standard  // 16kHz mono float32, ~64 KB/s
+    case standard  // 16 kHz mono PCM16 codec input, ~32 KB/s before encoding
     case hd        // 44.1kHz stereo float32, ~353 KB/s — WiFi only
 
     var sampleRate: Double {

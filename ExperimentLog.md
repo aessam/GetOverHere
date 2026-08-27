@@ -511,3 +511,18 @@ Commands and results:
 3. The first combined iOS run timed out in the asset readiness test while the simulator was starting under concurrent load. The unchanged asset suite then passed in isolation in 0.134 seconds and passed again in the final combined run in 0.042 seconds.
 
 Realtime audio and Wi-Fi Aware lane integration remain outside this checkpoint. No claim is made that every application payload path is encrypted yet.
+
+## 2026-08-26 — P3 canonical PCM16 application boundary
+
+Implementation:
+
+- Changed iOS capture conversion and playback buffers from non-interleaved Float32 to interleaved 16 kHz mono PCM16.
+- Removed Android's PCM16→Float32→PCM16 conversion and configured `AudioTrack` for PCM16 directly.
+- The transport still carries uncompressed PCM at this checkpoint; encoding and sealing are the next checkpoint.
+
+Commands and results:
+
+1. `env JAVA_HOME=/Applications/Android\ Studio.app/Contents/jbr/Contents/Home ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest`
+   - Result: passed.
+2. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereP3PCM16 build`
+   - Result: passed.
