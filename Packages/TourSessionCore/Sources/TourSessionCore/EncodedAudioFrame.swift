@@ -49,13 +49,15 @@ public struct SessionAudioCodecConfiguration: Equatable, Sendable {
     public let channelCount: UInt8
     public let frameDurationMilliseconds: UInt16
     public let bitRate: UInt32
+    public let codecSpecificData: Data
 
     public init(
         codec: SessionAudioCodec,
         sampleRate: UInt32,
         channelCount: UInt8,
         frameDurationMilliseconds: UInt16,
-        bitRate: UInt32
+        bitRate: UInt32,
+        codecSpecificData: Data = Data()
     ) throws {
         guard sampleRate > 0 else { throw EncodedAudioFrameError.invalidSampleRate(sampleRate) }
         guard channelCount > 0 else { throw EncodedAudioFrameError.invalidChannelCount(channelCount) }
@@ -63,16 +65,20 @@ public struct SessionAudioCodecConfiguration: Equatable, Sendable {
             throw EncodedAudioFrameError.invalidFrameDuration(frameDurationMilliseconds)
         }
         guard bitRate > 0 else { throw EncodedAudioFrameError.invalidBitRate(bitRate) }
+        guard codecSpecificData.count <= Int(UInt32.max) else {
+            throw EncodedAudioFrameError.encodedPayloadTooLarge(codecSpecificData.count)
+        }
         self.codec = codec
         self.sampleRate = sampleRate
         self.channelCount = channelCount
         self.frameDurationMilliseconds = frameDurationMilliseconds
         self.bitRate = bitRate
+        self.codecSpecificData = codecSpecificData
     }
 }
 
 public struct EncodedAudioFramePayload: Equatable, Sendable {
-    public static let fixedHeaderSize = 32
+    public static let fixedHeaderSize = 36
 
     public let configuration: SessionAudioCodecConfiguration
     public let capturedAtNanoseconds: UInt64
@@ -111,6 +117,8 @@ public struct EncodedAudioFramePayload: Equatable, Sendable {
         writer.append(configuration.channelCount)
         writer.append(configuration.frameDurationMilliseconds)
         writer.append(configuration.bitRate)
+        writer.append(UInt32(configuration.codecSpecificData.count))
+        writer.append(configuration.codecSpecificData)
         writer.append(capturedAtNanoseconds)
         writer.append(expiresAtNanoseconds)
         writer.append(UInt32(encodedBytes.count))
@@ -124,12 +132,19 @@ public struct EncodedAudioFramePayload: Equatable, Sendable {
         guard let codec = SessionAudioCodec(rawValue: codecRaw) else {
             throw EncodedAudioFrameError.unsupportedCodec(codecRaw)
         }
+        let sampleRate = try reader.readUInt32()
+        let channelCount = try reader.readUInt8()
+        let frameDuration = try reader.readUInt16()
+        let bitRate = try reader.readUInt32()
+        let codecSpecificDataLength = Int(try reader.readUInt32())
+        let codecSpecificData = try reader.readData(count: codecSpecificDataLength)
         let configuration = try SessionAudioCodecConfiguration(
             codec: codec,
-            sampleRate: reader.readUInt32(),
-            channelCount: reader.readUInt8(),
-            frameDurationMilliseconds: reader.readUInt16(),
-            bitRate: reader.readUInt32()
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+            frameDurationMilliseconds: frameDuration,
+            bitRate: bitRate,
+            codecSpecificData: codecSpecificData
         )
         let capturedAt = try reader.readUInt64()
         let expiresAt = try reader.readUInt64()

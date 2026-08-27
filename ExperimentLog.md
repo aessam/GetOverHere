@@ -464,3 +464,31 @@ Commands and results:
    - Result: all seven stages passed, including both cores, cross-language fixtures, Android app/APK integration, and the iOS Simulator test suite.
 
 This checkpoint defines and proves the new contract. Existing application transports still use the legacy plaintext envelope until the next focused integration checkpoint; no production encryption claim is made yet.
+
+## 2026-08-26 — P3 native codec and bounded-buffer checkpoint
+
+Implementation:
+
+- Added platform-native Opus and AAC-LC encoders/decoders behind matching realtime codec interfaces.
+- Standardized codec input/output on 16 kHz mono PCM16 little-endian frames.
+- Added codec-specific configuration bytes to the exact Swift/Kotlin encoded-audio wire contract.
+- Added an exact-frame PCM accumulator and a bounded, expiry-aware encoded-frame jitter buffer in both session cores.
+- Added native capability and encode/decode roundtrip tests on both platforms. No `libopus` or other codec dependency was added.
+
+Commands and results:
+
+1. `swift test --package-path Packages/TourSessionCore`
+   - Initial focused buffer test trapped in `Data.subdata(in:)` after `removeFirst` advanced the collection start index. The accumulator now uses `prefix` plus removal.
+   - Focused regression rerun passed.
+2. `env JAVA_HOME=/Applications/Android\ Studio.app/Contents/jbr/Contents/Home ./gradlew :tour-session-core:test :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin`
+   - Result: passed after correcting the Kotlin test's `Int`/`Long` assertion type.
+3. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereP3NativeCodec test -only-testing:GetOverHereTests/NativeRealtimeAudioCodecTests -only-testing:GetOverHereTests/NativeAudioCodecCapabilitiesTests`
+   - Result: four tests passed. Native Opus and AAC-LC each produced compressed packets and decoded PCM on the iPhone 17 Pro simulator.
+4. Installed Google's official Android command-line tools `15859902`, verified SHA-256 `835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e`, installed `system-images;android-36;default;arm64-v8a`, and created `GetOverHere_API_36`.
+   - The Google APIs image requested a separate unaccepted license and was not installed. No license was accepted on the user's behalf.
+5. `env JAVA_HOME=/Applications/Android\ Studio.app/Contents/jbr/Contents/Home ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.NativeRealtimeAudioCodecTest`
+   - Result: two tests passed on `GetOverHere_API_36`, Android 16, ARM64. Native Opus and AAC-LC capability mapping and encode/decode roundtrips passed.
+6. `scripts/verify_tour_session.sh`
+   - Result: all seven stages passed, including 24 Swift core tests, the matching Kotlin core suite, exact cross-language frame checks, Android app/APK integration, and the full iOS Simulator suite. Final output: `Tour session verification passed`.
+
+Simulator and emulator results validate code paths, wire configuration, compression, and bounded buffering. They do not satisfy the physical codec, audio quality, mouth-to-ear latency, RF, background, thermal, or battery parts of Gate P3.

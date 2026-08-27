@@ -209,3 +209,9 @@
 **Root cause**: Aggregate tour capacity and one transport's direct-peer capacity were treated as the same number.
 **Resolution**: Stop Aware admission at runtime capacity and route each overflow guest to LAN, then validated BLE voice, then explicit control-only mode.
 **Decision**: Every runtime capacity limit needs a user-visible capacity-plus-one behavior before scale testing. Never silently overcommit the radio or count a control-only guest as receiving audio.
+
+## 40. `Data` offsets are not guaranteed to restart at zero
+**What happened**: The first Swift PCM frame accumulator removed emitted bytes, then used integer ranges starting at zero for the next `Data.subdata(in:)`. A later append trapped because `Data.removeFirst` advanced the collection's start index.
+**Root cause**: Byte offsets were treated as collection indices after mutation.
+**Resolution**: Extract each complete frame with `prefix`, copy it into a rebased `Data`, then remove that frame. The focused Swift and Kotlin accumulator/jitter tests cover split and coalesced capture chunks.
+**Decision**: Use collection indices or prefix/drop operations for mutable `Data`; never assume `startIndex == 0` after slicing or removal.

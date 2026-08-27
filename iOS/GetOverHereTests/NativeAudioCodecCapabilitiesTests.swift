@@ -17,5 +17,7 @@ struct NativeAudioCodecCapabilitiesTests {
 
         #expect(capabilities.aacLCEncoder)
         #expect(capabilities.aacLCDecoder)
+        #expect(capabilities.opusEncoder)
+        #expect(capabilities.opusDecoder)
     }
 }

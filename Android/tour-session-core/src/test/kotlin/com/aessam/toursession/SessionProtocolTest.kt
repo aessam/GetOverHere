@@ -92,11 +92,27 @@ class SessionProtocolTest {
     fun encodedAudioFrameAndCodecNegotiationAreDeterministic() {
         val fixture = TourSessionFixtures.encodedAudioFixture()
         assertEquals(
-            "0100003e8001001400004e20000000003b9aca00000000004a817c8000000006f8fffe010203",
+            "0100003e8001001400004e2000000000000000003b9aca00000000004a817c8000000006f8fffe010203",
             fixture.encode().lowercaseHex(),
         )
         assertEquals(EncodedAudioFramePayload.FIXED_HEADER_SIZE + fixture.encodedBytes.size, fixture.encode().size)
         assertEquals(fixture, EncodedAudioFramePayload.decode(fixture.encode()))
+
+        val configurationWithCookie = SessionAudioCodecConfiguration(
+            codec = SessionAudioCodec.AAC_LC,
+            sampleRate = 16_000,
+            channelCount = 1,
+            frameDurationMilliseconds = 64,
+            bitRate = 16_000,
+            codecSpecificData = byteArrayOf(0x12, 0x10),
+        )
+        val withCookie = EncodedAudioFramePayload(
+            configuration = configurationWithCookie,
+            capturedAtNanoseconds = 10,
+            expiresAtNanoseconds = 20,
+            encodedBytes = byteArrayOf(0xAA.toByte()),
+        )
+        assertEquals(withCookie, EncodedAudioFramePayload.decode(withCookie.encode()))
         assertFalse(fixture.isExpired(fixture.expiresAtNanoseconds - 1))
         assertTrue(fixture.isExpired(fixture.expiresAtNanoseconds))
 
@@ -115,6 +131,66 @@ class SessionProtocolTest {
                 SessionCapability.AAC_LC_DECODER.bit,
             )
         }
+    }
+
+    @Test
+    fun realtimeAudioAccumulationAndJitterAreBounded() {
+        val accumulator = PCMFrameAccumulator(frameByteCount = 4)
+        assertTrue(accumulator.append(byteArrayOf(0, 1, 2)).isEmpty())
+        val frames = accumulator.append(byteArrayOf(3, 4, 5, 6, 7, 8))
+        assertEquals(2, frames.size)
+        assertArrayEquals(byteArrayOf(0, 1, 2, 3), frames[0])
+        assertArrayEquals(byteArrayOf(4, 5, 6, 7), frames[1])
+        assertEquals(1, accumulator.bufferedByteCount)
+        assertArrayEquals(
+            byteArrayOf(8, 9, 10, 11),
+            accumulator.append(byteArrayOf(9, 10, 11)).single(),
+        )
+
+        val payload = EncodedAudioFramePayload(
+            configuration = TourSessionFixtures.encodedAudioFixture().configuration,
+            capturedAtNanoseconds = 100,
+            expiresAtNanoseconds = 1_000,
+            encodedBytes = byteArrayOf(1),
+        )
+        val jitter = EncodedAudioJitterBuffer(targetFrameCount = 3, maximumFrameCount = 4)
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            jitter.offer(SequencedEncodedAudioFrame(11, payload), nowNanoseconds = 200),
+        )
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            jitter.offer(SequencedEncodedAudioFrame(10, payload), nowNanoseconds = 200),
+        )
+        assertNull(jitter.popReady(nowNanoseconds = 200))
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            jitter.offer(SequencedEncodedAudioFrame(12, payload), nowNanoseconds = 200),
+        )
+        assertEquals(10L, jitter.popReady(nowNanoseconds = 200)?.sequence)
+        assertEquals(11L, jitter.popReady(nowNanoseconds = 200)?.sequence)
+        assertEquals(
+            EncodedAudioFrameOfferResult.DUPLICATE,
+            jitter.offer(SequencedEncodedAudioFrame(10, payload), nowNanoseconds = 200),
+        )
+
+        val full = EncodedAudioJitterBuffer(targetFrameCount = 2, maximumFrameCount = 2)
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            full.offer(SequencedEncodedAudioFrame(1, payload), nowNanoseconds = 200),
+        )
+        assertEquals(
+            EncodedAudioFrameOfferResult.ACCEPTED,
+            full.offer(SequencedEncodedAudioFrame(2, payload), nowNanoseconds = 200),
+        )
+        assertEquals(
+            EncodedAudioFrameOfferResult.CAPACITY_EXCEEDED,
+            full.offer(SequencedEncodedAudioFrame(3, payload), nowNanoseconds = 200),
+        )
+        assertEquals(
+            EncodedAudioFrameOfferResult.EXPIRED,
+            full.offer(SequencedEncodedAudioFrame(4, payload), nowNanoseconds = 1_000),
+        )
     }
 
     @Test

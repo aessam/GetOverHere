@@ -269,3 +269,12 @@
 **Options**: (a) silently close legacy peers, (b) accept plaintext as fallback, (c) reject with a typed compatibility state.
 **Rationale**: Option (c) keeps the no-plaintext invariant and makes the expected upgrade failure diagnosable. An already-shipped old build cannot be taught the new message, but every new build can identify a legacy inbound frame and expose the correct local state.
 **Consequences**: Swift and Kotlin require exact tests for legacy-major rejection and the transport-to-product error mapping. No compatibility shim or plaintext downgrade is allowed.
+
+## ADR-034: Native realtime codecs use canonical PCM16 frames
+**Date**: 2026-08-26
+**Status**: Accepted P3 implementation contract; physical-device qualification remains pending.
+**Decision**: Feed platform-native Opus or AAC-LC encoders with 16 kHz mono signed PCM16 little-endian frames. Prefer 20 ms Opus at 20 kb/s and retain 64 ms AAC-LC at 16 kb/s as the negotiated native fallback. Carry codec-specific configuration bytes in the encoded-audio payload, accumulate arbitrary capture chunks into exact codec frames, and bound receiver reordering by both target and maximum frame counts.
+**Context**: The previous audio path sent 16 kHz mono Float32 PCM directly over TCP. Native codec decoders may require magic-cookie or codec-specific data, and capture callbacks do not guarantee codec-sized chunks.
+**Options**: (a) retain Float32 PCM, (b) add libopus, (c) use native codecs with a canonical PCM16 boundary and codec-specific configuration.
+**Rationale**: Option (c) removes the raw-wire bandwidth problem without adding a dependency and keeps the Swift/Kotlin transport contract codec-neutral. PCM16 is the native Android capture/playback representation and is directly supported by Apple's converter stack.
+**Consequences**: Simulator/emulator roundtrips prove API integration only. Physical targets must still prove codec availability, quality, latency, thermal behavior, and background operation before P3 passes. Unsupported native Opus negotiates AAC-LC explicitly; there is no silent raw-PCM fallback.

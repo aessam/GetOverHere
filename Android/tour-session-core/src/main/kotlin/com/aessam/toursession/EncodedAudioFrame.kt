@@ -25,6 +25,7 @@ data class SessionAudioCodecConfiguration(
     val channelCount: Int,
     val frameDurationMilliseconds: Int,
     val bitRate: Long,
+    val codecSpecificData: ByteArray = byteArrayOf(),
 ) {
     init {
         if (sampleRate !in 1..0xffff_ffffL) throw EncodedAudioFrameException("invalid audio sample rate $sampleRate")
@@ -33,7 +34,19 @@ data class SessionAudioCodecConfiguration(
             throw EncodedAudioFrameException("invalid audio frame duration $frameDurationMilliseconds ms")
         }
         if (bitRate !in 1..0xffff_ffffL) throw EncodedAudioFrameException("invalid audio bit rate $bitRate")
+        require(codecSpecificData.size.toLong() <= 0xffff_ffffL)
     }
+
+    override fun equals(other: Any?): Boolean =
+        other is SessionAudioCodecConfiguration &&
+            codec == other.codec &&
+            sampleRate == other.sampleRate &&
+            channelCount == other.channelCount &&
+            frameDurationMilliseconds == other.frameDurationMilliseconds &&
+            bitRate == other.bitRate &&
+            codecSpecificData.contentEquals(other.codecSpecificData)
+
+    override fun hashCode(): Int = 31 * codec.hashCode() + codecSpecificData.contentHashCode()
 }
 
 class EncodedAudioFramePayload(
@@ -68,6 +81,8 @@ class EncodedAudioFramePayload(
         writer.appendUInt8(configuration.channelCount)
         writer.appendUInt16(configuration.frameDurationMilliseconds)
         writer.appendUInt32(configuration.bitRate)
+        writer.appendUInt32(configuration.codecSpecificData.size.toLong())
+        writer.append(configuration.codecSpecificData)
         writer.appendUInt64(capturedAtNanoseconds)
         writer.appendUInt64(expiresAtNanoseconds)
         writer.appendUInt32(encodedBytes.size.toLong())
@@ -76,17 +91,23 @@ class EncodedAudioFramePayload(
     }
 
     companion object {
-        const val FIXED_HEADER_SIZE = 32
+        const val FIXED_HEADER_SIZE = 36
 
         fun decode(data: ByteArray): EncodedAudioFramePayload {
             val reader = BinaryReader(data)
             val codec = SessionAudioCodec.fromRaw(reader.readUInt8())
+            val sampleRate = reader.readUInt32()
+            val channelCount = reader.readUInt8()
+            val frameDuration = reader.readUInt16()
+            val bitRate = reader.readUInt32()
+            val codecSpecificData = reader.readBytes(reader.readUInt32().toInt())
             val configuration = SessionAudioCodecConfiguration(
                 codec,
-                reader.readUInt32(),
-                reader.readUInt8(),
-                reader.readUInt16(),
-                reader.readUInt32(),
+                sampleRate,
+                channelCount,
+                frameDuration,
+                bitRate,
+                codecSpecificData,
             )
             val capturedAt = reader.readUInt64()
             val expiresAt = reader.readUInt64()

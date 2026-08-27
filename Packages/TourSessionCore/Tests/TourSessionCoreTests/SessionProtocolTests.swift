@@ -85,9 +85,25 @@ struct SessionProtocolTests {
     @Test("Encoded audio frame and codec negotiation are deterministic")
     func encodedAudioFrame() throws {
         let fixture = try TourSessionFixtures.encodedAudioFixture()
-        #expect(fixture.encode().lowercaseHex == "0100003e8001001400004e20000000003b9aca00000000004a817c8000000006f8fffe010203")
+        #expect(fixture.encode().lowercaseHex == "0100003e8001001400004e2000000000000000003b9aca00000000004a817c8000000006f8fffe010203")
         #expect(fixture.encode().count == EncodedAudioFramePayload.fixedHeaderSize + fixture.encodedBytes.count)
         #expect(try EncodedAudioFramePayload.decode(fixture.encode()) == fixture)
+
+        let configurationWithCookie = try SessionAudioCodecConfiguration(
+            codec: .aacLC,
+            sampleRate: 16_000,
+            channelCount: 1,
+            frameDurationMilliseconds: 64,
+            bitRate: 16_000,
+            codecSpecificData: Data([0x12, 0x10])
+        )
+        let withCookie = try EncodedAudioFramePayload(
+            configuration: configurationWithCookie,
+            capturedAtNanoseconds: 10,
+            expiresAtNanoseconds: 20,
+            encodedBytes: Data([0xAA])
+        )
+        #expect(try EncodedAudioFramePayload.decode(withCookie.encode()) == withCookie)
         #expect(!fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds - 1))
         #expect(fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds))
 
@@ -103,6 +119,39 @@ struct SessionProtocolTests {
                 receiver: [.aacLCDecoder]
             )
         }
+    }
+
+    @Test("Realtime audio accumulation and jitter are bounded")
+    func realtimeAudioBuffers() throws {
+        var accumulator = try PCMFrameAccumulator(frameByteCount: 4)
+        #expect(accumulator.append(Data([0, 1, 2])).isEmpty)
+        #expect(accumulator.append(Data([3, 4, 5, 6, 7, 8])) == [
+            Data([0, 1, 2, 3]),
+            Data([4, 5, 6, 7]),
+        ])
+        #expect(accumulator.bufferedByteCount == 1)
+        #expect(accumulator.append(Data([9, 10, 11])) == [Data([8, 9, 10, 11])])
+
+        let payload = try EncodedAudioFramePayload(
+            configuration: TourSessionFixtures.encodedAudioFixture().configuration,
+            capturedAtNanoseconds: 100,
+            expiresAtNanoseconds: 1_000,
+            encodedBytes: Data([0x01])
+        )
+        var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 3, maximumFrameCount: 4)
+        #expect(jitter.offer(.init(sequence: 11, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popReady(nowNanoseconds: 200) == nil)
+        #expect(jitter.offer(.init(sequence: 12, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 10)
+        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 11)
+        #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .duplicate)
+
+        var full = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 2)
+        #expect(full.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(full.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(full.offer(.init(sequence: 3, payload: payload), nowNanoseconds: 200) == .capacityExceeded)
+        #expect(full.offer(.init(sequence: 4, payload: payload), nowNanoseconds: 1_000) == .expired)
     }
 
     @Test("Message kinds cannot enter the wrong lane")
