@@ -25,7 +25,6 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -46,7 +45,7 @@ private class LocalAuthenticatedSessionTransport(
 
     private data class ClientConnection(
         val socket: Socket,
-        val output: OutputStream,
+        val writer: BoundedSocketFrameWriter,
         val participant: ParticipantSession,
     )
 
@@ -54,15 +53,12 @@ private class LocalAuthenticatedSessionTransport(
     private val sequence = AtomicLong(1)
     private val runEpoch = AtomicLong(0)
     private val clients = CopyOnWriteArrayList<ClientConnection>()
-    private val sendExecutor = Executors.newSingleThreadExecutor { body ->
-        Thread(body, "session-data-send").apply { isDaemon = true }
-    }
 
     @Volatile private var configuration: Configuration? = null
     @Volatile private var eventHandler: ((SessionControlEvent) -> Unit)? = null
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var clientSocket: Socket? = null
-    @Volatile private var clientOutput: OutputStream? = null
+    @Volatile private var guestWriter: BoundedSocketFrameWriter? = null
     @Volatile private var guestSocketFactory: SocketFactory = SocketFactory.getDefault()
     @Volatile private var outboundSealer: SessionFrameSealer? = null
     @Volatile private var outboundStreamID: UUID = UUID.randomUUID()
@@ -159,11 +155,24 @@ private class LocalAuthenticatedSessionTransport(
                 socket.connect(InetSocketAddress(host, port), 5_000)
                 clientSocket = socket
                 val output = socket.getOutputStream()
-                clientOutput = output
 
                 socket.soTimeout = 5_000
                 val guideID = authenticateGuide(socket, output, configured)
                 socket.soTimeout = 0
+                val writer = BoundedSocketFrameWriter(
+                    socket = socket,
+                    generation = epoch,
+                    label = "session-data-guest-writer-$epoch",
+                    capacity = if (applicationLane == SessionLane.CONTROL) 64 else 8,
+                    overflowPolicy = SocketFrameOverflowPolicy.DISCONNECT,
+                    sendTimeoutMillis = 2_000,
+                ) { failedSocket, failedEpoch ->
+                    if (isRunActive(failedEpoch) && clientSocket === failedSocket) {
+                        clearClient(failedSocket)
+                        emit(SessionControlEvent.Disconnected)
+                    }
+                }
+                guestWriter = writer
                 authenticated = true
                 emit(SessionControlEvent.Connected)
 
@@ -181,6 +190,7 @@ private class LocalAuthenticatedSessionTransport(
                         throw IllegalArgumentException("control envelope is not from the authenticated guide")
                     }
                     emit(SessionControlEvent.EnvelopeReceived(envelope))
+                    if (envelope.kind == SessionMessageKind.LEAVE) break
                 }
             } catch (error: UnsupportedSessionVersionException) {
                 if (isRunActive(epoch)) {
@@ -241,40 +251,19 @@ private class LocalAuthenticatedSessionTransport(
 
         val guideDestinations = clients.filter {
             participantID == null || it.participant.participantId == participantID
-        }
-        val guestDestination = if (participantID == null) clientOutput else null
+        }.map(ClientConnection::writer)
+        val guestDestination = if (participantID == null) guestWriter else null
         if (guideDestinations.isEmpty() && guestDestination == null) return
 
-        val delivery = Runnable {
-            guideDestinations.forEach { client ->
-                try {
-                    writeFrame(client.output, envelope)
-                } catch (error: Exception) {
-                    emit(SessionControlEvent.Failed("Session: guide send failed: ${error.message}"))
-                    removeClient(client)
-                }
-            }
-            if (guestDestination != null) {
-                try {
-                    writeFrame(guestDestination, envelope)
-                } catch (error: Exception) {
-                    emit(SessionControlEvent.Failed("Session: send failed: ${error.message}"))
-                    val socket = clientSocket
-                    if (socket != null) {
-                        clearClient(socket)
-                        socket.closeQuietly()
-                    }
-                }
-            }
-        }
+        val destinations = guideDestinations + listOfNotNull(guestDestination)
         if (kind == SessionMessageKind.LEAVE) {
-            try {
-                sendExecutor.submit(delivery).get(2, TimeUnit.SECONDS)
-            } catch (error: Exception) {
-                emit(SessionControlEvent.Failed("Session: terminal send failed: ${error.javaClass.simpleName}"))
+            val deliveries = destinations.mapNotNull { it.enqueue(envelope, trackDelivery = true) }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            if (deliveries.any { !it.await(deadline) }) {
+                emit(SessionControlEvent.Failed("Session: terminal send did not complete before timeout"))
             }
         } else {
-            sendExecutor.execute(delivery)
+            destinations.forEach { it.enqueue(envelope) }
         }
     }
 
@@ -305,12 +294,22 @@ private class LocalAuthenticatedSessionTransport(
                 role = SessionRole.GUEST,
                 platform = hello.platform,
             )
-            val output = socket.getOutputStream()
-
             clients.firstOrNull { it.participant.participantId == participant.participantId }?.let {
                 removeClient(it)
             }
-            client = ClientConnection(socket, output, participant)
+            val writer = BoundedSocketFrameWriter(
+                socket = socket,
+                generation = epoch,
+                label = "session-data-writer-${participant.connectionId}",
+                capacity = if (applicationLane == SessionLane.CONTROL) 64 else 8,
+                overflowPolicy = SocketFrameOverflowPolicy.DISCONNECT,
+                sendTimeoutMillis = 2_000,
+            ) { failedSocket, failedEpoch ->
+                clients.firstOrNull {
+                    it.socket === failedSocket && it.writer.generation == failedEpoch
+                }?.let(::removeClient)
+            }
+            client = ClientConnection(socket, writer, participant)
             clients += client
             emit(SessionControlEvent.GuestJoined(participant))
 
@@ -354,14 +353,15 @@ private class LocalAuthenticatedSessionTransport(
 
     private fun removeClient(client: ClientConnection) {
         if (!clients.remove(client)) return
-        client.socket.closeQuietly()
+        client.writer.close()
         emit(SessionControlEvent.GuestDisconnected(client.participant.participantId))
     }
 
     private fun clearClient(socket: Socket) {
         if (clientSocket === socket) {
+            guestWriter?.close()
+            guestWriter = null
             clientSocket = null
-            clientOutput = null
         }
     }
 
@@ -370,8 +370,9 @@ private class LocalAuthenticatedSessionTransport(
         serverSocket = null
         clientSocket?.closeQuietly()
         clientSocket = null
-        clientOutput = null
-        clients.forEach { it.socket.closeQuietly() }
+        guestWriter?.close()
+        guestWriter = null
+        clients.forEach { it.writer.close() }
         clients.clear()
     }
 

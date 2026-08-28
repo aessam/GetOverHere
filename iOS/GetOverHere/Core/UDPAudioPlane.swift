@@ -20,7 +20,7 @@ final class UDPAudioPlane: AudioPlane {
     }
 
     private struct ClientConnection: Sendable {
-        let fd: Int32
+        let writer: BoundedSocketFrameWriter
         let connectionID: String
         let participantID: UUID
         let codec: SessionAudioCodec
@@ -51,6 +51,96 @@ final class UDPAudioPlane: AudioPlane {
                 targetFrameCount: targetFrames,
                 maximumFrameCount: maximumFrames
             )
+        }
+    }
+
+    nonisolated private final class BroadcastProcessor: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "audio.encode.seal", qos: .userInteractive)
+        private let lock = NSLock()
+        private let configuration: SessionConfiguration
+        private let codecProvider: any RealtimeAudioCodecProviderInterface
+        private let sealer: SessionFrameSealer
+        private let frameLifetimeNanoseconds: UInt64
+        private var codecStates: [SessionAudioCodec: BroadcastCodecState] = [:]
+        private var sentPacketCount = 0
+        private var stopped = false
+
+        init(
+            configuration: SessionConfiguration,
+            codecProvider: any RealtimeAudioCodecProviderInterface,
+            frameLifetimeNanoseconds: UInt64
+        ) {
+            self.configuration = configuration
+            self.codecProvider = codecProvider
+            sealer = SessionFrameSealer(credential: configuration.credential)
+            self.frameLifetimeNanoseconds = frameLifetimeNanoseconds
+        }
+
+        func submit(
+            pcm: Data,
+            destinations: [SessionAudioCodec: [BoundedSocketFrameWriter]]
+        ) {
+            lock.lock()
+            let isStopped = stopped
+            lock.unlock()
+            guard !isStopped else { return }
+            queue.async { [weak self] in self?.process(pcm: pcm, destinations: destinations) }
+        }
+
+        func stop() {
+            lock.lock()
+            stopped = true
+            lock.unlock()
+        }
+
+        private func process(
+            pcm: Data,
+            destinations: [SessionAudioCodec: [BoundedSocketFrameWriter]]
+        ) {
+            lock.lock()
+            let isStopped = stopped
+            lock.unlock()
+            guard !isStopped else { return }
+
+            for (codec, writers) in destinations where !writers.isEmpty {
+                do {
+                    let state: BroadcastCodecState
+                    if let existing = codecStates[codec] {
+                        state = existing
+                    } else {
+                        let created = try BroadcastCodecState(encoder: codecProvider.makeEncoder(codec: codec))
+                        codecStates[codec] = created
+                        state = created
+                    }
+                    for pcmFrame in state.accumulator.append(pcm) {
+                        guard let packet = try state.encoder.encode(pcm16LittleEndian: pcmFrame) else { continue }
+                        let capturedAt = UDPAudioPlane.wallClockNanoseconds()
+                        let payload = try EncodedAudioFramePayload(
+                            configuration: packet.configuration,
+                            capturedAtNanoseconds: capturedAt,
+                            expiresAtNanoseconds: capturedAt + frameLifetimeNanoseconds,
+                            encodedBytes: packet.bytes
+                        )
+                        let envelope = try SessionEnvelope(
+                            lane: .realtime,
+                            kind: .audioFrame,
+                            sequence: state.sequence,
+                            sessionID: configuration.sessionID,
+                            senderID: configuration.participantID,
+                            payload: payload.encode()
+                        )
+                        let frame = try sealer.seal(envelope, streamID: state.streamID).encode()
+                        state.sequence &+= 1
+                        sentPacketCount += 1
+                        if sentPacketCount == 1 {
+                            Logger.audio.info("TCP: sending first encrypted encoded audio frame")
+                        }
+                        writers.forEach { $0.enqueue(frame) }
+                    }
+                } catch {
+                    Logger.audio.error("TCP: encoded audio frame failed")
+                }
+            }
         }
     }
 
@@ -95,16 +185,13 @@ final class UDPAudioPlane: AudioPlane {
     nonisolated private let codecProvider: any RealtimeAudioCodecProviderInterface
     private var configuration: SessionConfiguration?
     private var serverFD: Int32 = -1
-    private var clientFD: Int32 = -1
+    private var guestSocket: ManagedSocket?
     private var connectedClients: [ClientConnection] = []
-    private let sendQueue = DispatchQueue(label: "audio.tcp.send", qos: .userInteractive)
-    private var recvTask: Task<Void, Never>?
-    private var acceptTask: Task<Void, Never>?
+    private let acceptQueue = DispatchQueue(label: "audio.tcp.accept", qos: .userInitiated)
+    private let guestQueue = DispatchQueue(label: "audio.tcp.guest", qos: .userInteractive)
+    private var runGeneration: UInt64 = 0
     nonisolated private let callbacks = CallbackStore()
-    private var outboundSealer: SessionFrameSealer?
-    private var codecStates: [SessionAudioCodec: BroadcastCodecState] = [:]
-    private var sentPacketCount = 0
-    private var receivedPacketCount = 0
+    private var broadcastProcessor: BroadcastProcessor?
 
     init(
         port: UInt16 = 50_000,
@@ -187,14 +274,18 @@ final class UDPAudioPlane: AudioPlane {
         }
 
         isActive = true
-        outboundSealer = SessionFrameSealer(credential: configuration.credential)
-        codecStates.removeAll()
-        sentPacketCount = 0
+        runGeneration &+= 1
+        let generation = runGeneration
+        broadcastProcessor = BroadcastProcessor(
+            configuration: configuration,
+            codecProvider: codecProvider,
+            frameLifetimeNanoseconds: frameLifetimeNanoseconds
+        )
         Logger.audio.info("TCP: GOH2 server listening on port \(self.port)")
 
         let listeningFD = serverFD
-        acceptTask = Task { @concurrent [weak self] in
-            while !Task.isCancelled {
+        acceptQueue.async { [weak self] in
+            while true {
                 var clientAddress = sockaddr_in()
                 var length = socklen_t(MemoryLayout<sockaddr_in>.size)
                 let acceptedFD = withUnsafeMutablePointer(to: &clientAddress) { pointer in
@@ -203,8 +294,12 @@ final class UDPAudioPlane: AudioPlane {
                     }
                 }
                 guard acceptedFD >= 0 else { break }
-
-                Task { @concurrent [weak self] in
+                let socket = ManagedSocket(fd: acceptedFD, generation: generation)
+                let connectionQueue = DispatchQueue(
+                    label: "audio.tcp.client.\(UUID().uuidString)",
+                    qos: .userInitiated
+                )
+                connectionQueue.async { [weak self] in
                     let participant: (
                         participantID: UUID,
                         displayName: String,
@@ -222,93 +317,57 @@ final class UDPAudioPlane: AudioPlane {
                             remoteMajor: remoteMajor,
                             localMajor: SealedSessionEnvelope.majorVersion
                         ))
-                        close(acceptedFD)
+                        socket.close()
                         return
                     } catch {
                         Logger.audio.error("TCP: rejected audio guest")
-                        close(acceptedFD)
+                        socket.close()
                         return
                     }
                     let connectionID = UUID().uuidString
-                    await self?.registerClient(
-                        fd: acceptedFD,
-                        connectionID: connectionID,
-                        participantID: participant.participantID,
-                        displayName: participant.displayName,
-                        platform: participant.platform,
-                        codec: participant.codec
-                    )
+                    let writer = BoundedSocketFrameWriter(
+                        socket: socket,
+                        label: "audio.tcp.writer.\(connectionID)",
+                        capacity: 4,
+                        overflowPolicy: .dropOldest,
+                        sendTimeoutMilliseconds: 500
+                    ) { [weak self] fd, failedGeneration in
+                        Task { @MainActor [weak self] in
+                            self?.removeClient(fd: fd, generation: failedGeneration)
+                        }
+                    }
+                    let registration = DispatchSemaphore(value: 0)
+                    Task { @MainActor [weak self] in
+                        self?.registerClient(
+                            writer: writer,
+                            connectionID: connectionID,
+                            participantID: participant.participantID,
+                            displayName: participant.displayName,
+                            platform: participant.platform,
+                            codec: participant.codec,
+                            generation: generation
+                        )
+                        registration.signal()
+                    }
+                    registration.wait()
+                    guard !socket.isCancelled else { return }
 
                     var unexpectedByte: UInt8 = 0
                     _ = Darwin.recv(acceptedFD, &unexpectedByte, 1, 0)
-                    await self?.removeClient(fd: acceptedFD)
+                    writer.stop()
+                    Task { @MainActor [weak self] in
+                        self?.removeClient(fd: acceptedFD, generation: generation)
+                    }
                 }
             }
         }
     }
 
     func sendAudio(_ data: Data) {
-        guard isActive, !connectedClients.isEmpty, let configuration, let outboundSealer else { return }
-
-        var deliveries: [(frame: Data, clients: [ClientConnection])] = []
-        for (codec, clients) in Dictionary(grouping: connectedClients, by: \.codec) {
-            do {
-                let state: BroadcastCodecState
-                if let existing = codecStates[codec] {
-                    state = existing
-                } else {
-                    let created = try BroadcastCodecState(encoder: codecProvider.makeEncoder(codec: codec))
-                    codecStates[codec] = created
-                    state = created
-                }
-                for pcmFrame in state.accumulator.append(data) {
-                    guard let packet = try state.encoder.encode(pcm16LittleEndian: pcmFrame) else { continue }
-                    let capturedAt = Self.wallClockNanoseconds()
-                    let payload = try EncodedAudioFramePayload(
-                        configuration: packet.configuration,
-                        capturedAtNanoseconds: capturedAt,
-                        expiresAtNanoseconds: capturedAt + frameLifetimeNanoseconds,
-                        encodedBytes: packet.bytes
-                    )
-                    let envelope = try SessionEnvelope(
-                        lane: .realtime,
-                        kind: .audioFrame,
-                        sequence: state.sequence,
-                        sessionID: configuration.sessionID,
-                        senderID: configuration.participantID,
-                        payload: payload.encode()
-                    )
-                    let frame = try outboundSealer.seal(
-                        envelope,
-                        streamID: state.streamID
-                    ).encode()
-                    state.sequence &+= 1
-                    deliveries.append((frame, clients))
-                }
-            } catch {
-                Logger.audio.error("TCP: encoded audio frame failed")
-            }
-        }
-        guard !deliveries.isEmpty else { return }
-
-        sendQueue.async { [weak self] in
-            guard let self else { return }
-            var dead: [Int32] = []
-            for delivery in deliveries {
-                self.sentPacketCount += 1
-                if self.sentPacketCount == 1 {
-                    Logger.audio.info("TCP: sending first encrypted encoded audio frame")
-                }
-                dead.append(contentsOf: delivery.clients.compactMap { client in
-                    Self.writeFrame(fd: client.fd, data: delivery.frame) ? nil : client.fd
-                })
-            }
-            guard !dead.isEmpty else { return }
-            let deadConnections = Set(dead)
-            Task { @MainActor [weak self] in
-                for fd in deadConnections { self?.removeClient(fd: fd) }
-            }
-        }
+        guard isActive, !connectedClients.isEmpty, let broadcastProcessor else { return }
+        let destinations = Dictionary(grouping: connectedClients, by: \.codec)
+            .mapValues { $0.map(\.writer) }
+        broadcastProcessor.submit(pcm: data, destinations: destinations)
     }
 
     // MARK: - Guest
@@ -334,17 +393,31 @@ final class UDPAudioPlane: AudioPlane {
             return
         }
 
+        stopSockets()
         isActive = true
-        receivedPacketCount = 0
+        runGeneration &+= 1
+        let generation = runGeneration
         let audioPort = port
-        recvTask = Task { @concurrent [weak self] in
+        let maximumFrameSize = maximumFrameSize
+        let provider = codecProvider
+        guestQueue.async { [weak self] in
             Logger.audio.info("TCP: connecting to guide")
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             guard fd >= 0 else {
                 Logger.audio.error("TCP: socket failed: \(String(cString: strerror(errno)))")
                 return
             }
-            await self?.setClientFD(fd)
+            let socket = ManagedSocket(fd: fd, generation: generation)
+            let registration = DispatchSemaphore(value: 0)
+            Task { @MainActor [weak self] in
+                self?.setGuestSocket(socket, generation: generation)
+                registration.signal()
+            }
+            registration.wait()
+            guard !socket.isCancelled else {
+                socket.close()
+                return
+            }
 
             var address = sockaddr_in()
             address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -352,7 +425,10 @@ final class UDPAudioPlane: AudioPlane {
             address.sin_port = audioPort.bigEndian
             guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else {
                 Logger.audio.error("TCP: invalid guide address")
-                close(fd)
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                }
                 return
             }
 
@@ -363,7 +439,10 @@ final class UDPAudioPlane: AudioPlane {
             }
             guard connectResult == 0 else {
                 Logger.audio.error("TCP: connect failed: \(String(cString: strerror(errno)))")
-                close(fd)
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                }
                 return
             }
 
@@ -379,19 +458,26 @@ final class UDPAudioPlane: AudioPlane {
                     remoteMajor: remoteMajor,
                     localMajor: SealedSessionEnvelope.majorVersion
                 ))
-                close(fd)
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                }
                 return
             } catch {
                 Logger.audio.error("TCP: authentication failed")
-                close(fd)
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                }
                 return
             }
             Logger.audio.info("TCP: authenticated GOH2 session joined")
 
             let opener = SessionFrameOpener(credential: configuration.credential)
             var decodeState: ReceiveCodecState?
-            while !Task.isCancelled {
-                guard let frame = Self.readFrame(fd: fd, maximumSize: self?.maximumFrameSize ?? 1_048_576) else {
+            var receivedPacketCount = 0
+            while !socket.isCancelled {
+                guard let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) else {
                     break
                 }
                 do {
@@ -408,11 +494,13 @@ final class UDPAudioPlane: AudioPlane {
                         Logger.audio.error("TCP: rejected unexpected GOH2 frame")
                         break
                     }
-                    await self?.noteReceivedPacket()
+                    receivedPacketCount += 1
+                    if receivedPacketCount == 1 {
+                        Logger.audio.info("TCP: received first GOH2 audio frame")
+                    }
                     let encoded = try EncodedAudioFramePayload.decode(envelope.payload)
                     let now = Self.wallClockNanoseconds()
                     if decodeState?.decoder.configuration != encoded.configuration {
-                        guard let provider = self?.codecProvider else { break }
                         decodeState = try ReceiveCodecState(
                             decoder: provider.makeDecoder(configuration: encoded.configuration)
                         )
@@ -441,48 +529,60 @@ final class UDPAudioPlane: AudioPlane {
                     break
                 }
             }
-            close(fd)
+            socket.close()
+            Task { @MainActor [weak self] in
+                self?.clearGuestSocket(socket, generation: generation)
+            }
             Logger.audio.info("TCP: disconnected")
         }
     }
 
     func stop() {
         isActive = false
-        acceptTask?.cancel()
-        recvTask?.cancel()
-        acceptTask = nil
-        recvTask = nil
+        runGeneration &+= 1
+        broadcastProcessor?.stop()
+        broadcastProcessor = nil
         stopSockets()
         callbacks.setAudioHandler(nil)
         Logger.audio.info("TCP: stopped")
     }
 
-    private func setClientFD(_ fd: Int32) {
-        clientFD = fd
+    private func setGuestSocket(_ socket: ManagedSocket, generation: UInt64) {
+        guard isActive, generation == runGeneration else {
+            socket.cancel()
+            return
+        }
+        guestSocket = socket
     }
 
-    private func noteReceivedPacket() {
-        receivedPacketCount += 1
-        if receivedPacketCount == 1 {
-            Logger.audio.info("TCP: received first GOH2 audio frame")
-        }
+    private func clearGuestSocket(_ socket: ManagedSocket, generation: UInt64) {
+        guard generation == runGeneration, guestSocket === socket else { return }
+        guestSocket = nil
     }
 
     // MARK: - Membership
 
     private func registerClient(
-        fd: Int32,
+        writer: BoundedSocketFrameWriter,
         connectionID: String,
         participantID: UUID,
         displayName: String,
         platform: ParticipantPlatform,
-        codec: SessionAudioCodec
+        codec: SessionAudioCodec,
+        generation: UInt64
     ) {
+        guard isActive, generation == runGeneration else {
+            writer.stop()
+            return
+        }
         if let existing = connectedClients.first(where: { $0.participantID == participantID }) {
-            removeClient(fd: existing.fd)
+            removeClient(
+                fd: existing.writer.socket.fd,
+                generation: existing.writer.socket.generation
+            )
         }
         connectedClients.append(ClientConnection(
-            fd: fd,
+            writer: writer,
             connectionID: connectionID,
             participantID: participantID,
             codec: codec
@@ -497,10 +597,12 @@ final class UDPAudioPlane: AudioPlane {
         Logger.audio.info("TCP: validated guest session")
     }
 
-    private func removeClient(fd: Int32) {
-        guard let index = connectedClients.firstIndex(where: { $0.fd == fd }) else { return }
+    private func removeClient(fd: Int32, generation: UInt64) {
+        guard let index = connectedClients.firstIndex(where: {
+            $0.writer.socket.fd == fd && $0.writer.socket.generation == generation
+        }) else { return }
         let client = connectedClients.remove(at: index)
-        close(client.fd)
+        client.writer.stop()
         callbacks.emitSession(.disconnected(connectionID: client.connectionID))
     }
 
@@ -767,16 +869,13 @@ final class UDPAudioPlane: AudioPlane {
 
     private func stopSockets() {
         if serverFD >= 0 {
+            shutdown(serverFD, SHUT_RDWR)
             close(serverFD)
             serverFD = -1
         }
-        if clientFD >= 0 {
-            close(clientFD)
-            clientFD = -1
-        }
-        for client in connectedClients { close(client.fd) }
+        guestSocket?.cancel()
+        guestSocket = nil
+        for client in connectedClients { client.writer.stop() }
         connectedClients.removeAll()
-        codecStates.removeAll()
-        outboundSealer = nil
     }
 }

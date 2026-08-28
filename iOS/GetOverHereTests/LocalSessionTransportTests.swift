@@ -341,6 +341,66 @@ struct LocalSessionTransportTests {
         #expect(envelope.payload == payload)
     }
 
+    @Test("Twenty-four control guests authenticate without cooperative-pool starvation")
+    @MainActor
+    func controlLaneScalesBeyondProcessorCount() async throws {
+        let port: UInt16 = 50_036
+        let guide = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let guideID = UUID()
+        let guestIDs = Set((0 ..< 24).map { _ in UUID() })
+        let guests = guestIDs.enumerated().map { index, guestID in
+            let guest = LocalSessionControlTransport(port: port)
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID: sessionID,
+                participantID: guestID,
+                displayName: "Guest \(index)",
+                platform: .iOS,
+                credential: credential
+            )
+            return guest
+        }
+        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            guests.forEach { $0.stop() }
+            guide.stop()
+            continuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: guideID,
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.setEventHandler { continuation.yield($0) }
+        guide.startGuide()
+        guests.forEach { $0.startGuest() }
+
+        let joined = try await withThrowingTaskGroup(of: Set<UUID>.self) { group in
+            group.addTask {
+                var participantIDs: Set<UUID> = []
+                for await event in events {
+                    guard case let .guestJoined(participant) = event else { continue }
+                    participantIDs.insert(participant.participantID)
+                    if participantIDs.count == guestIDs.count { return participantIDs }
+                }
+                throw TestTimeout.streamEnded
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(8))
+                throw TestTimeout.expired
+            }
+            guard let result = try await group.next() else { throw TestTimeout.streamEnded }
+            group.cancelAll()
+            return result
+        }
+        #expect(joined == guestIDs)
+    }
+
     @Test("Authenticated guide leave is delivered before transport shutdown")
     @MainActor
     func terminalLeaveArrivesBeforeShutdown() async throws {

@@ -13,21 +13,22 @@ private final class LocalAuthenticatedSessionTransport {
     }
 
     private struct ClientConnection: Sendable {
-        let fd: Int32
+        let writer: BoundedSocketFrameWriter
         let participant: ParticipantSession
     }
 
     private let port: UInt16
     private let applicationLane: SessionLane
     private let maximumFrameSize = 1_048_576
-    private let sendQueue = DispatchQueue(label: "session.data.send", qos: .userInitiated)
+    private let acceptQueue = DispatchQueue(label: "session.data.accept", qos: .userInitiated)
+    private let guestQueue = DispatchQueue(label: "session.data.guest", qos: .userInitiated)
     private var configuration: Configuration?
     private var eventHandler: (@Sendable (SessionControlEvent) -> Void)?
     private var serverFD: Int32 = -1
-    private var clientFD: Int32 = -1
+    private var guestSocket: ManagedSocket?
+    private var guestWriter: BoundedSocketFrameWriter?
     private var clients: [ClientConnection] = []
-    private var acceptTask: Task<Void, Never>?
-    private var guestTask: Task<Void, Never>?
+    private var runGeneration: UInt64 = 0
     private var sendSequence: UInt64 = 1
     private var outboundSealer: SessionFrameSealer?
     private var outboundStreamID = UUID()
@@ -101,9 +102,11 @@ private final class LocalAuthenticatedSessionTransport {
         let inboundOpener = SessionFrameOpener(credential: configuration.credential)
         let listeningFD = serverFD
         let expectedApplicationLane = applicationLane
+        runGeneration &+= 1
+        let generation = runGeneration
 
-        acceptTask = Task { @concurrent [weak self] in
-            while !Task.isCancelled {
+        acceptQueue.async { [weak self] in
+            while true {
                 var clientAddress = sockaddr_in()
                 var length = socklen_t(MemoryLayout<sockaddr_in>.size)
                 let acceptedFD = withUnsafeMutablePointer(to: &clientAddress) { pointer in
@@ -113,8 +116,12 @@ private final class LocalAuthenticatedSessionTransport {
                 }
                 guard acceptedFD >= 0 else { break }
                 Self.setNoDelay(fd: acceptedFD)
-
-                Task { @concurrent [weak self] in
+                let socket = ManagedSocket(fd: acceptedFD, generation: generation)
+                let connectionQueue = DispatchQueue(
+                    label: "session.data.client.\(UUID().uuidString)",
+                    qos: .userInitiated
+                )
+                connectionQueue.async { [weak self] in
                     let hello: (participantID: UUID, displayName: String, platform: ParticipantPlatform)
                     do {
                         hello = try Self.authenticateGuest(
@@ -123,15 +130,17 @@ private final class LocalAuthenticatedSessionTransport {
                             requestedLane: expectedApplicationLane
                         )
                     } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
-                        await self?.emit(.versionMismatch(
-                            remoteMajor: remoteMajor,
-                            localMajor: SealedSessionEnvelope.majorVersion
-                        ))
-                        close(acceptedFD)
+                        Task { @MainActor [weak self] in
+                            self?.emit(.versionMismatch(
+                                remoteMajor: remoteMajor,
+                                localMajor: SealedSessionEnvelope.majorVersion
+                            ))
+                        }
+                        socket.close()
                         return
                     } catch {
                         fputs("Session: invalid guest hello (\(String(describing: type(of: error))))\n", stderr)
-                        close(acceptedFD)
+                        socket.close()
                         return
                     }
 
@@ -143,9 +152,26 @@ private final class LocalAuthenticatedSessionTransport {
                         role: .guest,
                         platform: hello.platform
                     )
-                    await self?.registerClient(fd: acceptedFD, participant: participant)
-                    while !Task.isCancelled,
-                          let frame = Self.readFrame(fd: acceptedFD, maximumSize: 1_048_576) {
+                    let writer = BoundedSocketFrameWriter(
+                        socket: socket,
+                        label: "session.data.writer.\(connectionID)",
+                        capacity: expectedApplicationLane == .control ? 64 : 8,
+                        overflowPolicy: .disconnect,
+                        sendTimeoutMilliseconds: 2_000
+                    ) { [weak self] fd, failedGeneration in
+                        Task { @MainActor [weak self] in
+                            self?.removeClient(fd: fd, generation: failedGeneration)
+                        }
+                    }
+                    let registration = DispatchSemaphore(value: 0)
+                    Task { @MainActor [weak self] in
+                        self?.registerClient(writer: writer, participant: participant, generation: generation)
+                        registration.signal()
+                    }
+                    registration.wait()
+                    guard !socket.isCancelled else { return }
+
+                    while let frame = Self.readFrame(fd: acceptedFD, maximumSize: 1_048_576) {
                         do {
                             guard let envelope = try Self.openFrame(frame, using: inboundOpener) else {
                                 continue
@@ -158,20 +184,29 @@ private final class LocalAuthenticatedSessionTransport {
                                   envelope.kind != .welcome else {
                                 break
                             }
-                            await self?.emit(.envelopeReceived(envelope))
+                            Task { @MainActor [weak self] in
+                                self?.emit(.envelopeReceived(envelope))
+                            }
                             if envelope.kind == .leave { break }
                         } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
-                            await self?.emit(.versionMismatch(
-                                remoteMajor: remoteMajor,
-                                localMajor: SealedSessionEnvelope.majorVersion
-                            ))
+                            Task { @MainActor [weak self] in
+                                self?.emit(.versionMismatch(
+                                    remoteMajor: remoteMajor,
+                                    localMajor: SealedSessionEnvelope.majorVersion
+                                ))
+                            }
                             break
                         } catch {
-                            await self?.emit(.failed("Session: invalid guest envelope: \(error.localizedDescription)"))
+                            Task { @MainActor [weak self] in
+                                self?.emit(.failed("Session: invalid guest envelope: \(error.localizedDescription)"))
+                            }
                             break
                         }
                     }
-                    await self?.removeClient(fd: acceptedFD)
+                    writer.stop()
+                    Task { @MainActor [weak self] in
+                        self?.removeClient(fd: acceptedFD, generation: generation)
+                    }
                 }
             }
         }
@@ -196,24 +231,40 @@ private final class LocalAuthenticatedSessionTransport {
         let controlPort = port
         let maximumFrameSize = maximumFrameSize
         let expectedApplicationLane = applicationLane
+        runGeneration &+= 1
+        let generation = runGeneration
 
-        guestTask = Task { @concurrent [weak self] in
+        guestQueue.async { [weak self] in
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             guard fd >= 0 else {
-                await self?.emit(.failed(Self.socketError("Session: socket failed")))
+                Task { @MainActor [weak self] in
+                    self?.emit(.failed(Self.socketError("Session: socket failed")))
+                }
                 return
             }
+            let socket = ManagedSocket(fd: fd, generation: generation)
             Self.setNoDelay(fd: fd)
-            await self?.setClientFD(fd)
+            let registration = DispatchSemaphore(value: 0)
+            Task { @MainActor [weak self] in
+                self?.setGuestSocket(socket, generation: generation)
+                registration.signal()
+            }
+            registration.wait()
+            guard !socket.isCancelled else {
+                socket.close()
+                return
+            }
 
             var address = sockaddr_in()
             address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
             address.sin_family = sa_family_t(AF_INET)
             address.sin_port = controlPort.bigEndian
             guard inet_pton(AF_INET, hostIP, &address.sin_addr) == 1 else {
-                close(fd)
-                await self?.clearClientFD(fd)
-                await self?.emit(.failed("Session: invalid guide host IP \(hostIP)"))
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                    self?.emit(.failed("Session: invalid guide host IP \(hostIP)"))
+                }
                 return
             }
             let connectResult = withUnsafePointer(to: &address) { pointer in
@@ -223,9 +274,11 @@ private final class LocalAuthenticatedSessionTransport {
             }
             guard connectResult == 0 else {
                 let message = Self.socketError("Session: connect failed")
-                close(fd)
-                await self?.clearClientFD(fd)
-                await self?.emit(.failed(message))
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                    self?.emit(.failed(message))
+                }
                 return
             }
 
@@ -239,24 +292,46 @@ private final class LocalAuthenticatedSessionTransport {
                     maximumFrameSize: maximumFrameSize
                 )
             } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
-                close(fd)
-                await self?.clearClientFD(fd)
-                await self?.emit(.versionMismatch(
-                    remoteMajor: remoteMajor,
-                    localMajor: SealedSessionEnvelope.majorVersion
-                ))
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                    self?.emit(.versionMismatch(
+                        remoteMajor: remoteMajor,
+                        localMajor: SealedSessionEnvelope.majorVersion
+                    ))
+                }
                 return
             } catch {
-                close(fd)
-                await self?.clearClientFD(fd)
-                await self?.emit(.failed("Session: invalid welcome: \(error.localizedDescription)"))
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                    self?.emit(.failed("Session: invalid welcome: \(error.localizedDescription)"))
+                }
                 return
             }
 
             Self.setReceiveTimeout(fd: fd, seconds: 0)
-            await self?.emit(.connected)
-            while !Task.isCancelled,
-                  let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) {
+            let writer = BoundedSocketFrameWriter(
+                socket: socket,
+                label: "session.data.guest.writer.\(generation)",
+                capacity: expectedApplicationLane == .control ? 64 : 8,
+                overflowPolicy: .disconnect,
+                sendTimeoutMilliseconds: 2_000
+            ) { [weak self] _, failedGeneration in
+                Task { @MainActor [weak self] in
+                    self?.handleGuestWriterFailure(generation: failedGeneration)
+                }
+            }
+            let writerRegistration = DispatchSemaphore(value: 0)
+            Task { @MainActor [weak self] in
+                self?.setGuestWriter(writer, generation: generation)
+                self?.emit(.connected)
+                writerRegistration.signal()
+            }
+            writerRegistration.wait()
+            guard !socket.isCancelled else { return }
+
+            while let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) {
                 do {
                     guard let envelope = try Self.openFrame(frame, using: inboundOpener) else {
                         continue
@@ -269,22 +344,29 @@ private final class LocalAuthenticatedSessionTransport {
                           envelope.kind != .welcome else {
                         break
                     }
-                    await self?.emit(.envelopeReceived(envelope))
+                    Task { @MainActor [weak self] in self?.emit(.envelopeReceived(envelope)) }
+                    if envelope.kind == .leave { break }
                 } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
-                    await self?.emit(.versionMismatch(
-                        remoteMajor: remoteMajor,
-                        localMajor: SealedSessionEnvelope.majorVersion
-                    ))
+                    Task { @MainActor [weak self] in
+                        self?.emit(.versionMismatch(
+                            remoteMajor: remoteMajor,
+                            localMajor: SealedSessionEnvelope.majorVersion
+                        ))
+                    }
                     break
                 } catch {
-                    await self?.emit(.failed("Session: invalid guide envelope: \(error.localizedDescription)"))
+                    Task { @MainActor [weak self] in
+                        self?.emit(.failed("Session: invalid guide envelope: \(error.localizedDescription)"))
+                    }
                     break
                 }
             }
 
-            close(fd)
-            let wasActive = await self?.clearClientFD(fd) ?? false
-            if wasActive { await self?.emit(.disconnected) }
+            writer.stop()
+            Task { @MainActor [weak self] in
+                let wasActive = self?.clearGuestSocket(socket, generation: generation) ?? false
+                if wasActive { self?.emit(.disconnected) }
+            }
         }
     }
 
@@ -322,71 +404,89 @@ private final class LocalAuthenticatedSessionTransport {
         }
         sendSequence &+= 1
 
-        let destinations: [Int32]
+        let destinations: [BoundedSocketFrameWriter]
         if serverFD >= 0 {
             destinations = clients
                 .filter { participantID == nil || $0.participant.participantID == participantID }
-                .map(\.fd)
-        } else if participantID == nil, clientFD >= 0 {
-            destinations = [clientFD]
+                .map(\.writer)
+        } else if participantID == nil, let guestWriter {
+            destinations = [guestWriter]
         } else {
             destinations = []
         }
         guard !destinations.isEmpty else { return }
-        let delivery: @Sendable () -> Void = { [weak self] in
-            let dead = destinations.filter { !Self.writeFrame(fd: $0, data: frame) }
-            guard !dead.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if self.serverFD >= 0 {
-                    for fd in dead { self.removeClient(fd: fd) }
-                } else if let fd = dead.first {
-                    let wasActive = self.clearClientFD(fd)
-                    close(fd)
-                    if wasActive { self.emit(.disconnected) }
-                }
-            }
-        }
         if kind == .leave {
-            sendQueue.sync(execute: delivery)
+            let deliveries = destinations.compactMap { $0.enqueue(frame, trackDelivery: true) }
+            let deadline = DispatchTime.now() + .seconds(2)
+            if deliveries.contains(where: { !$0.wait(timeout: deadline) }) {
+                emit(.failed("Session: terminal send did not complete before timeout"))
+            }
         } else {
-            sendQueue.async(execute: delivery)
+            destinations.forEach { $0.enqueue(frame) }
         }
     }
 
     func stop() {
         isActive = false
-        acceptTask?.cancel()
-        guestTask?.cancel()
-        acceptTask = nil
-        guestTask = nil
+        runGeneration &+= 1
         stopSockets()
     }
 
-    private func registerClient(fd: Int32, participant: ParticipantSession) {
-        if let existing = clients.first(where: { $0.participant.participantID == participant.participantID }) {
-            removeClient(fd: existing.fd)
+    private func registerClient(
+        writer: BoundedSocketFrameWriter,
+        participant: ParticipantSession,
+        generation: UInt64
+    ) {
+        guard isActive, generation == runGeneration else {
+            writer.stop()
+            return
         }
-        clients.append(ClientConnection(fd: fd, participant: participant))
+        if let existing = clients.first(where: { $0.participant.participantID == participant.participantID }) {
+            removeClient(fd: existing.writer.socket.fd, generation: existing.writer.socket.generation)
+        }
+        clients.append(ClientConnection(writer: writer, participant: participant))
         emit(.guestJoined(participant))
     }
 
-    private func removeClient(fd: Int32) {
-        guard let index = clients.firstIndex(where: { $0.fd == fd }) else { return }
+    private func removeClient(fd: Int32, generation: UInt64) {
+        guard let index = clients.firstIndex(where: {
+            $0.writer.socket.fd == fd && $0.writer.socket.generation == generation
+        }) else { return }
         let client = clients.remove(at: index)
-        close(client.fd)
+        client.writer.stop()
         emit(.guestDisconnected(participantID: client.participant.participantID))
     }
 
-    private func setClientFD(_ fd: Int32) {
-        clientFD = fd
+    private func setGuestSocket(_ socket: ManagedSocket, generation: UInt64) {
+        guard isActive, generation == runGeneration else {
+            socket.cancel()
+            return
+        }
+        guestSocket = socket
     }
 
     @discardableResult
-    private func clearClientFD(_ fd: Int32) -> Bool {
-        guard clientFD == fd else { return false }
-        clientFD = -1
+    private func clearGuestSocket(_ socket: ManagedSocket, generation: UInt64) -> Bool {
+        guard guestSocket === socket, generation == runGeneration else { return false }
+        guestSocket = nil
+        guestWriter = nil
         return isActive
+    }
+
+    private func setGuestWriter(_ writer: BoundedSocketFrameWriter, generation: UInt64) {
+        guard isActive, generation == runGeneration, guestSocket === writer.socket else {
+            writer.stop()
+            return
+        }
+        guestWriter = writer
+    }
+
+    private func handleGuestWriterFailure(generation: UInt64) {
+        guard generation == runGeneration, guestWriter != nil else { return }
+        guestWriter?.stop()
+        guestWriter = nil
+        guestSocket = nil
+        if isActive { emit(.disconnected) }
     }
 
     private func emit(_ event: SessionControlEvent) {
@@ -399,16 +499,14 @@ private final class LocalAuthenticatedSessionTransport {
             close(serverFD)
             serverFD = -1
         }
-        if clientFD >= 0 {
-            shutdown(clientFD, SHUT_RDWR)
-            close(clientFD)
-            clientFD = -1
-        }
+        guestWriter?.stop()
+        guestSocket?.cancel()
+        guestWriter = nil
+        guestSocket = nil
         let existingClients = clients
         clients.removeAll()
         for client in existingClients {
-            shutdown(client.fd, SHUT_RDWR)
-            close(client.fd)
+            client.writer.stop()
         }
     }
 

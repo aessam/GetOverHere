@@ -37,6 +37,7 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
 
 /**
@@ -59,7 +60,7 @@ class UDPAudioPlane(
 
     private data class ClientConnection(
         val socket: Socket,
-        val output: OutputStream,
+        val writer: BoundedSocketFrameWriter,
         val connectionID: String,
         val participantID: UUID,
         val codec: SessionAudioCodec,
@@ -90,6 +91,7 @@ class UDPAudioPlane(
 
     private val maximumFrameSize = 1_048_576
     private val active = AtomicBoolean(false)
+    private val runEpoch = AtomicLong(0)
     override val isActive: Boolean get() = active.get()
 
     @Volatile private var configuration: SessionConfiguration? = null
@@ -97,7 +99,6 @@ class UDPAudioPlane(
     private var serverSocket: ServerSocket? = null
     private var clientSocket: Socket? = null
     private val clients = CopyOnWriteArrayList<ClientConnection>()
-    private val sendExecutor = Executors.newSingleThreadExecutor()
     private val acceptExecutor = Executors.newSingleThreadExecutor()
     private val clientExecutor = Executors.newCachedThreadPool()
     private var receiveThread: Thread? = null
@@ -158,6 +159,7 @@ class UDPAudioPlane(
 
         closeSockets()
         active.set(true)
+        val epoch = runEpoch.incrementAndGet()
         outboundSealer = SessionFrameSealer(configured.credential)
         codecStates.clear()
         sentPacketCount = 0
@@ -181,7 +183,7 @@ class UDPAudioPlane(
                         break
                     }
                     clientExecutor.execute {
-                        authenticateAndMonitor(socket, configured, localCapabilities)
+                        authenticateAndMonitor(socket, configured, localCapabilities, epoch)
                     }
                 }
             }
@@ -228,21 +230,12 @@ class UDPAudioPlane(
         }
         if (deliveries.isEmpty()) return
 
-        sendExecutor.execute {
-            deliveries.forEach { (frame, destinations) ->
-                sentPacketCount++
-                if (sentPacketCount == 1) {
-                    Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
-                }
-                destinations.forEach { client ->
-                    try {
-                        writeFrame(client.output, frame)
-                    } catch (error: Exception) {
-                        Log.e(TAG, "TCP send failed (${error.javaClass.simpleName})")
-                        removeClient(client)
-                    }
-                }
+        deliveries.forEach { (frame, destinations) ->
+            sentPacketCount++
+            if (sentPacketCount == 1) {
+                Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
             }
+            destinations.forEach { it.writer.enqueue(frame) }
         }
     }
 
@@ -250,6 +243,7 @@ class UDPAudioPlane(
         socket: Socket,
         configured: SessionConfiguration,
         localCapabilities: Long,
+        epoch: Long,
     ) {
         try {
             socket.soTimeout = 5_000
@@ -259,10 +253,23 @@ class UDPAudioPlane(
             val hello = authenticated.second.first
             val codec = authenticated.second.second
             socket.soTimeout = 0
+            val connectionID = UUID.randomUUID().toString()
+            val writer = BoundedSocketFrameWriter(
+                socket = socket,
+                generation = epoch,
+                label = "audio-frame-writer-$connectionID",
+                capacity = 4,
+                overflowPolicy = SocketFrameOverflowPolicy.DROP_OLDEST,
+                sendTimeoutMillis = 500,
+            ) { failedSocket, failedEpoch ->
+                clients.firstOrNull {
+                    it.socket === failedSocket && it.writer.generation == failedEpoch
+                }?.let(::removeClient)
+            }
             val client = ClientConnection(
                 socket = socket,
-                output = socket.getOutputStream(),
-                connectionID = UUID.randomUUID().toString(),
+                writer = writer,
+                connectionID = connectionID,
                 participantID = envelope.senderId,
                 codec = codec,
             )
@@ -293,6 +300,10 @@ class UDPAudioPlane(
         displayName: String,
         platform: ParticipantPlatform,
     ) {
+        if (!active.get() || client.writer.generation != runEpoch.get()) {
+            client.writer.close()
+            return
+        }
         clients.firstOrNull { it.participantID == client.participantID }?.let(::removeClient)
         clients += client
         sessionEventHandler?.invoke(
@@ -312,7 +323,7 @@ class UDPAudioPlane(
     @Synchronized
     private fun removeClient(client: ClientConnection) {
         if (!clients.remove(client)) return
-        closeSocket(client.socket)
+        client.writer.close()
         sessionEventHandler?.invoke(AudioSessionEvent.Disconnected(client.connectionID))
     }
 
@@ -419,6 +430,7 @@ class UDPAudioPlane(
 
     override fun stop() {
         active.set(false)
+        runEpoch.incrementAndGet()
         closeSockets()
         receiveThread?.interrupt()
         receiveThread = null

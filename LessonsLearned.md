@@ -249,3 +249,9 @@
 **Root cause**: Memory eviction removed both duplicate detail and all knowledge that the sequence had already passed. Header authentication also used a local constant instead of the wire value.
 **Resolution**: Track a monotonic highest sequence and sliding accepted-sequence window per session/sender/stream, reject anything below its floor, and authenticate/preserve the received minor version.
 **Decision**: Evict detailed replay records, never the monotonic boundary. AAD must be reconstructed from received authenticated header fields, not local defaults.
+
+## 47. Blocking reads and fan-out writes need different ownership
+**What happened**: iOS blocking socket loops occupied cooperative-pool workers, while one serial writer on each platform let a stalled guest block every listener. Queued raw descriptors could also survive shutdown and target a later reused descriptor.
+**Root cause**: Connection lifetime, read execution, realtime processing, and multi-client fan-out shared task/queue ownership instead of being isolated per responsibility and per peer.
+**Resolution**: Move blocking iOS reads to dedicated queues, wrap descriptor lifetime with a generation, add one bounded deadline-enforced writer per peer on both platforms, and move iOS encode/seal to a dedicated worker. Add 24-guest and stalled-peer regressions plus a source audit.
+**Decision**: Blocking reads never run on Swift's cooperative pool. A peer owns its writer and socket lifetime; no fan-out closure retains an unowned raw descriptor.

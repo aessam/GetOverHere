@@ -627,3 +627,23 @@ Commands and results:
    - Result: Android core tests passed. The first sandboxed invocation could not acquire the existing Gradle cache lock; the unchanged command passed with access to that cache.
 3. `scripts/verify_tour_session.sh`
    - Result: all nine stages passed. Exact Swift/Kotlin encrypted fixture bytes remained unchanged, Android lint/integration/APK passed, and the full iOS simulator suite passed. Final output: `Tour session verification passed`.
+
+## 2026-08-28 — Socket concurrency and fan-out isolation repair
+
+Implementation:
+
+- Moved production iOS LAN accept/connect/read loops from `Task { @concurrent }` to dedicated dispatch queues.
+- Added managed descriptor lifetime and per-peer bounded writers with generation checks and send deadlines on iOS; added matching per-peer bounded/deadline writers on Android.
+- Removed shared fan-out send queues on both platforms and moved iOS realtime encode/seal off MainActor to one serial processor.
+- Added a 24-guest iOS control-lane regression, stalled-peer isolation tests on Swift/Kotlin, and a verifier source audit preventing cooperative blocking I/O or shared send queues from returning.
+
+Commands and results:
+
+1. Focused iOS transport and socket-writer tests.
+   - Initial result: the new socket test did not compile because two required Testing assertions omitted `try`; corrected immediately.
+   - Final result: the 24-guest authentication test, stalled-writer isolation test, existing idle-session test, and terminal-leave test passed on the iPhone 17 Pro simulator.
+2. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew testDebugUnitTest --tests com.aessam.comeoverhere.BoundedSocketFrameWriterTest --tests com.aessam.comeoverhere.LocalSessionTransportTest lintDebug`
+   - Result: passed. The stalled Android writer timed out without delaying the healthy writer; transport tests and lint passed.
+3. `scripts/verify_tour_session.sh`
+   - First result: failed at Android integration because the guest received authenticated `leave`, then reported the guide's expected close as a connection failure. Both guests now terminate their read loop immediately after authenticated leave.
+   - Final result: all nine stages passed, including exact encrypted fixtures, source security/concurrency audits, Android lint/loopback/APK, the 24-guest iOS regression, stalled-peer tests, and the complete iOS simulator suite. Final output: `Tour session verification passed`.
