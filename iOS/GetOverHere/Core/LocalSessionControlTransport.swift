@@ -253,6 +253,7 @@ private final class LocalAuthenticatedSessionTransport {
                 return
             }
 
+            Self.setReceiveTimeout(fd: fd, seconds: 0)
             await self?.emit(.connected)
             while !Task.isCancelled,
                   let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) {

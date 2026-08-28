@@ -555,3 +555,19 @@ Commands and results:
    - Result: all eight current-tree stages passed, including exact Swift/Kotlin encrypted bytes, clock-skew/expiry behavior, Android encrypted LAN loopback and APK, the plaintext-path audit, and the full iOS Simulator suite. Final output: `Tour session verification passed`.
 
 This completes the non-hardware P3 implementation on the LAN floor. Gate P3 remains open until its physical codec, 30-minute audio, loss, mouth-to-ear latency, background, thermal, and battery measurements pass.
+
+## 2026-08-28 — Idle iOS session timeout repair
+
+Implementation:
+
+- Cleared the iOS control/asset guest socket receive timeout after authenticated handshake completion.
+- Added a simulator regression that leaves the guide idle for six seconds, then verifies the guest still receives an encrypted control heartbeat.
+
+Commands and results:
+
+1. `scripts/verify_tour_session.sh`
+   - Baseline result before edits: all eight stages passed at `9793607`. The first sandboxed run could not acquire the existing Gradle wrapper lock; the unchanged verifier passed when granted access to the existing Gradle and Xcode caches.
+2. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereH1 test -only-testing:GetOverHereTests/LocalSessionTransportTests/controlLaneSurvivesIdleGuide`
+   - Result: passed on the iPhone 17 Pro simulator after the six-second idle interval.
+3. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereH1 test -only-testing:GetOverHereTests/LocalSessionTransportTests`
+   - Result: the complete iOS local-session transport suite passed.

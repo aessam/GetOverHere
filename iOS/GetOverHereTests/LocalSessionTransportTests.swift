@@ -285,6 +285,62 @@ struct LocalSessionTransportTests {
         #expect(participantID == guestID)
     }
 
+    @Test("Control lane remains connected while the guide is idle")
+    @MainActor
+    func controlLaneSurvivesIdleGuide() async throws {
+        let port: UInt16 = 50_035
+        let guide = LocalSessionControlTransport(port: port)
+        let guest = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            guestContinuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.startGuide()
+
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: credential
+        )
+        guest.setEventHandler { guestContinuation.yield($0) }
+        guest.startGuest()
+
+        _ = try await nextControlEvent(from: guestEvents) {
+            if case .connected = $0 { true } else { false }
+        }
+        try await Task.sleep(for: .seconds(6))
+
+        let payload = Data([0x47, 0x4f, 0x48, 0x32])
+        guide.send(kind: .heartbeat, payload: payload)
+        let event = try await nextControlEvent(from: guestEvents) {
+            if case let .envelopeReceived(envelope) = $0 {
+                envelope.kind == .heartbeat
+            } else {
+                false
+            }
+        }
+        guard case let .envelopeReceived(envelope) = event else {
+            Issue.record("Expected heartbeat after idle interval")
+            return
+        }
+        #expect(envelope.payload == payload)
+    }
+
     @Test("Control lane rejects a guest with the wrong tour code")
     @MainActor
     func controlLaneRejectsWrongCredential() async throws {

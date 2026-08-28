@@ -225,3 +225,9 @@
 **What happened**: The first encoded LAN integration stamped a 500 ms absolute wall-clock expiry on the guide and compared it directly with the guest's wall clock. Device clock skew could make every otherwise valid frame appear expired.
 **Resolution**: Use each device's monotonic clock and map the sender timeline to receiver-local time from the minimum observed clock offset. Only network and queue delay above that baseline consumes the frame lifetime. Swift and Kotlin tests use a deliberately large clock offset and still expire excess delay deterministically.
 **Decision**: Cross-device realtime deadlines require clock-offset compensation or receiver-local residence time. Never compare raw device clocks directly.
+
+## 43. Handshake timeouts must end with the handshake
+**What happened**: The iOS guest control and asset sockets kept their five-second handshake receive timeout after authentication. A quiet guide therefore disconnected every iOS guest even though the session remained valid.
+**Root cause**: The guest path installed the timeout before authentication but did not clear it before the long-lived application read loop. The matching Android and iOS audio paths already reset their handshake-only timeout.
+**Resolution**: Clear the socket receive timeout immediately after guide authentication and cover the behavior with an idle control-lane regression test.
+**Decision**: Every temporary socket option must have an explicit lifecycle boundary and a test that crosses that boundary without traffic.
