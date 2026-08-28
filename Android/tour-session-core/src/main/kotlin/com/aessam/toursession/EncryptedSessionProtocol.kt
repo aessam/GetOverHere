@@ -34,12 +34,14 @@ class SealedSessionEnvelope(
     val senderId: UUID,
     val streamId: UUID,
     val sealedPayload: ByteArray,
+    val minorVersion: Int = MINOR_VERSION,
 ) {
     init {
         if (kind.requiredLane != lane) {
             throw SessionProtocolException("${kind.wireName} requires ${kind.requiredLane.wireName}, got ${lane.wireName}")
         }
         require(flags in 0..0xffff) { "flags must fit UInt16" }
+        require(minorVersion in 0..0xff) { "minorVersion must fit UInt8" }
         if (sealedPayload.size < SessionFrameCryptography.TAG_SIZE) {
             throw SessionFrameSecurityException(
                 "sealed payload is ${sealedPayload.size} bytes; minimum is ${SessionFrameCryptography.TAG_SIZE}",
@@ -52,6 +54,7 @@ class SealedSessionEnvelope(
 
     override fun equals(other: Any?): Boolean =
         other is SealedSessionEnvelope &&
+            minorVersion == other.minorVersion &&
             lane == other.lane &&
             kind == other.kind &&
             flags == other.flags &&
@@ -72,6 +75,7 @@ class SealedSessionEnvelope(
         senderId,
         streamId,
         sealedPayload.size,
+        minorVersion,
     ) + sealedPayload
 
     companion object {
@@ -89,7 +93,7 @@ class SealedSessionEnvelope(
             if (major != MAJOR_VERSION) {
                 throw UnsupportedSessionVersionException(major, MAJOR_VERSION)
             }
-            reader.readUInt8()
+            val minor = reader.readUInt8()
             val lane = SessionLane.fromRaw(reader.readUInt8())
             val kind = SessionMessageKind.fromRaw(reader.readUInt8())
             val flags = reader.readUInt16()
@@ -104,14 +108,15 @@ class SealedSessionEnvelope(
                 )
             }
             return SealedSessionEnvelope(
-                lane,
-                kind,
-                flags,
-                sequence,
-                sessionId,
-                senderId,
-                streamId,
-                reader.readBytes(payloadLength),
+                lane = lane,
+                kind = kind,
+                flags = flags,
+                sequence = sequence,
+                sessionId = sessionId,
+                senderId = senderId,
+                streamId = streamId,
+                sealedPayload = reader.readBytes(payloadLength),
+                minorVersion = minor,
             )
         }
 
@@ -124,12 +129,14 @@ class SealedSessionEnvelope(
             senderId: UUID,
             streamId: UUID,
             sealedPayloadLength: Int,
+            minorVersion: Int = MINOR_VERSION,
         ): ByteArray {
             require(sealedPayloadLength >= 0)
+            require(minorVersion in 0..0xff)
             val writer = BinaryWriter(HEADER_SIZE)
             writer.append(MAGIC)
             writer.appendUInt8(MAJOR_VERSION)
-            writer.appendUInt8(MINOR_VERSION)
+            writer.appendUInt8(minorVersion)
             writer.appendUInt8(lane.rawValue)
             writer.appendUInt8(kind.rawValue)
             writer.appendUInt16(flags)
@@ -151,6 +158,7 @@ sealed interface SessionFrameOpenResult {
 class SessionFrameSealer(
     credential: SessionCredential,
     private val cacheLimit: Int = 256,
+    private val protocolMinorVersion: Int = SealedSessionEnvelope.MINOR_VERSION,
 ) {
     private data class StreamScope(val sessionId: UUID, val senderId: UUID, val streamId: UUID)
     private data class CachedFrame(val payloadDigest: ByteArray, val envelope: SealedSessionEnvelope)
@@ -161,6 +169,7 @@ class SessionFrameSealer(
 
     init {
         require(cacheLimit > 0)
+        require(protocolMinorVersion in 0..0xff)
     }
 
     @Synchronized
@@ -198,6 +207,7 @@ class SessionFrameSealer(
             envelope.senderId,
             streamId,
             sealedLength,
+            protocolMinorVersion,
         )
         val sealedPayload = SessionFrameCryptography.seal(
             envelope.payload,
@@ -206,14 +216,15 @@ class SessionFrameSealer(
             applicationKey,
         )
         val sealed = SealedSessionEnvelope(
-            envelope.lane,
-            envelope.kind,
-            envelope.flags,
-            envelope.sequence,
-            envelope.sessionId,
-            envelope.senderId,
-            streamId,
-            sealedPayload,
+            lane = envelope.lane,
+            kind = envelope.kind,
+            flags = envelope.flags,
+            sequence = envelope.sequence,
+            sessionId = envelope.sessionId,
+            senderId = envelope.senderId,
+            streamId = streamId,
+            sealedPayload = sealedPayload,
+            minorVersion = protocolMinorVersion,
         )
         highestSequence[scope] = envelope.sequence
         cache[identity] = CachedFrame(payloadDigest, sealed)
@@ -226,8 +237,15 @@ class SessionFrameOpener(
     credential: SessionCredential,
     private val replayWindow: Int = 4_096,
 ) {
+    private data class StreamScope(val sessionId: UUID, val senderId: UUID, val streamId: UUID)
+    private data class AcceptedFrame(val identity: SessionFrameIdentity, val sealedDigest: ByteArray)
+    private data class StreamWindow(
+        var highestSequence: Long,
+        val accepted: MutableMap<Long, AcceptedFrame> = mutableMapOf(),
+    )
+
     private val applicationKey = SessionFrameCryptography.applicationKey(credential)
-    private val acceptedDigests = LinkedHashMap<SessionFrameIdentity, ByteArray>()
+    private val streamWindows = mutableMapOf<StreamScope, StreamWindow>()
 
     init {
         require(replayWindow > 0)
@@ -235,12 +253,19 @@ class SessionFrameOpener(
 
     @Synchronized
     fun open(sealed: SealedSessionEnvelope): SessionFrameOpenResult {
+        val scope = StreamScope(sealed.sessionId, sealed.senderId, sealed.streamId)
         val sealedDigest = MessageDigest.getInstance("SHA-256").digest(sealed.sealedPayload)
-        acceptedDigests[sealed.identity]?.let { acceptedDigest ->
-            if (!acceptedDigest.contentEquals(sealedDigest)) {
-                throw SessionFrameSecurityException("session frame identity was reused: ${sealed.identity}")
+        streamWindows[scope]?.let { window ->
+            val floor = replayFloor(window.highestSequence)
+            if (sealed.sequence < floor) {
+                throw SessionFrameSecurityException("session frame fell outside replay window: ${sealed.identity}")
             }
-            return SessionFrameOpenResult.Duplicate(sealed.identity)
+            window.accepted[sealed.sequence]?.let { accepted ->
+                if (accepted.identity != sealed.identity || !accepted.sealedDigest.contentEquals(sealedDigest)) {
+                    throw SessionFrameSecurityException("session frame identity was reused: ${sealed.identity}")
+                }
+                return SessionFrameOpenResult.Duplicate(sealed.identity)
+            }
         }
 
         val header = SealedSessionEnvelope.headerBytes(
@@ -252,6 +277,7 @@ class SessionFrameOpener(
             sealed.senderId,
             sealed.streamId,
             sealed.sealedPayload.size,
+            sealed.minorVersion,
         )
         val payload = SessionFrameCryptography.open(
             sealed.sealedPayload,
@@ -261,7 +287,7 @@ class SessionFrameOpener(
         )
         val envelope = SessionEnvelope(
             majorVersion = SealedSessionEnvelope.MAJOR_VERSION,
-            minorVersion = SealedSessionEnvelope.MINOR_VERSION,
+            minorVersion = sealed.minorVersion,
             lane = sealed.lane,
             kind = sealed.kind,
             flags = sealed.flags,
@@ -270,10 +296,28 @@ class SessionFrameOpener(
             senderId = sealed.senderId,
             payload = payload,
         )
-        acceptedDigests[sealed.identity] = sealedDigest
-        if (acceptedDigests.size > replayWindow) acceptedDigests.remove(acceptedDigests.keys.first())
+
+        val window = streamWindows.getOrPut(scope) { StreamWindow(sealed.sequence) }
+        if (sealed.sequence > window.highestSequence) {
+            val oldFloor = replayFloor(window.highestSequence)
+            val newFloor = replayFloor(sealed.sequence)
+            if (newFloor > oldFloor) {
+                if (newFloor - oldFloor >= replayWindow.toLong()) {
+                    window.accepted.clear()
+                } else {
+                    for (sequence in oldFloor until newFloor) {
+                        window.accepted.remove(sequence)
+                    }
+                }
+            }
+            window.highestSequence = sealed.sequence
+        }
+        window.accepted[sealed.sequence] = AcceptedFrame(sealed.identity, sealedDigest)
         return SessionFrameOpenResult.Opened(envelope)
     }
+
+    private fun replayFloor(highestSequence: Long): Long =
+        maxOf(0, highestSequence - (replayWindow - 1).toLong())
 }
 
 private object SessionFrameCryptography {

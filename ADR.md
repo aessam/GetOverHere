@@ -296,3 +296,12 @@
 **Options**: (a) continue treating discovery loss as terminal, (b) retain the active session until an authenticated terminal frame arrives, (c) add a separate unauthenticated grace-period timer that can erase the session.
 **Rationale**: Discovery locates a peer; it cannot prove that the authenticated guide ended the tour. Option (b) preserves reconnect and makes terminal authority cryptographic instead of observational.
 **Consequences**: Inactive discovered channels are still removed from the browse list. Active sessions may show temporarily unavailable while reconnecting, but are not erased. Legacy discovery-originated `channelEnded` events are treated as unavailable. Socket tests require the authenticated terminal frame to arrive before immediate guide shutdown.
+
+## ADR-037: Minor versions are authenticated and replay windows are monotonic per stream
+**Date**: 2026-08-28
+**Status**: Accepted and implemented.
+**Decision**: Preserve the received encrypted-envelope minor version, authenticate that exact byte as AAD, and expose it on the opened logical envelope. Enforce replay protection independently for each `(session, sender, stream)` with a monotonic highest sequence and a bounded sliding window. A previously accepted sequence older than the window is rejected, not reopened after digest eviction.
+**Context**: The decoder discarded the received minor byte and reconstructed AAD with the local constant, so a compatible future minor frame failed as generic authentication failure. Replay protection was a global FIFO of digests; once an accepted identity was evicted, the same valid ciphertext was accepted again as new.
+**Options**: (a) retain local-version AAD and FIFO digests, (b) authenticate the wire version and add per-stream sequence windows, (c) reject every non-current minor as a major-version break.
+**Rationale**: Minor versions are intended for compatible evolution and must remain part of the authenticated wire contract. Per-stream sequence windows preserve bounded reordering while retaining a permanent monotonic floor for the lifetime of the opener.
+**Consequences**: A newer compatible minor can be opened only when its exact header authenticates. Modifying the minor byte fails AEAD. Replays below the floor produce an explicit security error. Swift and Kotlin tests cover future-minor preservation, minor tampering, in-window reordering, duplicates, and post-eviction replay.

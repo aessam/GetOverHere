@@ -77,6 +77,57 @@ class SessionProtocolTest {
     }
 
     @Test
+    fun encryptedFrameAuthenticatesAndPreservesReceivedMinorVersion() {
+        val credential = TourSessionFixtures.fixtureCredential()
+        val logical = TourSessionFixtures.helloEnvelope()
+        val sealed = SessionFrameSealer(
+            credential = credential,
+            protocolMinorVersion = 1,
+        ).seal(logical, TourSessionFixtures.streamId)
+
+        assertEquals(1, sealed.minorVersion)
+        val decoded = SealedSessionEnvelope.decode(sealed.encode())
+        assertEquals(1, decoded.minorVersion)
+        val opened = SessionFrameOpener(credential).open(decoded) as SessionFrameOpenResult.Opened
+        assertEquals(1, opened.envelope.minorVersion)
+        assertArrayEquals(logical.payload, opened.envelope.payload)
+
+        val tamperedMinor = sealed.encode().also { it[5] = 2 }
+        assertEquals(
+            "session frame authentication failed",
+            assertThrows(SessionFrameSecurityException::class.java) {
+                SessionFrameOpener(credential).open(SealedSessionEnvelope.decode(tamperedMinor))
+            }.message,
+        )
+    }
+
+    @Test
+    fun replayWindowRejectsAcceptedFrameAfterSequenceEviction() {
+        val credential = TourSessionFixtures.fixtureCredential()
+        val fixture = TourSessionFixtures.helloEnvelope()
+        val sealer = SessionFrameSealer(credential)
+        val frames = (1L..4L).map { sequence ->
+            sealer.seal(
+                fixture.copy(sequence = sequence),
+                TourSessionFixtures.streamId,
+            )
+        }
+        val opener = SessionFrameOpener(credential, replayWindow = 3)
+
+        assertTrue(opener.open(frames[1]) is SessionFrameOpenResult.Opened)
+        assertTrue(opener.open(frames[0]) is SessionFrameOpenResult.Opened)
+        assertTrue(opener.open(frames[2]) is SessionFrameOpenResult.Opened)
+        assertEquals(SessionFrameOpenResult.Duplicate(frames[0].identity), opener.open(frames[0]))
+        assertTrue(opener.open(frames[3]) is SessionFrameOpenResult.Opened)
+        assertEquals(
+            "session frame fell outside replay window: ${frames[0].identity}",
+            assertThrows(SessionFrameSecurityException::class.java) {
+                opener.open(frames[0])
+            }.message,
+        )
+    }
+
+    @Test
     fun encryptedProtocolRejectsLegacyMajorExplicitly() {
         val bytes = TourSessionFixtures.encryptedHelloFixture().encode().also {
             it[4] = SessionEnvelope.MAJOR_VERSION.toByte()

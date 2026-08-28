@@ -5,6 +5,7 @@ public enum SessionFrameSecurityError: Error, Equatable, CustomStringConvertible
     case invalidSealedPayloadLength(Int)
     case authenticationFailed
     case identityReuse(SessionFrameIdentity)
+    case replayedFrame(SessionFrameIdentity)
 
     public var description: String {
         switch self {
@@ -14,6 +15,8 @@ public enum SessionFrameSecurityError: Error, Equatable, CustomStringConvertible
             "session frame authentication failed"
         case let .identityReuse(identity):
             "session frame identity was reused: \(identity)"
+        case let .replayedFrame(identity):
+            "session frame fell outside replay window: \(identity)"
         }
     }
 }
@@ -39,6 +42,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
     public static let headerSize = 70
     static let magic = Data("GOH2".utf8)
 
+    public let minorVersion: UInt8
     public let lane: SessionLane
     public let kind: SessionMessageKind
     public let flags: UInt16
@@ -61,6 +65,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
     }
 
     public init(
+        minorVersion: UInt8 = Self.minorVersion,
         lane: SessionLane,
         kind: SessionMessageKind,
         flags: UInt16 = 0,
@@ -76,6 +81,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
         guard sealedPayload.count >= SessionFrameCryptography.tagSize else {
             throw SessionFrameSecurityError.invalidSealedPayloadLength(sealedPayload.count)
         }
+        self.minorVersion = minorVersion
         self.lane = lane
         self.kind = kind
         self.flags = flags
@@ -88,6 +94,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
 
     public func encode() -> Data {
         var data = Self.headerData(
+            minorVersion: minorVersion,
             lane: lane,
             kind: kind,
             flags: flags,
@@ -110,7 +117,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
         guard major == majorVersion else {
             throw SessionProtocolError.unsupportedMajorVersion(major)
         }
-        _ = try reader.readUInt8()
+        let minor = try reader.readUInt8()
         let laneRaw = try reader.readUInt8()
         guard let lane = SessionLane(rawValue: laneRaw) else {
             throw SessionProtocolError.unknownLane(laneRaw)
@@ -129,6 +136,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
             throw SessionProtocolError.invalidPayloadLength(expected: payloadLength, actual: reader.remaining)
         }
         return try SealedSessionEnvelope(
+            minorVersion: minor,
             lane: lane,
             kind: kind,
             flags: flags,
@@ -141,6 +149,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
     }
 
     static func headerData(
+        minorVersion: UInt8 = Self.minorVersion,
         lane: SessionLane,
         kind: SessionMessageKind,
         flags: UInt16,
@@ -186,15 +195,21 @@ public final class SessionFrameSealer: @unchecked Sendable {
 
     private let lock = NSLock()
     private let applicationKey: Data
+    private let protocolMinorVersion: UInt8
     private let cacheLimit: Int
     private var highestSequence: [StreamScope: UInt64] = [:]
     private var cache: [SessionFrameIdentity: CachedFrame] = [:]
     private var cacheOrder: [SessionFrameIdentity] = []
 
-    public init(credential: SessionCredential, cacheLimit: Int = 256) {
+    public init(
+        credential: SessionCredential,
+        cacheLimit: Int = 256,
+        protocolMinorVersion: UInt8 = SealedSessionEnvelope.minorVersion
+    ) {
         precondition(cacheLimit > 0)
         applicationKey = SessionFrameCryptography.applicationKey(credential: credential)
         self.cacheLimit = cacheLimit
+        self.protocolMinorVersion = protocolMinorVersion
     }
 
     public func seal(_ envelope: SessionEnvelope, streamID: UUID) throws -> SealedSessionEnvelope {
@@ -229,6 +244,7 @@ public final class SessionFrameSealer: @unchecked Sendable {
 
         let sealedPayloadLength = envelope.payload.count + SessionFrameCryptography.tagSize
         let authenticatedHeader = SealedSessionEnvelope.headerData(
+            minorVersion: protocolMinorVersion,
             lane: envelope.lane,
             kind: envelope.kind,
             flags: envelope.flags,
@@ -245,6 +261,7 @@ public final class SessionFrameSealer: @unchecked Sendable {
             applicationKey: applicationKey
         )
         let sealed = try SealedSessionEnvelope(
+            minorVersion: protocolMinorVersion,
             lane: envelope.lane,
             kind: envelope.kind,
             flags: envelope.flags,
@@ -265,11 +282,26 @@ public final class SessionFrameSealer: @unchecked Sendable {
 }
 
 public final class SessionFrameOpener: @unchecked Sendable {
+    private struct StreamScope: Hashable {
+        let sessionID: UUID
+        let senderID: UUID
+        let streamID: UUID
+    }
+
+    private struct AcceptedFrame {
+        let identity: SessionFrameIdentity
+        let sealedDigest: Data
+    }
+
+    private struct StreamWindow {
+        var highestSequence: UInt64
+        var accepted: [UInt64: AcceptedFrame]
+    }
+
     private let lock = NSLock()
     private let applicationKey: Data
     private let replayWindow: Int
-    private var acceptedDigests: [SessionFrameIdentity: Data] = [:]
-    private var acceptedOrder: [SessionFrameIdentity] = []
+    private var streamWindows: [StreamScope: StreamWindow] = [:]
 
     public init(credential: SessionCredential, replayWindow: Int = 4_096) {
         precondition(replayWindow > 0)
@@ -281,15 +313,27 @@ public final class SessionFrameOpener: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        let scope = StreamScope(
+            sessionID: sealed.sessionID,
+            senderID: sealed.senderID,
+            streamID: sealed.streamID
+        )
         let sealedDigest = Data(SHA256.hash(data: sealed.sealedPayload))
-        if let acceptedDigest = acceptedDigests[sealed.identity] {
-            guard acceptedDigest == sealedDigest else {
-                throw SessionFrameSecurityError.identityReuse(sealed.identity)
+        if let window = streamWindows[scope] {
+            let floor = Self.replayFloor(highestSequence: window.highestSequence, windowSize: replayWindow)
+            guard sealed.sequence >= floor else {
+                throw SessionFrameSecurityError.replayedFrame(sealed.identity)
             }
-            return .duplicate(sealed.identity)
+            if let accepted = window.accepted[sealed.sequence] {
+                guard accepted.identity == sealed.identity, accepted.sealedDigest == sealedDigest else {
+                    throw SessionFrameSecurityError.identityReuse(sealed.identity)
+                }
+                return .duplicate(sealed.identity)
+            }
         }
 
         let authenticatedHeader = SealedSessionEnvelope.headerData(
+            minorVersion: sealed.minorVersion,
             lane: sealed.lane,
             kind: sealed.kind,
             flags: sealed.flags,
@@ -307,7 +351,7 @@ public final class SessionFrameOpener: @unchecked Sendable {
         )
         let envelope = try SessionEnvelope(
             majorVersion: SealedSessionEnvelope.majorVersion,
-            minorVersion: SealedSessionEnvelope.minorVersion,
+            minorVersion: sealed.minorVersion,
             lane: sealed.lane,
             kind: sealed.kind,
             flags: sealed.flags,
@@ -316,12 +360,30 @@ public final class SessionFrameOpener: @unchecked Sendable {
             senderID: sealed.senderID,
             payload: payload
         )
-        acceptedDigests[sealed.identity] = sealedDigest
-        acceptedOrder.append(sealed.identity)
-        if acceptedOrder.count > replayWindow {
-            acceptedDigests.removeValue(forKey: acceptedOrder.removeFirst())
+
+        var window = streamWindows[scope] ?? StreamWindow(highestSequence: sealed.sequence, accepted: [:])
+        if sealed.sequence > window.highestSequence {
+            let oldFloor = Self.replayFloor(highestSequence: window.highestSequence, windowSize: replayWindow)
+            let newFloor = Self.replayFloor(highestSequence: sealed.sequence, windowSize: replayWindow)
+            if newFloor > oldFloor {
+                if newFloor - oldFloor >= UInt64(replayWindow) {
+                    window.accepted.removeAll(keepingCapacity: true)
+                } else {
+                    for sequence in oldFloor ..< newFloor {
+                        window.accepted.removeValue(forKey: sequence)
+                    }
+                }
+            }
+            window.highestSequence = sealed.sequence
         }
+        window.accepted[sealed.sequence] = AcceptedFrame(identity: sealed.identity, sealedDigest: sealedDigest)
+        streamWindows[scope] = window
         return .opened(envelope)
+    }
+
+    private static func replayFloor(highestSequence: UInt64, windowSize: Int) -> UInt64 {
+        let distance = UInt64(windowSize - 1)
+        return highestSequence >= distance ? highestSequence - distance : 0
     }
 }
 

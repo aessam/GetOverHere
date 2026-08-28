@@ -73,6 +73,79 @@ struct SessionProtocolTests {
         }
     }
 
+    @Test("Encrypted frame authenticates and preserves the received minor version")
+    func encryptedMinorVersion() throws {
+        let credential = try TourSessionFixtures.fixtureCredential()
+        let logical = try TourSessionFixtures.helloEnvelope()
+        let sealed = try SessionFrameSealer(
+            credential: credential,
+            protocolMinorVersion: 1
+        ).seal(logical, streamID: TourSessionFixtures.streamID)
+
+        #expect(sealed.minorVersion == 1)
+        let decoded = try SealedSessionEnvelope.decode(sealed.encode())
+        #expect(decoded.minorVersion == 1)
+        #expect(try SessionFrameOpener(credential: credential).open(decoded) == .opened(try SessionEnvelope(
+            majorVersion: SealedSessionEnvelope.majorVersion,
+            minorVersion: 1,
+            lane: logical.lane,
+            kind: logical.kind,
+            flags: logical.flags,
+            sequence: logical.sequence,
+            sessionID: logical.sessionID,
+            senderID: logical.senderID,
+            payload: logical.payload
+        )))
+
+        var tamperedMinor = sealed.encode()
+        tamperedMinor[5] = 2
+        let decodedTamperedMinor = try SealedSessionEnvelope.decode(tamperedMinor)
+        #expect(throws: SessionFrameSecurityError.authenticationFailed) {
+            try SessionFrameOpener(credential: credential).open(decodedTamperedMinor)
+        }
+    }
+
+    @Test("Replay window rejects an accepted frame after sequence eviction")
+    func encryptedReplayWindow() throws {
+        let credential = try TourSessionFixtures.fixtureCredential()
+        let fixture = try TourSessionFixtures.helloEnvelope()
+        let sealer = SessionFrameSealer(credential: credential)
+        let frames = try (1 ... 4).map { sequence in
+            try sealer.seal(
+                SessionEnvelope(
+                    lane: fixture.lane,
+                    kind: fixture.kind,
+                    flags: fixture.flags,
+                    sequence: UInt64(sequence),
+                    sessionID: fixture.sessionID,
+                    senderID: fixture.senderID,
+                    payload: fixture.payload
+                ),
+                streamID: TourSessionFixtures.streamID
+            )
+        }
+        let opener = SessionFrameOpener(credential: credential, replayWindow: 3)
+
+        #expect(try opener.open(frames[1]) == .opened(try SessionEnvelope(
+            majorVersion: SealedSessionEnvelope.majorVersion,
+            minorVersion: SealedSessionEnvelope.minorVersion,
+            lane: fixture.lane,
+            kind: fixture.kind,
+            flags: fixture.flags,
+            sequence: 2,
+            sessionID: fixture.sessionID,
+            senderID: fixture.senderID,
+            payload: fixture.payload
+        )))
+        _ = try opener.open(frames[0])
+        _ = try opener.open(frames[2])
+        #expect(try opener.open(frames[0]) == .duplicate(frames[0].identity))
+        _ = try opener.open(frames[3])
+        #expect(throws: SessionFrameSecurityError.replayedFrame(frames[0].identity)) {
+            try opener.open(frames[0])
+        }
+    }
+
     @Test("Encrypted protocol rejects a legacy major explicitly")
     func encryptedVersionMismatch() throws {
         var bytes = try TourSessionFixtures.encryptedHelloFixture().encode()

@@ -609,3 +609,21 @@ Commands and results:
    - Result: passed on the iPhone 17 Pro simulator.
 3. `scripts/verify_tour_session.sh`
    - Result: all nine stages passed, including the discovery-authority audit, exact Swift/Kotlin encrypted fixtures, Android loopback/APK/lint, and the complete iOS simulator suite. Final output: `Tour session verification passed`.
+
+## 2026-08-28 — Authenticated minor-version and replay-window repair
+
+Implementation:
+
+- Preserved the encrypted envelope's received minor version and used that value to reconstruct AEAD additional authenticated data.
+- Added an explicit configurable sealer minor for compatible-version fixtures while retaining protocol minor zero as the production default.
+- Replaced the global digest FIFO with a bounded per-session/sender/stream sequence window that retains a monotonic replay floor.
+- Added equivalent Swift/Kotlin tests for minor-version roundtrip, minor tampering, reordered acceptance, duplicate detection, and replay after eviction.
+
+Commands and results:
+
+1. `swift test -q`
+   - Result: 26 Swift core tests passed.
+2. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :tour-session-core:test`
+   - Result: Android core tests passed. The first sandboxed invocation could not acquire the existing Gradle cache lock; the unchanged command passed with access to that cache.
+3. `scripts/verify_tour_session.sh`
+   - Result: all nine stages passed. Exact Swift/Kotlin encrypted fixture bytes remained unchanged, Android lint/integration/APK passed, and the full iOS simulator suite passed. Final output: `Tour session verification passed`.

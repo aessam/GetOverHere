@@ -243,3 +243,9 @@
 **Root cause**: The discovery plane was allowed to synthesize an authoritative session lifecycle event even though it had no authenticated evidence that the guide ended the tour.
 **Resolution**: Add a non-terminal `channelUnavailable` event, preserve active-session state through discovery loss, and deliver terminal shutdown as an authenticated encrypted `leave` frame that is flushed before guide socket closure.
 **Decision**: Discovery controls reachability hints and browse-list membership. Only the authenticated session transport controls terminal remote-session state.
+
+## 46. Bounded replay memory still needs an unbounded monotonic floor
+**What happened**: Replay protection remembered only the latest 4,096 accepted frame digests. A valid old ciphertext became acceptable again after FIFO eviction, and the received protocol-minor byte was discarded before AAD reconstruction.
+**Root cause**: Memory eviction removed both duplicate detail and all knowledge that the sequence had already passed. Header authentication also used a local constant instead of the wire value.
+**Resolution**: Track a monotonic highest sequence and sliding accepted-sequence window per session/sender/stream, reject anything below its floor, and authenticate/preserve the received minor version.
+**Decision**: Evict detailed replay records, never the monotonic boundary. AAD must be reconstructed from received authenticated header fields, not local defaults.
