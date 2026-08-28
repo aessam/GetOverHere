@@ -437,6 +437,11 @@ class UDPAudioPlane(
         Log.i(TAG, "TCP: stopped")
     }
 
+    override fun clearSession() {
+        stop()
+        configuration = null
+    }
+
     // MARK: - Framing
 
     private fun writeFrame(output: OutputStream, data: ByteArray) {

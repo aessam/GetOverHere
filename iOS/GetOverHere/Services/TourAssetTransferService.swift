@@ -149,6 +149,11 @@ final class TourAssetTransferService {
         connectedParticipantIDs.removeAll()
     }
 
+    func clearSession() {
+        stop()
+        transport.clearSession()
+    }
+
     func isParticipantReady(_ participantID: UUID) -> Bool {
         readyParticipantIDs.contains(participantID)
     }

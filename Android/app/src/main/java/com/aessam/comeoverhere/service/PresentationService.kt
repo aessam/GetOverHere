@@ -236,6 +236,11 @@ class TourControlService(
         mutableLastError.value = null
     }
 
+    fun clearSession() {
+        stop()
+        transport.clearSession()
+    }
+
     private fun move(offset: Int) {
         requireGuide()
         val ordered = mutableSlides.value

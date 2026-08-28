@@ -547,6 +547,11 @@ final class UDPAudioPlane: AudioPlane {
         Logger.audio.info("TCP: stopped")
     }
 
+    func clearSession() {
+        stop()
+        configuration = nil
+    }
+
     private func setGuestSocket(_ socket: ManagedSocket, generation: UInt64) {
         guard isActive, generation == runGeneration else {
             socket.cancel()

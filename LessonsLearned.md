@@ -255,3 +255,15 @@
 **Root cause**: Connection lifetime, read execution, realtime processing, and multi-client fan-out shared task/queue ownership instead of being isolated per responsibility and per peer.
 **Resolution**: Move blocking iOS reads to dedicated queues, wrap descriptor lifetime with a generation, add one bounded deadline-enforced writer per peer on both platforms, and move iOS encode/seal to a dedicated worker. Add 24-guest and stalled-peer regressions plus a source audit.
 **Decision**: Blocking reads never run on Swift's cooperative pool. A peer owns its writer and socket lifetime; no fan-out closure retains an unowned raw descriptor.
+
+## 48. LIVE state must be committed after capture setup
+**What happened**: iOS treated converter creation and audio-engine startup as best-effort operations. A converter failure forwarded hardware-format bytes as PCM16, while an engine-start failure left the channel advertised as LIVE with no capture stream.
+**Root cause**: Audio setup returned an `AsyncStream` even when its required resources were unavailable, so `ChannelService` had no failure signal with which to roll back the partially created guide session.
+**Resolution**: Make capture setup throwing, require the hardware-to-wire converter, remove the raw-buffer fallback, and roll back transports, session state, and the advertised channel when setup fails. The verifier rejects the old fallback pattern and the simulator proves capture failure is explicit.
+**Decision**: A guide session is not active unless its capture pipeline is configured and running. Required format conversion never degrades to bytes with a different format.
+
+## 49. Socket shutdown and session-secret destruction are different lifecycle events
+**What happened**: Terminal tour shutdown closed sockets but left the credential inside audio, control, asset, hybrid, and Aware transport configurations.
+**Root cause**: One `stop()` operation represented both transient reconnect and terminal session end, so it preserved the configuration needed by one case in the other case as well.
+**Resolution**: Add a required `clearSession()` boundary that stops transport activity and erases credentials and derived sealing state. Keep `stop()` for transient socket lifecycle only.
+**Decision**: Secrets follow the logical session lifetime, not the object lifetime. Every terminal path must use explicit erasure; reconnect may retain credentials only in the session owner.

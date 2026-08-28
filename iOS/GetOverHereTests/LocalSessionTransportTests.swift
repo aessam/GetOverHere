@@ -547,6 +547,38 @@ struct LocalSessionTransportTests {
         #expect(localMajor == SealedSessionEnvelope.majorVersion)
     }
 
+    @Test("Terminal clear erases local session credentials")
+    @MainActor
+    func terminalClearErasesLocalSessionCredentials() async throws {
+        let sessionID = UUID()
+        let transport = LocalSessionControlTransport(port: 50_033)
+        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            transport.clearSession()
+            continuation.finish()
+        }
+        transport.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: try transportCredential(sessionID)
+        )
+        transport.setEventHandler { continuation.yield($0) }
+        transport.clearSession()
+        transport.startGuide()
+
+        let event = try await nextControlEvent(from: events) {
+            if case .failed = $0 { true } else { false }
+        }
+        guard case let .failed(message) = event else {
+            Issue.record("Expected a missing-configuration failure")
+            return
+        }
+        #expect(message.contains("not configured"))
+        #expect(!transport.isActive)
+    }
+
     @Test("Independent GOH2 asset lane supports targeted manifests and guest requests")
     @MainActor
     func assetLaneRoundtrip() async throws {

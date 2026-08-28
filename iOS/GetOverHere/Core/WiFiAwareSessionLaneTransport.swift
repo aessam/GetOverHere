@@ -276,6 +276,11 @@ private final class WiFiAwareAuthenticatedLaneTransport {
         inboundOpener = nil
     }
 
+    func clearSession() {
+        stop()
+        configuration = nil
+    }
+
     private func registerGuideConnection(
         _ connection: NetworkConnection<TCP>,
         participant: ParticipantSession
@@ -597,6 +602,10 @@ final class WiFiAwareAudioPlane: AudioPlane {
         lane.stop()
         onAudio = nil
     }
+    func clearSession() {
+        lane.clearSession()
+        onAudio = nil
+    }
 
     func acceptGuideConnection(_ connection: NetworkConnection<TCP>) {
         lane.acceptGuideConnection(connection)
@@ -664,6 +673,7 @@ final class WiFiAwareSessionControlTransport: SessionControlTransport {
     func startGuest() { lane.startGuest() }
     func send(kind: SessionMessageKind, payload: Data) { lane.send(kind: kind, payload: payload) }
     func stop() { lane.stop() }
+    func clearSession() { lane.clearSession() }
     func acceptGuideConnection(_ connection: NetworkConnection<TCP>) { lane.acceptGuideConnection(connection) }
     func connectGuest(_ connection: NetworkConnection<TCP>) { lane.connectGuest(connection) }
 
@@ -722,6 +732,7 @@ final class WiFiAwareSessionAssetTransport: SessionAssetTransport {
         lane.send(kind: kind, payload: payload, to: participantID)
     }
     func stop() { lane.stop() }
+    func clearSession() { lane.clearSession() }
     func acceptGuideConnection(_ connection: NetworkConnection<TCP>) { lane.acceptGuideConnection(connection) }
     func connectGuest(_ connection: NetworkConnection<TCP>) { lane.connectGuest(connection) }
 

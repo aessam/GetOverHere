@@ -474,9 +474,9 @@ class ChannelService(
             audioEngine.stopPlayback()
         }
         coordinator.activeAudioPlane?.setSessionEventHandler(null)
-        coordinator.activeAudioPlane?.stop()
-        tourControlService.stop()
-        assetTransferService.stop()
+        coordinator.activeAudioPlane?.clearSession()
+        tourControlService.clearSession()
+        assetTransferService.clearSession()
         localGuidanceService.stop()
         _offlineMapConfiguration.value = null
         _offlineMapStatus.value = OfflineMapStatus.Unavailable

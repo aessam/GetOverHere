@@ -273,6 +273,14 @@ private class LocalAuthenticatedSessionTransport(
         closeSockets()
     }
 
+    fun clearSession() {
+        stop()
+        configuration = null
+        outboundSealer = null
+        outboundStreamID = UUID.randomUUID()
+        sequence.set(1)
+    }
+
     private fun handleGuest(
         socket: Socket,
         configured: Configuration,
@@ -628,6 +636,7 @@ class LocalSessionControlTransport(
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun stop() = transport.stop()
+    override fun clearSession() = transport.clearSession()
 }
 
 class LocalSessionAssetTransport(
@@ -661,6 +670,7 @@ class LocalSessionAssetTransport(
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun stop() = transport.stop()
+    override fun clearSession() = transport.clearSession()
 }
 
 private fun SessionControlEvent.toAssetEvent(): SessionAssetEvent = when (this) {

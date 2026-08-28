@@ -159,6 +159,8 @@ private final class RecordingAudioPlane: AudioPlane {
     func stop() {
         isActive = false
     }
+
+    func clearSession() { stop() }
 }
 
 @MainActor
@@ -199,6 +201,8 @@ private final class RecordingHybridControlTransport: SessionControlTransport {
     func stop() {
         isActive = false
     }
+
+    func clearSession() { stop() }
 
     func emit(_ event: SessionControlEvent) {
         handler?(event)
@@ -243,4 +247,6 @@ private final class RecordingHybridAssetTransport: SessionAssetTransport {
     func stop() {
         isActive = false
     }
+
+    func clearSession() { stop() }
 }

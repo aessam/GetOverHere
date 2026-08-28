@@ -323,3 +323,12 @@
 **Options**: (a) retain blocking tasks and one fan-out queue, (b) move immediately to Network.framework/async channels, (c) isolate current POSIX/Java sockets behind dedicated readers, managed lifetimes, and bounded per-peer writers.
 **Rationale**: Option (c) fixes the measured architecture defects without replacing the validated wire and handshake stack. It leaves a narrow socket implementation that can later be replaced behind the existing transport interfaces.
 **Consequences**: One stalled guest cannot block another. Send timeout or reliable-queue overflow removes only that peer. Realtime encode/seal no longer runs on MainActor. Terminal leave is enqueued to all peers and awaited against one deadline before shutdown. The verifier rejects reintroduction of cooperative blocking tasks or a shared send queue in production LAN transports.
+
+## ADR-040: Transport stop and terminal credential erasure are distinct operations
+**Date**: 2026-08-28
+**Status**: Accepted and implemented.
+**Decision**: `stop()` ends current socket activity while retaining configuration needed by transient reconnect. `clearSession()` stops activity and erases the session credential and derived sealing state. Product-level terminal paths, session replacement, and failed guide startup call `clearSession`; reconnect calls `stop` and then explicitly reconfigures its lanes.
+**Context**: Audio, control, asset, hybrid, and Wi-Fi Aware transports retained `SessionCredential` after the logical tour ended. Clearing configuration inside `stop()` was not correct because transport startup itself uses `stop()` to reset stale sockets and reconnect intentionally stops active lanes before rebuilding them.
+**Options**: (a) retain credentials until transport deallocation, (b) make every stop terminal, (c) distinguish transient transport stop from terminal session erasure.
+**Rationale**: Option (c) matches the two existing lifecycle meanings without preserving secrets beyond the tour. A required protocol method makes erasure explicit across every production implementation and test double.
+**Consequences**: Ending or replacing a tour removes credentials from active audio, control, asset, hybrid, and Aware implementations on both platforms. A cleared local transport fails explicitly as unconfigured if restarted without a new credential. Reconnect remains possible only because `ChannelService` still owns the admitted credential until the logical session ends.

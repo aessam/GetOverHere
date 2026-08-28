@@ -432,6 +432,14 @@ private final class LocalAuthenticatedSessionTransport {
         stopSockets()
     }
 
+    func clearSession() {
+        stop()
+        configuration = nil
+        outboundSealer = nil
+        outboundStreamID = UUID()
+        sendSequence = 1
+    }
+
     private func registerClient(
         writer: BoundedSocketFrameWriter,
         participant: ParticipantSession,
@@ -804,6 +812,7 @@ final class LocalSessionControlTransport: SessionControlTransport {
         transport.send(kind: kind, payload: payload, to: nil)
     }
     func stop() { transport.stop() }
+    func clearSession() { transport.clearSession() }
 }
 
 final class LocalSessionAssetTransport: SessionAssetTransport {
@@ -847,6 +856,7 @@ final class LocalSessionAssetTransport: SessionAssetTransport {
         transport.send(kind: kind, payload: payload, to: participantID)
     }
     func stop() { transport.stop() }
+    func clearSession() { transport.clearSession() }
 }
 
 private extension SessionAssetEvent {

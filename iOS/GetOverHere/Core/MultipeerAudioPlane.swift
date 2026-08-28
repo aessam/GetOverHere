@@ -59,6 +59,10 @@ final class MultipeerAudioPlane: NSObject, AudioPlane {
         isActive = false
         Logger.audio.info("Multipeer audio: stopped")
     }
+
+    func clearSession() {
+        stop()
+    }
 }
 
 // MARK: - MCSessionDelegate

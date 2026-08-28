@@ -133,6 +133,11 @@ class TourAssetTransferService(
         publishReadiness()
     }
 
+    fun clearSession() {
+        stop()
+        transport.clearSession()
+    }
+
     fun isParticipantReady(participantID: UUID): Boolean =
         mutableReadyParticipantIDs.contains(participantID)
 

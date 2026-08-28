@@ -316,6 +316,7 @@ private class RecordingControlTransport : SessionControlTransport {
     }
 
     override fun stop() { isActive = false }
+    override fun clearSession() = stop()
 
     fun emit(event: SessionControlEvent) = handler?.invoke(event)
 

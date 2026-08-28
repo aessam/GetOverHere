@@ -4,7 +4,27 @@ import os
 // Safe wrapper for passing AVAudioConverter through @Sendable boundaries.
 // The audio tap runs on a single serial render thread, so this is safe.
 struct AudioConverterRef: @unchecked Sendable {
-    let converter: AVAudioConverter?
+    let converter: AVAudioConverter
+}
+
+enum AudioEngineError: LocalizedError {
+    case captureUnavailable
+    case audioSessionConfigurationFailed(String)
+    case converterUnavailable
+    case captureStartFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .captureUnavailable:
+            "Microphone capture is unavailable in the iOS Simulator"
+        case let .audioSessionConfigurationFailed(message):
+            "Audio session configuration failed: \(message)"
+        case .converterUnavailable:
+            "The microphone format cannot be converted to tour audio"
+        case let .captureStartFailed(message):
+            "Microphone capture failed to start: \(message)"
+        }
+    }
 }
 
 @Observable
@@ -28,6 +48,7 @@ final class AudioEngine {
 
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
+    private var hasCaptureTap = false
     private let continuationLock = OSAllocatedUnfairLock<AsyncStream<Data>.Continuation?>(initialState: nil)
     private var routeChangeObserver: NSObjectProtocol?
     private var configChangeObserver: NSObjectProtocol?
@@ -45,16 +66,14 @@ final class AudioEngine {
 
     // MARK: - Capture
 
-    func startCapture() -> AsyncStream<Data> {
+    func startCapture() throws -> AsyncStream<Data> {
 #if targetEnvironment(simulator)
         Logger.audio.error("Microphone capture is unavailable in the iOS Simulator")
-        return AsyncStream { continuation in
-            continuation.finish()
-        }
+        throw AudioEngineError.captureUnavailable
 #else
         stopCapture()
 
-        configureAudioSession(forCapture: true)
+        try configureAudioSession(forCapture: true)
         logCurrentRoute("Capture")
 
         let engine = AVAudioEngine()
@@ -67,12 +86,13 @@ final class AudioEngine {
         Logger.audio.info("Hardware input: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch")
 
         // Convert hardware format → wire format
-        let converter = AVAudioConverter(from: hwFormat, to: Self.wireFormat)
-        if converter == nil {
+        guard let converter = AVAudioConverter(from: hwFormat, to: Self.wireFormat) else {
             Logger.audio.error("Failed to create converter: \(hwFormat) → \(Self.wireFormat)")
-        } else {
-            Logger.audio.info("Converter: \(hwFormat.sampleRate)Hz → \(Self.wireFormat.sampleRate)Hz")
+            engine.stop()
+            self.engine = nil
+            throw AudioEngineError.converterUnavailable
         }
+        Logger.audio.info("Converter: \(hwFormat.sampleRate)Hz → \(Self.wireFormat.sampleRate)Hz")
         let converterRef = AudioConverterRef(converter: converter)
         let gateThreshold = noiseGateThreshold
 
@@ -90,16 +110,12 @@ final class AudioEngine {
                 return // Below threshold — suppress
             }
 
-            let outputBuffer: AVAudioPCMBuffer?
-            if let conv = converterRef.converter {
-                outputBuffer = AudioEngine.convert(buffer, using: conv)
-            } else {
-                outputBuffer = buffer
-            }
+            let outputBuffer = AudioEngine.convert(buffer, using: converterRef.converter)
             guard let finalBuffer = outputBuffer,
                   let data = AudioEngine.bufferToData(finalBuffer) else { return }
             continuationLock.withLock { $0?.yield(data) }
         }
+        hasCaptureTap = true
 
         observeRouteChanges()
 
@@ -108,7 +124,9 @@ final class AudioEngine {
             isCapturing = true
             Logger.audio.info("Capture engine started (noiseGate=\(gateThreshold))")
         } catch {
+            cleanupCapturePipeline()
             Logger.audio.error("Capture engine failed to start")
+            throw AudioEngineError.captureStartFailed(error.localizedDescription)
         }
 
         return stream
@@ -116,16 +134,8 @@ final class AudioEngine {
     }
 
     func stopCapture() {
-        guard isCapturing else { return }
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil
-        isCapturing = false
-        removeObservers()
-        continuationLock.withLock {
-            $0?.finish()
-            $0 = nil
-        }
+        guard isCapturing || engine != nil else { return }
+        cleanupCapturePipeline()
         Logger.audio.info("Capture stopped")
     }
 
@@ -180,11 +190,11 @@ final class AudioEngine {
 
     // MARK: - Audio Session & Routing
 
-    private func configureAudioSession(forCapture: Bool) {
+    private func configureAudioSession(forCapture: Bool) throws {
         let session = AVAudioSession.sharedInstance()
         do {
             // Deactivate first to cleanly switch categories
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
             if forCapture {
                 try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
             } else {
@@ -194,6 +204,22 @@ final class AudioEngine {
             Logger.audio.info("Session: capture=\(forCapture), rate=\(session.sampleRate)Hz")
         } catch {
             Logger.audio.error("Audio session config failed")
+            throw AudioEngineError.audioSessionConfigurationFailed(error.localizedDescription)
+        }
+    }
+
+    private func cleanupCapturePipeline() {
+        if hasCaptureTap {
+            engine?.inputNode.removeTap(onBus: 0)
+            hasCaptureTap = false
+        }
+        engine?.stop()
+        engine = nil
+        isCapturing = false
+        removeObservers()
+        continuationLock.withLock {
+            $0?.finish()
+            $0 = nil
         }
     }
 

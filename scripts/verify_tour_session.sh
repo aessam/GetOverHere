@@ -194,6 +194,12 @@ if rg -n 'Task \{ @concurrent|sendQueue|sendExecutor' \
     exit 1
 fi
 
+if rg -n 'outputBuffer\s*=\s*buffer|func startCapture\(\) -> AsyncStream' \
+    "$PROJECT_ROOT/iOS/GetOverHere/Services/AudioEngine.swift" >/dev/null; then
+    echo "error: failed iOS capture setup can still publish invalid or silent tour audio" >&2
+    exit 1
+fi
+
 if rg 'IPHONEOS_DEPLOYMENT_TARGET = ' "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj/project.pbxproj" \
     | rg -v 'IPHONEOS_DEPLOYMENT_TARGET = 17\.0;' >/dev/null; then
     echo "error: an iOS target no longer uses the supported iOS 17 baseline" >&2

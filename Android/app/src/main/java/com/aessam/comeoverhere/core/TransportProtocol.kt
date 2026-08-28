@@ -93,6 +93,7 @@ interface AudioPlane {
     fun sendAudio(data: ByteArray)
     fun startListening(channelID: String, onAudio: (ByteArray) -> Unit)
     fun stop()
+    fun clearSession()
     fun configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -140,6 +141,7 @@ interface SessionControlTransport {
     fun send(kind: SessionMessageKind, payload: ByteArray)
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
+    fun clearSession()
 }
 
 sealed class SessionAssetEvent {
@@ -169,6 +171,7 @@ interface SessionAssetTransport {
     fun send(kind: SessionMessageKind, payload: ByteArray, participantID: UUID?)
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
+    fun clearSession()
 }
 
 // MARK: - BLE Command JSON serialization (matching iOS Codable output)

@@ -194,8 +194,9 @@ final class ChannelService {
                 Task { @MainActor [self] in self.handleAudioSessionEvent(event) }
             }
             plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
-            startCapturing(plane: plane, channelID: channel.id)
+            try startCapturing(plane: plane, channelID: channel.id)
         } catch {
+            rollbackFailedGuideSession(channelID: channel.id)
             tourCode = nil
             tourFeatureError = error.localizedDescription
             Logger.channel.error("Cannot start tour features")
@@ -415,14 +416,32 @@ final class ChannelService {
 
     // MARK: - Private
 
-    private func startCapturing(plane: any AudioPlane, channelID: String) {
-        let stream = audioEngine.startCapture()
+    private func startCapturing(plane: any AudioPlane, channelID: String) throws {
+        let stream = try audioEngine.startCapture()
         captureTask = Task {
             for await data in stream {
                 guard !Task.isCancelled else { break }
                 plane.sendAudio(data)
             }
         }
+    }
+
+    private func rollbackFailedGuideSession(channelID: String) {
+        audioEngine.stopCapture()
+        captureTask?.cancel()
+        captureTask = nil
+        coordinator.activeAudioPlane?.setSessionEventHandler(nil)
+        coordinator.activeAudioPlane?.clearSession()
+        tourControlService.clearSession()
+        assetTransferService.clearSession()
+        localGuidanceService.stop()
+        channels.removeAll { $0.id == channelID }
+        activeChannelID = nil
+        listenState = .idle
+        connectionState = .failed
+        guestCredential = nil
+        participantRegistry = ParticipantRegistry()
+        listenerCount = 0
     }
 
     private func stopCurrentActivity() {
@@ -438,9 +457,9 @@ final class ChannelService {
             audioEngine.stopPlayback()
         }
         coordinator.activeAudioPlane?.setSessionEventHandler(nil)
-        coordinator.activeAudioPlane?.stop()
-        tourControlService.stop()
-        assetTransferService.stop()
+        coordinator.activeAudioPlane?.clearSession()
+        tourControlService.clearSession()
+        assetTransferService.clearSession()
         localGuidanceService.stop()
         offlineMapConfiguration = nil
         offlineMapStatus = .unavailable

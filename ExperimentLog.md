@@ -647,3 +647,19 @@ Commands and results:
 3. `scripts/verify_tour_session.sh`
    - First result: failed at Android integration because the guest received authenticated `leave`, then reported the guide's expected close as a connection failure. Both guests now terminate their read loop immediately after authenticated leave.
    - Final result: all nine stages passed, including exact encrypted fixtures, source security/concurrency audits, Android lint/loopback/APK, the 24-guest iOS regression, stalled-peer tests, and the complete iOS simulator suite. Final output: `Tour session verification passed`.
+
+## 2026-08-28 — Capture failure and terminal credential-lifetime repair
+
+Implementation:
+
+- Made iOS capture setup throwing and transactional. Audio-session configuration, converter creation, and engine startup now fail the guide session instead of publishing invalid bytes or a silent LIVE state.
+- Removed the hardware-buffer-as-PCM16 fallback and added a verifier source gate plus simulator regression.
+- Added explicit `clearSession()` lifecycle operations to Swift and Kotlin audio, control, and asset transports. Terminal paths erase credentials; reconnect retains its admitted credential in `ChannelService` and uses non-terminal `stop()`.
+- Added Swift and Kotlin regressions proving a cleared local transport cannot restart without fresh configuration.
+
+Commands and results:
+
+1. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew testDebugUnitTest lintDebug`
+   - Result: passed. Android unit tests and lint completed with no errors.
+2. `scripts/verify_tour_session.sh`
+   - Result: all nine stages passed: 26 Swift core tests, Kotlin core tests, byte-exact cross-language encrypted fixtures, security/source audits, Android API-floor lint, Android loopback/APK, and the complete iOS simulator suite including explicit simulator capture failure and credential erasure. Final output: `Tour session verification passed`.

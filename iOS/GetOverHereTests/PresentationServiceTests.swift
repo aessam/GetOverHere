@@ -318,6 +318,7 @@ private final class RecordingControlTransport: SessionControlTransport {
     }
 
     func stop() { isActive = false }
+    func clearSession() { stop() }
 
     func emit(_ event: SessionControlEvent) async {
         eventHandler?(event)

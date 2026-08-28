@@ -159,6 +159,8 @@ protocol AudioPlane: AnyObject {
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void)
     /// Stop everything.
     func stop()
+    /// Stop and erase session credentials. Use only when the logical session ends.
+    func clearSession()
 
     func configureSession(
         sessionID: UUID,
@@ -217,6 +219,7 @@ protocol SessionControlTransport: AnyObject {
     func startGuest()
     func send(kind: SessionMessageKind, payload: Data)
     func stop()
+    func clearSession()
 }
 
 enum SessionAssetEvent: Sendable {
@@ -245,4 +248,5 @@ protocol SessionAssetTransport: AnyObject {
     func startGuest()
     func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?)
     func stop()
+    func clearSession()
 }

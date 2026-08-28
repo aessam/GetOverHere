@@ -246,6 +246,11 @@ final class TourControlService {
         lastError = nil
     }
 
+    func clearSession() {
+        stop()
+        transport.clearSession()
+    }
+
     private func move(by offset: Int) throws {
         try requireGuide()
         guard !slides.isEmpty else { return }

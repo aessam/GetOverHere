@@ -139,6 +139,12 @@ final class HybridAudioPlane: AudioPlane {
         role = nil
     }
 
+    func clearSession() {
+        local.clearSession()
+        aware?.clearSession()
+        role = nil
+    }
+
     private var selectedTransport: AudioPlane? {
         switch routeController.selectedRoute {
         case .localLAN: local
@@ -264,6 +270,12 @@ final class HybridSessionControlTransport: SessionControlTransport {
         role = nil
     }
 
+    func clearSession() {
+        local.clearSession()
+        aware?.clearSession()
+        role = nil
+    }
+
     private var selectedTransport: SessionControlTransport? {
         switch routeController.selectedRoute {
         case .localLAN: local
@@ -386,6 +398,12 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     func stop() {
         local.stop()
         aware?.stop()
+        role = nil
+    }
+
+    func clearSession() {
+        local.clearSession()
+        aware?.clearSession()
         role = nil
     }
 

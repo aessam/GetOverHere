@@ -403,6 +403,28 @@ class LocalSessionTransportTest {
     }
 
     @Test
+    fun terminalClearErasesLocalSessionCredentials() {
+        val sessionID = UUID.randomUUID()
+        val transport = LocalSessionControlTransport(50_033)
+        val failure = AtomicReference<String>()
+        transport.configureSession(
+            sessionID,
+            UUID.randomUUID(),
+            "Guide",
+            ParticipantPlatform.ANDROID,
+            testCredential(sessionID),
+        )
+        transport.setEventHandler { event ->
+            if (event is SessionControlEvent.Failed) failure.set(event.message)
+        }
+        transport.clearSession()
+        transport.startGuide()
+
+        assertTrue(failure.get()?.contains("not configured") == true)
+        assertFalse(transport.isActive)
+    }
+
+    @Test
     fun independentAssetLaneSupportsTargetedManifestsAndGuestRequests() {
         val guide = LocalSessionAssetTransport()
         val guest = LocalSessionAssetTransport()
