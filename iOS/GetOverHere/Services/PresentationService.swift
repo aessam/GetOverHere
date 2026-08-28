@@ -10,6 +10,7 @@ enum PresentationServiceRole {
 enum TourControlConnectionEvent: Sendable {
     case connected
     case disconnected
+    case sessionEnded
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
     case failed(String)
 }
@@ -119,6 +120,11 @@ final class TourControlService {
         role = .guest
         transport.hostIP = hostIP
         transport.startGuest()
+    }
+
+    func endGuideSession() throws {
+        try requireGuide()
+        transport.send(kind: .leave, payload: Data())
     }
 
     func updateDeck(deckID: UUID, slides: [TourAssetDescriptor]) throws {
@@ -307,6 +313,8 @@ final class TourControlService {
             guard role == .guest else { return }
             do {
                 switch envelope.kind {
+                case .leave:
+                    connectionEventHandler?(.sessionEnded)
                 case .presentationSnapshot:
                     let incoming = try PresentationSnapshotPayload.decode(envelope.payload)
                     guard snapshot == nil || incoming.stateVersion > snapshot!.stateVersion else { return }

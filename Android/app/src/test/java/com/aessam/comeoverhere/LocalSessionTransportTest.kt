@@ -256,6 +256,56 @@ class LocalSessionTransportTest {
     }
 
     @Test
+    fun authenticatedGuideLeaveIsDeliveredBeforeTransportShutdown() {
+        val port = 50_036
+        val guide = LocalSessionControlTransport(port)
+        val guest = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val connected = CountDownLatch(1)
+        val leaveReceived = CountDownLatch(1)
+        val failure = AtomicReference<String>()
+        try {
+            guide.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guide",
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            guide.startGuide()
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID,
+                UUID.randomUUID(),
+                "Guest",
+                ParticipantPlatform.ANDROID,
+                credential,
+            )
+            guest.setEventHandler { event ->
+                when (event) {
+                    SessionControlEvent.Connected -> connected.countDown()
+                    is SessionControlEvent.EnvelopeReceived -> {
+                        if (event.envelope.kind == SessionMessageKind.LEAVE) leaveReceived.countDown()
+                    }
+                    is SessionControlEvent.Failed -> failure.compareAndSet(null, event.message)
+                    else -> Unit
+                }
+            }
+            guest.startGuest()
+
+            assertTrue("Guest did not authenticate", connected.await(3, TimeUnit.SECONDS))
+            guide.send(SessionMessageKind.LEAVE, byteArrayOf())
+            guide.stop()
+            assertTrue("Terminal leave did not arrive", leaveReceived.await(3, TimeUnit.SECONDS))
+            assertEquals(null, failure.get())
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+
+    @Test
     fun controlLaneRejectsGuestWithWrongTourCode() {
         val guide = LocalSessionControlTransport(50_031)
         val guest = LocalSessionControlTransport(50_031)

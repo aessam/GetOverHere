@@ -431,6 +431,11 @@ class ChannelService(
 
     override fun leaveChannel() {
         val ch = activeChannel ?: return
+        val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        if (isGuide) {
+            runCatching(tourControlService::endGuideSession)
+                .onFailure { Log.e(TAG, "Failed to send authenticated session end") }
+        }
         stopCurrentActivity()
         _activeChannelID.value = null
         _listenState.value = ListenState.IDLE
@@ -439,7 +444,7 @@ class ChannelService(
         guestCredential = null
         Log.i(TAG, "Left channel")
 
-        if (ch.createdBy == coordinator.controlPlane.localPeer.id) {
+        if (isGuide) {
             _channels.value = _channels.value.filter { it.id != ch.id }
             coordinator.controlPlane.broadcast(BLECommand.ChannelEnded(channelID = ch.id))
         }
@@ -604,18 +609,8 @@ class ChannelService(
                             Log.i(TAG, "Discovered megaphone")
                         }
                     }
-                    is BLECommand.ChannelEnded -> {
-                        _channels.value = _channels.value.filter { it.id != command.channelID }
-                        if (_activeChannelID.value == command.channelID) {
-                            stopCurrentActivity()
-                            _activeChannelID.value = null
-                            _listenState.value = ListenState.IDLE
-                            _tourCode.value = null
-                            _connectionState.value = SessionConnectionState.IDLE
-                            guestCredential = null
-                            Log.i(TAG, "Channel ended")
-                        }
-                    }
+                    is BLECommand.ChannelUnavailable -> handleDiscoveryUnavailable(command.channelID)
+                    is BLECommand.ChannelEnded -> handleDiscoveryUnavailable(command.channelID)
                     else -> { /* heartbeat, vote, wifi handled by coordinator */ }
                 }
             }
@@ -739,6 +734,7 @@ class ChannelService(
                     scheduleReconnect("Guide connection closed")
                 }
             }
+            TourControlConnectionEvent.SessionEnded -> endGuestSessionFromGuide()
             is TourControlConnectionEvent.VersionMismatch -> {
                 reconnectJob?.cancel()
                 reconnectJob = null
@@ -806,6 +802,26 @@ class ChannelService(
             routeLease.reset()
             tryNextGuestRoute(channel, sessionID, participantID, credential)
         }
+    }
+
+    private fun handleDiscoveryUnavailable(channelID: String) {
+        if (_activeChannelID.value == channelID) {
+            Log.i(TAG, "Active channel discovery became unavailable; data session remains authoritative")
+            return
+        }
+        _channels.value = _channels.value.filter { it.id != channelID }
+    }
+
+    private fun endGuestSessionFromGuide() {
+        val channelID = _activeChannelID.value ?: return
+        stopCurrentActivity()
+        _channels.value = _channels.value.filter { it.id != channelID }
+        _activeChannelID.value = null
+        _listenState.value = ListenState.IDLE
+        _tourCode.value = null
+        _connectionState.value = SessionConnectionState.IDLE
+        guestCredential = null
+        Log.i(TAG, "Authenticated guide ended the session")
     }
 
     private fun runPresentationAction(action: () -> Unit) {

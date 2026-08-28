@@ -590,3 +590,22 @@ Commands and results:
    - Result: passed. Android lint reported no errors; JVM tests and the debug APK build passed.
 3. `scripts/verify_tour_session.sh`
    - Result: all nine stages passed, including Android lint, the production Aware call-site audit, cross-platform wire fixtures, Android integration/APK, and the iOS simulator suite. Final output: `Tour session verification passed`.
+
+## 2026-08-28 — Discovery and authenticated-session authority repair
+
+Implementation:
+
+- Replaced Bonjour/NSD-originated terminal events with non-terminal `channelUnavailable` events on both platforms.
+- Preserved the active session credential and reconnect state during discovery loss while still removing inactive browse-list entries.
+- Added authenticated encrypted `leave` handling to the reliable control lane and flushed terminal leave delivery before guide transport shutdown.
+- Added source audits and Swift/Kotlin regressions for discovery round trips, authenticated end handling, and terminal delivery before immediate shutdown.
+
+Commands and results:
+
+1. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew testDebugUnitTest --tests com.aessam.comeoverhere.PresentationServiceTest --tests com.aessam.comeoverhere.LocalSessionTransportTest lintDebug`
+   - Initial result: test compilation failed because one new fixture used positional arguments against the named `SessionEnvelope` constructor contract. The fixture was corrected to named fields.
+   - Final result: passed. Both focused JVM suites and Android lint completed without errors.
+2. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereH5 test -only-testing:GetOverHereTests/PresentationServiceTests -only-testing:GetOverHereTests/LocalSessionTransportTests`
+   - Result: passed on the iPhone 17 Pro simulator.
+3. `scripts/verify_tour_session.sh`
+   - Result: all nine stages passed, including the discovery-authority audit, exact Swift/Kotlin encrypted fixtures, Android loopback/APK/lint, and the complete iOS simulator suite. Final output: `Tour session verification passed`.

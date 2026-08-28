@@ -287,3 +287,12 @@
 **Options**: (a) leave dormant plaintext paths compiled, (b) duplicate encoding and encryption inside each radio writer, (c) seal supported lanes and fail closed where route-neutral integration is not complete.
 **Rationale**: Option (c) prevents downgrade and nonce divergence without pretending the production Aware connection owner exists. Encryption remains a frame-creation responsibility, not a socket-write responsibility.
 **Consequences**: `scripts/verify_no_plaintext_session_paths.sh` rejects plaintext envelope decoding, direct raw audio writes, missing seal/open operations in production payload transports, and accidental reachability of retired wrappers. P1/P2 must integrate Aware audio through a shared pre-sealed frame owner rather than re-encrypting per route.
+
+## ADR-036: Discovery availability is not session authority
+**Date**: 2026-08-28
+**Status**: Accepted and implemented.
+**Decision**: Treat Bonjour/NSD removal as `channelUnavailable`, not as a terminal session event. An active guest retains its session credential and reconnect state through discovery loss. Only an authenticated GOH2 v3 `leave` frame from the connected guide ends the remote session and clears guest state. The guide flushes that terminal frame before closing its control transport.
+**Context**: Service-discovery records can disappear because of multicast loss, roaming, backgrounding, or interface changes while the authenticated data session remains valid. The previous control planes synthesized `channelEnded` directly from unauthenticated service loss, bypassing reconnect and deleting the credential.
+**Options**: (a) continue treating discovery loss as terminal, (b) retain the active session until an authenticated terminal frame arrives, (c) add a separate unauthenticated grace-period timer that can erase the session.
+**Rationale**: Discovery locates a peer; it cannot prove that the authenticated guide ended the tour. Option (b) preserves reconnect and makes terminal authority cryptographic instead of observational.
+**Consequences**: Inactive discovered channels are still removed from the browse list. Active sessions may show temporarily unavailable while reconnecting, but are not erased. Legacy discovery-originated `channelEnded` events are treated as unavailable. Socket tests require the authenticated terminal frame to arrive before immediate guide shutdown.

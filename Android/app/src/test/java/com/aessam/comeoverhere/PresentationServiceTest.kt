@@ -2,7 +2,11 @@ package com.aessam.comeoverhere
 
 import com.aessam.comeoverhere.core.SessionControlEvent
 import com.aessam.comeoverhere.core.SessionControlTransport
+import com.aessam.comeoverhere.core.BLECommand
+import com.aessam.comeoverhere.core.parseBLECommand
+import com.aessam.comeoverhere.core.toJson
 import com.aessam.comeoverhere.service.TourControlService
+import com.aessam.comeoverhere.service.TourControlConnectionEvent
 import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.ParticipantSession
 import com.aessam.toursession.PresentationSnapshotPayload
@@ -219,6 +223,60 @@ class PresentationServiceTest {
             com.aessam.toursession.TourVisualMode.POINTER,
             com.aessam.toursession.VisualFocusSnapshotPayload.decode(transport.sent[1].second).mode,
         )
+    }
+
+    @Test
+    fun authenticatedLeaveDistinguishesSessionEndFromDiscoveryLoss() {
+        val sessionID = UUID.randomUUID()
+        val guideTransport = RecordingControlTransport()
+        val guide = TourControlService(guideTransport)
+        guide.configureSession(
+            sessionID,
+            UUID.randomUUID(),
+            "Guide",
+            ParticipantPlatform.ANDROID,
+            presentationCredential(sessionID),
+        )
+        guide.startGuide(UUID.randomUUID())
+        guide.endGuideSession()
+        assertEquals(SessionMessageKind.LEAVE, guideTransport.sent.last().first)
+        assertTrue(guideTransport.sent.last().second.isEmpty())
+
+        val guestTransport = RecordingControlTransport()
+        val guest = TourControlService(guestTransport)
+        val events = mutableListOf<TourControlConnectionEvent>()
+        guest.configureSession(
+            sessionID,
+            UUID.randomUUID(),
+            "Guest",
+            ParticipantPlatform.ANDROID,
+            presentationCredential(sessionID),
+        )
+        guest.setConnectionEventHandler(events::add)
+        guest.startGuest("127.0.0.1")
+        guestTransport.emit(
+            SessionControlEvent.EnvelopeReceived(
+                SessionEnvelope(
+                    majorVersion = SessionEnvelope.MAJOR_VERSION,
+                    minorVersion = SessionEnvelope.MINOR_VERSION,
+                    lane = SessionLane.CONTROL,
+                    kind = SessionMessageKind.LEAVE,
+                    flags = 0,
+                    sequence = 9,
+                    sessionId = sessionID,
+                    senderId = UUID.randomUUID(),
+                    payload = byteArrayOf(),
+                ),
+            ),
+        )
+        assertEquals(listOf(TourControlConnectionEvent.SessionEnded), events)
+    }
+
+    @Test
+    fun discoveryUnavailableRoundtripsSeparatelyFromSessionEnd() {
+        val channelID = UUID.randomUUID().toString()
+        val decoded = parseBLECommand(BLECommand.ChannelUnavailable(channelID).toJson())
+        assertEquals(BLECommand.ChannelUnavailable(channelID), decoded)
     }
 
     private fun slide(id: String, order: Long) = TourAssetDescriptor(

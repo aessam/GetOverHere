@@ -341,6 +341,56 @@ struct LocalSessionTransportTests {
         #expect(envelope.payload == payload)
     }
 
+    @Test("Authenticated guide leave is delivered before transport shutdown")
+    @MainActor
+    func terminalLeaveArrivesBeforeShutdown() async throws {
+        let port: UInt16 = 50_036
+        let guide = LocalSessionControlTransport(port: port)
+        let guest = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            continuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.startGuide()
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: credential
+        )
+        guest.setEventHandler { continuation.yield($0) }
+        guest.startGuest()
+
+        _ = try await nextControlEvent(from: events) {
+            if case .connected = $0 { true } else { false }
+        }
+        guide.send(kind: .leave, payload: Data())
+        guide.stop()
+
+        let event = try await nextControlEvent(from: events) {
+            if case let .envelopeReceived(envelope) = $0 { envelope.kind == .leave } else { false }
+        }
+        guard case let .envelopeReceived(envelope) = event else {
+            Issue.record("Expected terminal leave envelope")
+            return
+        }
+        #expect(envelope.payload.isEmpty)
+    }
+
     @Test("Control lane rejects a guest with the wrong tour code")
     @MainActor
     func controlLaneRejectsWrongCredential() async throws {

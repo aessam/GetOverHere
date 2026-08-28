@@ -84,7 +84,7 @@ class LocalControlPlane(
             val peer = peerByChannelID.remove(serviceInfo.serviceName) ?: return
             _connectedPeers.value = _connectedPeers.value.filter { it.id != peer.id }
             _peerEvents.tryEmit(PeerEvent.Disconnected(peer))
-            _commands.tryEmit(BLECommand.ChannelEnded(channelID = serviceInfo.serviceName) to peer)
+            _commands.tryEmit(BLECommand.ChannelUnavailable(channelID = serviceInfo.serviceName) to peer)
         }
     }
 

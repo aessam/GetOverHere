@@ -216,6 +216,65 @@ struct PresentationServiceTests {
         #expect(try VisualFocusSnapshotPayload.decode(transport.sent[1].payload).mode == .pointer)
     }
 
+    @Test("Authenticated leave distinguishes session end from discovery loss")
+    @MainActor
+    func authenticatedSessionEnd() async throws {
+        let guideTransport = RecordingControlTransport()
+        let guide = TourControlService(transport: guideTransport)
+        let sessionID = UUID()
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: try presentationCredential(sessionID)
+        )
+        guide.startGuide(deckID: UUID())
+        try guide.endGuideSession()
+        #expect(guideTransport.sent.last?.kind == .leave)
+        #expect(guideTransport.sent.last?.payload.isEmpty == true)
+
+        let guestTransport = RecordingControlTransport()
+        let guest = TourControlService(transport: guestTransport)
+        let guideID = UUID()
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: try presentationCredential(sessionID)
+        )
+        guest.startGuest(hostIP: "127.0.0.1")
+        let leaveEnvelope = try SessionEnvelope(
+            lane: .control,
+            kind: .leave,
+            sequence: 9,
+            sessionID: sessionID,
+            senderID: guideID,
+            payload: Data()
+        )
+
+        await confirmation("Guest observes authenticated session end") { ended in
+            guest.setConnectionEventHandler { event in
+                if case .sessionEnded = event { ended() }
+            }
+            await guestTransport.emit(.envelopeReceived(leaveEnvelope))
+        }
+    }
+
+    @Test("Discovery unavailable command roundtrips separately from session end")
+    @MainActor
+    func discoveryUnavailableRoundtrip() throws {
+        let channelID = UUID().uuidString
+        let encoded = try JSONEncoder().encode(BLECommand.channelUnavailable(channelID: channelID))
+        let decoded = try JSONDecoder().decode(BLECommand.self, from: encoded)
+        guard case let .channelUnavailable(decodedID) = decoded else {
+            Issue.record("Expected channel-unavailable command")
+            return
+        }
+        #expect(decodedID == channelID)
+    }
+
     private func slide(_ id: String, order: UInt32) throws -> TourAssetDescriptor {
         try TourAssetDescriptor(
             assetID: id,

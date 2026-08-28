@@ -167,7 +167,7 @@ extension LocalControlPlane: NetServiceBrowserDelegate {
         if let peer = peerByChannelID.removeValue(forKey: service.name) {
             connectedPeers.removeAll { $0.id == peer.id }
             peerCont.yield(.disconnected(peer))
-            commandCont.yield((.channelEnded(channelID: service.name), peer))
+            commandCont.yield((.channelUnavailable(channelID: service.name), peer))
         }
     }
 }

@@ -27,6 +27,7 @@ enum class PresentationServiceRole { GUIDE, GUEST }
 sealed class TourControlConnectionEvent {
     data object Connected : TourControlConnectionEvent()
     data object Disconnected : TourControlConnectionEvent()
+    data object SessionEnded : TourControlConnectionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : TourControlConnectionEvent()
     data class Failed(val message: String) : TourControlConnectionEvent()
 }
@@ -107,6 +108,11 @@ class TourControlService(
         role = PresentationServiceRole.GUEST
         transport.hostIP = hostIP
         transport.startGuest()
+    }
+
+    fun endGuideSession() {
+        requireGuide()
+        transport.send(SessionMessageKind.LEAVE, byteArrayOf())
     }
 
     fun setGuestSocketFactory(factory: SocketFactory?) {
@@ -302,6 +308,9 @@ class TourControlService(
                 if (role != PresentationServiceRole.GUEST) return
                 runCatching {
                     when (event.envelope.kind) {
+                        SessionMessageKind.LEAVE -> {
+                            connectionEventHandler?.invoke(TourControlConnectionEvent.SessionEnded)
+                        }
                         SessionMessageKind.PRESENTATION_SNAPSHOT -> {
                             val incoming = PresentationSnapshotPayload.decode(event.envelope.payload)
                             val current = mutableSnapshot.value

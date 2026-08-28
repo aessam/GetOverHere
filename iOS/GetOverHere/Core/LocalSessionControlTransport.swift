@@ -333,7 +333,7 @@ private final class LocalAuthenticatedSessionTransport {
             destinations = []
         }
         guard !destinations.isEmpty else { return }
-        sendQueue.async { [weak self] in
+        let delivery: @Sendable () -> Void = { [weak self] in
             let dead = destinations.filter { !Self.writeFrame(fd: $0, data: frame) }
             guard !dead.isEmpty else { return }
             Task { @MainActor [weak self] in
@@ -346,6 +346,11 @@ private final class LocalAuthenticatedSessionTransport {
                     if wasActive { self.emit(.disconnected) }
                 }
             }
+        }
+        if kind == .leave {
+            sendQueue.sync(execute: delivery)
+        } else {
+            sendQueue.async(execute: delivery)
         }
     }
 

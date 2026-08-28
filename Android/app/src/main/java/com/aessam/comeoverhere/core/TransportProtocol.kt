@@ -52,6 +52,7 @@ sealed class BLECommand {
         val audioHostIP: String? = null
     ) : BLECommand()
 
+    data class ChannelUnavailable(val channelID: String) : BLECommand()
     data class ChannelEnded(val channelID: String) : BLECommand()
     object BecomeWiFiHost : BLECommand()
     data class WiFiCredentials(val ssid: String, val password: String, val hostIP: String? = null) : BLECommand()
@@ -189,6 +190,9 @@ fun BLECommand.toJson(): ByteArray {
         is BLECommand.ChannelEnded -> buildJsonObject {
             putJsonObject("channelEnded") { put("channelID", channelID) }
         }
+        is BLECommand.ChannelUnavailable -> buildJsonObject {
+            putJsonObject("channelUnavailable") { put("channelID", channelID) }
+        }
         is BLECommand.BecomeWiFiHost -> buildJsonObject {
             put("becomeWiFiHost", buildJsonObject {})
         }
@@ -240,6 +244,10 @@ fun parseBLECommand(data: ByteArray): BLECommand? {
             "channelEnded" in obj -> {
                 val inner = obj["channelEnded"]!!.jsonObject
                 BLECommand.ChannelEnded(channelID = inner["channelID"]!!.jsonPrimitive.content)
+            }
+            "channelUnavailable" in obj -> {
+                val inner = obj["channelUnavailable"]!!.jsonObject
+                BLECommand.ChannelUnavailable(channelID = inner["channelID"]!!.jsonPrimitive.content)
             }
             "becomeWiFiHost" in obj -> BLECommand.BecomeWiFiHost
             "wifiCredentials" in obj -> {

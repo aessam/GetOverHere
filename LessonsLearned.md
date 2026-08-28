@@ -237,3 +237,9 @@
 **Root cause**: The verifier compiled the app but did not run Android lint or enforce the production Aware call-site boundary.
 **Resolution**: Replace `InputStream.readNBytes` with a bounded API-26 reader, isolate the Aware experiment behind an Android-14 lab boundary, remove production Aware from the application graph, and add lint plus a source call-site audit to the verifier.
 **Decision**: The supported Android minimum and experimental-feature boundaries are executable gates, not documentation-only claims.
+
+## 45. Discovery disappearance is not authenticated session end
+**What happened**: Bonjour/NSD record removal immediately erased the active guest session and credential, so a transient multicast or interface failure bypassed reconnect entirely.
+**Root cause**: The discovery plane was allowed to synthesize an authoritative session lifecycle event even though it had no authenticated evidence that the guide ended the tour.
+**Resolution**: Add a non-terminal `channelUnavailable` event, preserve active-session state through discovery loss, and deliver terminal shutdown as an authenticated encrypted `leave` frame that is flushed before guide socket closure.
+**Decision**: Discovery controls reachability hints and browse-list membership. Only the authenticated session transport controls terminal remote-session state.

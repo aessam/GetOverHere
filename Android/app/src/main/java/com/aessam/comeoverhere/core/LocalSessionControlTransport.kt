@@ -26,6 +26,7 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
@@ -244,7 +245,7 @@ private class LocalAuthenticatedSessionTransport(
         val guestDestination = if (participantID == null) clientOutput else null
         if (guideDestinations.isEmpty() && guestDestination == null) return
 
-        sendExecutor.execute {
+        val delivery = Runnable {
             guideDestinations.forEach { client ->
                 try {
                     writeFrame(client.output, envelope)
@@ -265,6 +266,15 @@ private class LocalAuthenticatedSessionTransport(
                     }
                 }
             }
+        }
+        if (kind == SessionMessageKind.LEAVE) {
+            try {
+                sendExecutor.submit(delivery).get(2, TimeUnit.SECONDS)
+            } catch (error: Exception) {
+                emit(SessionControlEvent.Failed("Session: terminal send failed: ${error.javaClass.simpleName}"))
+            }
+        } else {
+            sendExecutor.execute(delivery)
         }
     }
 

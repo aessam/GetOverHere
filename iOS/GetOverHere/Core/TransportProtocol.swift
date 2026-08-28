@@ -27,6 +27,7 @@ struct PeerInfo: Identifiable, Hashable, Codable, Sendable {
 /// See LessonsLearned.md #2.
 enum BLECommand: Sendable {
     case channelAnnounce(announce: ChannelAnnounce)
+    case channelUnavailable(channelID: String)
     case channelEnded(channelID: String)
     case becomeWiFiHost
     case wifiCredentials(ssid: String, password: String, hostIP: String?)
@@ -46,6 +47,7 @@ enum BLECommand: Sendable {
 
 // Helper structs for cross-platform JSON (proper types, no string-encoding numbers)
 private struct ChannelEndedPayload: Codable { let channelID: String }
+private struct ChannelUnavailablePayload: Codable { let channelID: String }
 private struct WiFiCredentialsPayload: Codable { let ssid: String; let password: String; let hostIP: String? }
 private struct HeartbeatPayload: Codable { let term: Int; let leaderID: String }
 private struct VoteRequestPayload: Codable { let term: Int; let candidateID: String }
@@ -53,7 +55,7 @@ private struct VoteResponsePayload: Codable { let term: Int; let granted: Bool }
 
 extension BLECommand: Codable {
     private enum CodingKeys: String, CodingKey {
-        case channelAnnounce, channelEnded, becomeWiFiHost, wifiCredentials
+        case channelAnnounce, channelUnavailable, channelEnded, becomeWiFiHost, wifiCredentials
         case heartbeat, voteRequest, voteResponse
     }
 
@@ -61,6 +63,7 @@ extension BLECommand: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .channelAnnounce(let v): try container.encode(v, forKey: .channelAnnounce)
+        case .channelUnavailable(let id): try container.encode(ChannelUnavailablePayload(channelID: id), forKey: .channelUnavailable)
         case .channelEnded(let id): try container.encode(ChannelEndedPayload(channelID: id), forKey: .channelEnded)
         case .becomeWiFiHost: try container.encode(true, forKey: .becomeWiFiHost)
         case .wifiCredentials(let s, let p, let h): try container.encode(WiFiCredentialsPayload(ssid: s, password: p, hostIP: h), forKey: .wifiCredentials)
@@ -74,6 +77,8 @@ extension BLECommand: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let v = try? container.decode(ChannelAnnounce.self, forKey: .channelAnnounce) {
             self = .channelAnnounce(announce: v)
+        } else if let v = try? container.decode(ChannelUnavailablePayload.self, forKey: .channelUnavailable) {
+            self = .channelUnavailable(channelID: v.channelID)
         } else if let v = try? container.decode(ChannelEndedPayload.self, forKey: .channelEnded) {
             self = .channelEnded(channelID: v.channelID)
         } else if (try? container.decode(Bool.self, forKey: .becomeWiFiHost)) != nil {

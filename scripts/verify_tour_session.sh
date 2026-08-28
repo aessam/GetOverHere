@@ -178,6 +178,13 @@ if rg -n 'WiFiAwareSessionTransport|enableWiFiAware|awareAnnouncements|awareSnap
     exit 1
 fi
 
+if rg -n 'commandCont\.yield.*channelEnded|_commands\.tryEmit.*ChannelEnded' \
+    "$PROJECT_ROOT/iOS/GetOverHere/Core/LocalControlPlane.swift" \
+    "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/LocalControlPlane.kt" >/dev/null; then
+    echo "error: discovery loss is again being treated as authoritative session end" >&2
+    exit 1
+fi
+
 if rg 'IPHONEOS_DEPLOYMENT_TARGET = ' "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj/project.pbxproj" \
     | rg -v 'IPHONEOS_DEPLOYMENT_TARGET = 17\.0;' >/dev/null; then
     echo "error: an iOS target no longer uses the supported iOS 17 baseline" >&2

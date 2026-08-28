@@ -391,6 +391,14 @@ final class ChannelService {
 
     func leaveChannel() {
         guard let ch = activeChannel else { return }
+        let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        if isGuide {
+            do {
+                try tourControlService.endGuideSession()
+            } catch {
+                Logger.channel.error("Failed to send authenticated session end")
+            }
+        }
         stopCurrentActivity()
         activeChannelID = nil
         listenState = .idle
@@ -399,7 +407,7 @@ final class ChannelService {
         guestCredential = nil
         Logger.channel.info("Left channel")
 
-        if ch.createdBy == coordinator.controlPlane.localPeer.id {
+        if isGuide {
             channels.removeAll { $0.id == ch.id }
             coordinator.controlPlane.broadcast(.channelEnded(channelID: ch.id))
         }
@@ -552,17 +560,8 @@ final class ChannelService {
                         self.channels.append(channel)
                         Logger.channel.info("Discovered megaphone")
                     }
-                case .channelEnded(let channelID):
-                    self.channels.removeAll { $0.id == channelID }
-                    if self.activeChannelID == channelID {
-                        self.stopCurrentActivity()
-                        self.activeChannelID = nil
-                        self.listenState = .idle
-                        self.tourCode = nil
-                        self.connectionState = .idle
-                        self.guestCredential = nil
-                        Logger.channel.info("Channel ended")
-                    }
+                case .channelUnavailable(let channelID), .channelEnded(let channelID):
+                    self.handleDiscoveryUnavailable(channelID: channelID)
 
                 default:
                     break
@@ -654,6 +653,8 @@ final class ChannelService {
             tourFeatureError = nil
         case .disconnected:
             scheduleReconnect(reason: "Guide connection closed")
+        case .sessionEnded:
+            endGuestSessionFromGuide()
         case let .versionMismatch(remoteMajor, localMajor):
             reconnectTask?.cancel()
             reconnectTask = nil
@@ -702,6 +703,26 @@ final class ChannelService {
                 credential: credential
             )
         }
+    }
+
+    private func handleDiscoveryUnavailable(channelID: String) {
+        guard activeChannelID != channelID else {
+            Logger.channel.info("Active channel discovery became unavailable; data session remains authoritative")
+            return
+        }
+        channels.removeAll { $0.id == channelID }
+    }
+
+    private func endGuestSessionFromGuide() {
+        guard let channelID = activeChannelID else { return }
+        stopCurrentActivity()
+        channels.removeAll { $0.id == channelID }
+        activeChannelID = nil
+        listenState = .idle
+        tourCode = nil
+        connectionState = .idle
+        guestCredential = nil
+        Logger.channel.info("Authenticated guide ended the session")
     }
 }
 
