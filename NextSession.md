@@ -138,12 +138,15 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 
 ### P4 — BLE control overlay
 
+- Implement ADR-038 first: create one ephemeral P-256 guide signing key per tour, pin its verification key through QR or a prior direct authenticated guide connection, and sign each immutable sealed guide frame once before fan-out.
+- Verify the guide signature before decrypting or applying any relayed frame. Reject unsigned frames, changed ciphertext/signatures, and keys that do not match the pinned guide key.
+- Do not relay guest-authored application frames in P4. BLE topology and link-admission messages remain point-to-point; any later guest-frame relay requires guide-issued participant certificates.
 - Reuse the validated bitchat concepts, not its product or entire codebase: central+peripheral roles, TTL, message deduplication, split horizon, deterministic fan-out, relay jitter, and bounded topology announcements.
 - Keep one authoritative guide. Use epochs, leases, and an ordered successor set instead of full Raft.
 - Start with a maximum of six direct central links as an experimental policy, not a platform guarantee.
 - Forward only authenticated current-session traffic.
 
-**Gate P4:** deterministic Swift/Kotlin simulation passes line, star, overlapping-star, partition, duplicate-flood, relay/successor loss, and reconnect scenarios at 1/5/10/20/50 logical nodes; physical 2/5/10-device discovery and control convergence are then measured foreground and locked.
+**Gate P4:** byte-exact Swift/Kotlin fixtures prove one signed sealed frame verifies unchanged across direct and relayed delivery, and reject unsigned, wrong-key, modified-ciphertext, and modified-signature cases. Deterministic simulation then passes line, star, overlapping-star, partition, duplicate-flood, relay/successor loss, and reconnect scenarios at 1/5/10/20/50 logical nodes; physical 2/5/10-device discovery and control convergence are measured foreground and locked.
 
 ### P5 — BLE live-voice fallback
 
