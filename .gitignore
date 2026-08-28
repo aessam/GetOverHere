@@ -15,6 +15,7 @@ DerivedData/
 
 # Android local build cache
 Android/.gradle/
+Android/local.properties
 
 # This repository owns its cross-platform Swift package. Override the global
 # macOS Packages/ ignore so protocol sources and tests stay tracked.
