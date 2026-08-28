@@ -37,10 +37,10 @@ if [[ ! -x "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
     exit 1
 fi
 
-echo "[1/8] Swift protocol and registry tests"
+echo "[1/9] Swift protocol and registry tests"
 swift test --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH"
 
-echo "[2/8] Kotlin protocol and registry tests"
+echo "[2/9] Kotlin protocol and registry tests"
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew :tour-session-core:test :tour-session-cli:installDist
@@ -52,7 +52,7 @@ run_kotlin() {
     JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$@"
 }
 
-echo "[3/8] Exact Swift/Kotlin wire bytes"
+echo "[3/9] Exact Swift/Kotlin wire bytes"
 SWIFT_HEX="$($SWIFT_BIN fixture)"
 KOTLIN_HEX="$(run_kotlin fixture)"
 if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then
@@ -74,7 +74,7 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
-echo "[4/8] Cross-language decode and participant churn"
+echo "[4/9] Cross-language decode and participant churn"
 SWIFT_DESCRIPTION="$($SWIFT_BIN decode "$KOTLIN_HEX")"
 KOTLIN_DESCRIPTION="$(run_kotlin decode "$SWIFT_HEX")"
 if [[ "$SWIFT_DESCRIPTION" != "$KOTLIN_DESCRIPTION" ]]; then
@@ -99,7 +99,7 @@ for COUNT in 1 8 20 50; do
     fi
 done
 
-echo "[5/8] Realtime loss, duplicate, and reorder audit"
+echo "[5/9] Realtime loss, duplicate, and reorder audit"
 EXPECTED_FAULTS="unique=5|duplicates=1|reordered=1|missing=2"
 if [[ "$($SWIFT_BIN faults)" != "$EXPECTED_FAULTS" || "$(run_kotlin faults)" != "$EXPECTED_FAULTS" ]]; then
     echo "error: realtime fault audit mismatch" >&2
@@ -169,6 +169,15 @@ if rg -n 'play-services-nearby|com\.google\.android\.gms\.nearby' \
     exit 1
 fi
 
+if rg -n 'WiFiAwareSessionTransport|enableWiFiAware|awareAnnouncements|awareSnapshot|hostWiFiAware|connectWiFiAware' \
+    "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/NetworkCoordinator.kt" \
+    "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/service/ChannelService.kt" \
+    "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/ui/AppViewModel.kt" \
+    "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/ui/ChannelScreen.kt" >/dev/null; then
+    echo "error: Wi-Fi Aware returned to production before the physical P1 gate passed" >&2
+    exit 1
+fi
+
 if rg 'IPHONEOS_DEPLOYMENT_TARGET = ' "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj/project.pbxproj" \
     | rg -v 'IPHONEOS_DEPLOYMENT_TARGET = 17\.0;' >/dev/null; then
     echo "error: an iOS target no longer uses the supported iOS 17 baseline" >&2
@@ -180,16 +189,22 @@ if ! rg -q '\.iOS\(\.v17\),' "$SWIFT_PACKAGE/Package.swift"; then
     exit 1
 fi
 
-echo "[6/8] Encrypted production session-path audit"
+echo "[6/9] Encrypted production session-path audit"
 "$PROJECT_ROOT/scripts/verify_no_plaintext_session_paths.sh"
 
-echo "[7/8] Android app integration, TCP loopback, and APK"
+echo "[7/9] Android API-floor and permission lint"
+(
+    cd "$ANDROID_ROOT"
+    JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew lintDebug
+)
+
+echo "[8/9] Android app integration, TCP loopback, and APK"
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew testDebugUnitTest assembleDebug
 )
 
-echo "[8/8] iOS app unit/integration suite in Simulator"
+echo "[9/9] iOS app unit/integration suite in Simulator"
 DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \
 CLANG_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
 SWIFT_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \

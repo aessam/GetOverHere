@@ -1,5 +1,6 @@
 package com.aessam.comeoverhere.core
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -27,6 +28,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.system.OsConstants
 import android.util.Log
+import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +50,7 @@ import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 
+@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 class WiFiAwareLabTransport(context: Context) : AutoCloseable {
     enum class Role { PUBLISHER, SUBSCRIBER }
     enum class Status { IDLE, ATTACHING, ADVERTISING, BROWSING, PAIRING, REQUESTING_DATA_PATH, CONNECTED, FAILED }
@@ -125,8 +129,11 @@ class WiFiAwareLabTransport(context: Context) : AutoCloseable {
         update { it.copy(capabilities = capabilities, status = Status.ATTACHING, lastError = null) }
         if (!capabilities.featureDeclared) return fail("Device does not declare FEATURE_WIFI_AWARE")
         if (!capabilities.currentlyAvailable) return fail("Wi-Fi Aware is currently unavailable")
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            return fail("Cross-platform pairing requires Android 14 or later")
+        if (
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.NEARBY_WIFI_DEVICES) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return fail("Nearby Wi-Fi permission is required")
         }
 
         if (_snapshot.value.role == Role.PUBLISHER) {
@@ -267,20 +274,24 @@ class WiFiAwareLabTransport(context: Context) : AutoCloseable {
     private fun startDiscovery(session: WifiAwareSession) {
         val pairingConfig = pairingConfig(_snapshot.value.role)
         val callback = discoveryCallback()
-        if (_snapshot.value.role == Role.PUBLISHER) {
-            val config = PublishConfig.Builder()
-                .setServiceName(SERVICE_NAME)
-                .setPublishType(PublishConfig.PUBLISH_TYPE_UNSOLICITED)
-                .setPairingConfig(pairingConfig)
-                .build()
-            session.publish(config, callback, mainHandler)
-        } else {
-            val config = SubscribeConfig.Builder()
-                .setServiceName(SERVICE_NAME)
-                .setSubscribeType(SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE)
-                .setPairingConfig(pairingConfig)
-                .build()
-            session.subscribe(config, callback, mainHandler)
+        try {
+            if (_snapshot.value.role == Role.PUBLISHER) {
+                val config = PublishConfig.Builder()
+                    .setServiceName(SERVICE_NAME)
+                    .setPublishType(PublishConfig.PUBLISH_TYPE_UNSOLICITED)
+                    .setPairingConfig(pairingConfig)
+                    .build()
+                session.publish(config, callback, mainHandler)
+            } else {
+                val config = SubscribeConfig.Builder()
+                    .setServiceName(SERVICE_NAME)
+                    .setSubscribeType(SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE)
+                    .setPairingConfig(pairingConfig)
+                    .build()
+                session.subscribe(config, callback, mainHandler)
+            }
+        } catch (error: SecurityException) {
+            fail("Nearby Wi-Fi permission is required")
         }
     }
 

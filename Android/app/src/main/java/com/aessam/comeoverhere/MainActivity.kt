@@ -1,6 +1,7 @@
 package com.aessam.comeoverhere
 
 import android.os.Bundle
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import org.maplibre.android.MapLibre
@@ -25,7 +26,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(factory = AppViewModelFactory(channelService))
                 var showWiFiAwareLab by remember { mutableStateOf(false) }
-                if (showWiFiAwareLab) {
+                if (showWiFiAwareLab && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     WiFiAwareLabScreen(onBack = { showWiFiAwareLab = false })
                 } else {
                     ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true })

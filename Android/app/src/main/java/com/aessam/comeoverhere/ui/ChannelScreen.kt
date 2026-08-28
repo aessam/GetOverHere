@@ -43,6 +43,7 @@ import com.aessam.comeoverhere.service.OfflineMapConfiguration
 import com.aessam.comeoverhere.service.OfflineMapImport
 import com.aessam.comeoverhere.service.OfflineMapPack
 import com.aessam.comeoverhere.service.OfflineMapStatus
+import com.aessam.comeoverhere.service.readUpTo
 import com.aessam.comeoverhere.service.SlideImport
 import com.aessam.comeoverhere.service.SessionConnectionState
 import com.aessam.toursession.BearingSnapshotPayload
@@ -97,7 +98,6 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     var joinCode by remember { mutableStateOf("") }
     var pendingCreateName by remember { mutableStateOf<String?>(null) }
     var createError by remember { mutableStateOf<String?>(null) }
-    var openAwareLabAfterPermission by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val pickerScope = rememberCoroutineScope()
     val photoPicker = rememberLauncherForActivityResult(
@@ -145,12 +145,10 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     ) { granted ->
         if (granted) {
             pickerError = null
-            vm.enableWiFiAware()
-            if (openAwareLabAfterPermission) onOpenWiFiAwareLab()
+            onOpenWiFiAwareLab()
         } else {
             pickerError = "Nearby Wi-Fi permission is required for offline device-to-device tours"
         }
-        openAwareLabAfterPermission = false
     }
     val requestLocalGuidance = {
         if (
@@ -181,27 +179,16 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         }
     }
     val requestOpenWiFiAwareLab = {
-        if (
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            pickerError = "The Wi-Fi Aware lab requires Android 14 or later"
+        } else if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            openAwareLabAfterPermission = true
             wifiAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
             onOpenWiFiAwareLab()
-        }
-    }
-    LaunchedEffect(Unit) {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            openAwareLabAfterPermission = false
-            wifiAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
-        } else {
-            vm.enableWiFiAware()
         }
     }
     val mapPicker = rememberLauncherForActivityResult(
@@ -219,7 +206,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         ?: error("Select exactly one .pmtiles archive")
                     if (uris.size != 2) error("Select exactly one .json style and one .pmtiles archive")
                     val styleBytes = context.contentResolver.openInputStream(styleURI)?.use {
-                        it.readNBytes(OfflineMapPack.MAXIMUM_STYLE_BYTES + 1)
+                        it.readUpTo(OfflineMapPack.MAXIMUM_STYLE_BYTES + 1)
                     } ?: error("The selected style could not be read")
                     if (styleBytes.size > OfflineMapPack.MAXIMUM_STYLE_BYTES) {
                         error("Map style exceeds 2 MiB")

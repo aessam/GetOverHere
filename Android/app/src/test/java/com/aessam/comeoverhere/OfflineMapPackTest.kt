@@ -2,16 +2,27 @@ package com.aessam.comeoverhere
 
 import com.aessam.comeoverhere.service.OfflineMapPack
 import com.aessam.comeoverhere.service.OfflineMapPackException
+import com.aessam.comeoverhere.service.readUpTo
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Base64
 
 class OfflineMapPackTest {
+    @Test
+    fun boundedInputReadWorksBelowAndroid33() {
+        val input = ByteArrayInputStream(byteArrayOf(1, 2, 3, 4, 5))
+
+        assertArrayEquals(byteArrayOf(1, 2, 3), input.readUpTo(3))
+        assertArrayEquals(byteArrayOf(4, 5), input.readUpTo(8))
+    }
+
     @Test
     fun localPmTilesPlaceholderResolvesToAppOwnedFile() {
         val archive = Files.createTempFile("tour map ", ".pmtiles").toFile()

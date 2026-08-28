@@ -11,6 +11,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -103,7 +104,7 @@ object OfflineMapPack {
         if (file.length() < PMTILES_HEADER_BYTE_COUNT) {
             throw OfflineMapPackException("The selected archive is not a PMTiles v3 file")
         }
-        val header = file.inputStream().use { it.readNBytes(PMTILES_HEADER_BYTE_COUNT) }
+        val header = file.inputStream().use { it.readUpTo(PMTILES_HEADER_BYTE_COUNT) }
         if (!header.copyOfRange(0, pmTilesHeader.size).contentEquals(pmTilesHeader)) {
             throw OfflineMapPackException("The selected archive is not a PMTiles v3 file")
         }
@@ -144,4 +145,23 @@ object OfflineMapPack {
             throw OfflineMapPackException("Offline map style references a network resource: $url")
         }
     }
+}
+
+internal fun InputStream.readUpTo(maximumByteCount: Int): ByteArray {
+    require(maximumByteCount >= 0) { "Maximum byte count must not be negative" }
+    val bytes = ByteArray(maximumByteCount)
+    var offset = 0
+    while (offset < bytes.size) {
+        val count = read(bytes, offset, bytes.size - offset)
+        if (count < 0) break
+        if (count == 0) {
+            val byte = read()
+            if (byte < 0) break
+            bytes[offset] = byte.toByte()
+            offset += 1
+        } else {
+            offset += count
+        }
+    }
+    return bytes.copyOf(offset)
 }

@@ -1,5 +1,6 @@
 package com.aessam.comeoverhere.core
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -26,6 +27,8 @@ import android.os.Handler
 import android.os.Looper
 import android.system.OsConstants
 import android.util.Log
+import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import com.aessam.toursession.AwareSessionAnnouncement
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -50,6 +53,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * lane servers on ports 50000-50002. A guest receives one [GuestRoute], then all
  * three lane sockets are created by that route's [Network.socketFactory].
  */
+@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 class WiFiAwareSessionTransport(
     context: Context,
 ) : AutoCloseable {
@@ -121,10 +125,15 @@ class WiFiAwareSessionTransport(
             fail("Wi-Fi Aware is currently unavailable; keep Wi-Fi enabled")
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
-            awareManager.characteristics?.isAwarePairingSupported != true
-        ) {
+        if (awareManager.characteristics?.isAwarePairingSupported != true) {
             fail("Cross-platform Wi-Fi Aware requires Android 14 pairing support")
+            return
+        }
+        if (
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.NEARBY_WIFI_DEVICES) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            fail("Nearby Wi-Fi permission is required")
             return
         }
         if (awareSession != null || isAttaching) return
@@ -180,7 +189,11 @@ class WiFiAwareSessionTransport(
             .setServiceSpecificInfo(announcement.encode())
             .setPairingConfig(pairingConfig(isPublisher = true))
             .build()
-        session.publish(config, discoveryCallback(isPublisher = true), mainHandler)
+        try {
+            session.publish(config, discoveryCallback(isPublisher = true), mainHandler)
+        } catch (error: SecurityException) {
+            fail("Nearby Wi-Fi permission is required")
+        }
     }
 
     fun stopHosting() {
@@ -245,7 +258,11 @@ class WiFiAwareSessionTransport(
             .setSubscribeType(SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE)
             .setPairingConfig(pairingConfig(isPublisher = false))
             .build()
-        session.subscribe(config, discoveryCallback(isPublisher = false), mainHandler)
+        try {
+            session.subscribe(config, discoveryCallback(isPublisher = false), mainHandler)
+        } catch (error: SecurityException) {
+            fail("Nearby Wi-Fi permission is required")
+        }
     }
 
     private fun discoveryCallback(isPublisher: Boolean) = object : DiscoverySessionCallback() {

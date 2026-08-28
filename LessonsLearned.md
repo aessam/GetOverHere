@@ -231,3 +231,9 @@
 **Root cause**: The guest path installed the timeout before authentication but did not clear it before the long-lived application read loop. The matching Android and iOS audio paths already reset their handshake-only timeout.
 **Resolution**: Clear the socket receive timeout immediately after guide authentication and cover the behavior with an idle control-lane regression test.
 **Decision**: Every temporary socket option must have an explicit lifecycle boundary and a test that crosses that boundary without traffic.
+
+## 44. A supported Android API floor requires lint in the main gate
+**What happened**: Android unit tests and the APK build passed while two offline-map reads required API 33 with a declared API-26 minimum. Production also instantiated the unqualified Wi-Fi Aware session path despite ADR-025 and the open physical P1 gate.
+**Root cause**: The verifier compiled the app but did not run Android lint or enforce the production Aware call-site boundary.
+**Resolution**: Replace `InputStream.readNBytes` with a bounded API-26 reader, isolate the Aware experiment behind an Android-14 lab boundary, remove production Aware from the application graph, and add lint plus a source call-site audit to the verifier.
+**Decision**: The supported Android minimum and experimental-feature boundaries are executable gates, not documentation-only claims.

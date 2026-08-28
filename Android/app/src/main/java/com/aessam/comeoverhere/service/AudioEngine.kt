@@ -1,11 +1,14 @@
 package com.aessam.comeoverhere.service
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.*
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.aessam.comeoverhere.core.ListenerOutput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -33,7 +36,8 @@ class AudioEngine(context: Context) {
     private var aec: AcousticEchoCanceler? = null
     private var ns: NoiseSuppressor? = null
     private var emittedPacketCount = 0
-    private val audioManager = context.applicationContext.getSystemService(AudioManager::class.java)
+    private val appContext = context.applicationContext
+    private val audioManager = appContext.getSystemService(AudioManager::class.java)
     private var listenerOutput = ListenerOutput.PRIVATE_AUDIO
     private var previousAudioMode: Int? = null
 
@@ -58,6 +62,12 @@ class AudioEngine(context: Context) {
      * Start capturing audio. Returns PCM16 little-endian byte arrays for the codec.
      */
     fun startCapture(): Flow<ByteArray> = flow {
+        if (
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            throw SecurityException("Microphone permission is required to start capture")
+        }
         enterCommunicationMode()
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, CAPTURE_ENCODING)
         val bufferSize = minBuffer * BUFFER_SIZE_FACTOR

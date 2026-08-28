@@ -11,8 +11,6 @@ import com.aessam.toursession.TargetSnapshotPayload
 import com.aessam.toursession.BearingSnapshotPayload
 import com.aessam.toursession.TourVisualMode
 import com.aessam.toursession.VisualFocusSnapshotPayload
-import com.aessam.toursession.AwareSessionAnnouncement
-import com.aessam.toursession.SessionRouteAvailability
 import com.aessam.toursession.SessionRouteLease
 import com.aessam.toursession.SessionTransportRoute
 import kotlinx.coroutines.*
@@ -65,7 +63,6 @@ interface ChannelServiceProtocol {
 
     fun start()
     fun stop()
-    fun enableWiFiAware()
     fun createChannel(name: String, quality: AudioQuality = AudioQuality.STANDARD)
     fun joinChannel(channel: Channel, tourCode: String)
     fun setListenerOutput(output: ListenerOutput)
@@ -159,7 +156,6 @@ class ChannelService(
     private var guestCredential: SessionCredential? = null
     private var participantRegistry = ParticipantRegistry()
     private var activeGuestRoute: SessionTransportRoute? = null
-    private var awareGuestRoute: WiFiAwareSessionTransport.GuestRoute? = null
     private var attemptedGuestRoutes = mutableSetOf<SessionTransportRoute>()
     private var routeLease = SessionRouteLease()
 
@@ -204,17 +200,12 @@ class ChannelService(
     override fun start() {
         listenForChannelCommands()
         listenForPeerEvents()
-        listenForAwareAnnouncements()
         startPeriodicBroadcast()
         Log.i(TAG, "ChannelService started")
     }
 
     override fun stop() {
         stopCurrentActivity()
-    }
-
-    override fun enableWiFiAware() {
-        coordinator.enableWiFiAware()
     }
 
     // MARK: - Channel Management
@@ -226,7 +217,6 @@ class ChannelService(
             name = name,
             createdAt = nowAsSwiftRef(),
             createdBy = coordinator.controlPlane.localPeer.id,
-            hasWiFiAware = coordinator.awareSnapshot.value.available,
         )
         val sessionID = UUID.fromString(channel.id)
         val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
@@ -285,20 +275,6 @@ class ChannelService(
             }
             plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
             startCapturing(plane, channel.id)
-            if (channel.hasWiFiAware) {
-                coordinator.hostWiFiAware(
-                    AwareSessionAnnouncement(
-                        sessionID = sessionID,
-                        guideID = participantID,
-                        guidePlatform = ParticipantPlatform.ANDROID,
-                        realtimePort = WiFiAwareSessionTransport.REALTIME_PORT,
-                        controlPort = WiFiAwareSessionTransport.CONTROL_PORT,
-                        assetPort = WiFiAwareSessionTransport.ASSET_PORT,
-                        channelName = channel.name,
-                        guideDisplayName = coordinator.controlPlane.localPeer.displayName,
-                    ),
-                )
-            }
         } catch (error: Exception) {
             _tourCode.value = null
             _tourFeatureError.value = error.message ?: error.javaClass.simpleName
@@ -341,7 +317,6 @@ class ChannelService(
         attemptedGuestRoutes.clear()
         routeLease.reset()
         activeGuestRoute = null
-        awareGuestRoute = null
         tryNextGuestRoute(channel, sessionID, participantID, credential)
         Log.i(TAG, "Joined megaphone")
     }
@@ -465,7 +440,6 @@ class ChannelService(
         Log.i(TAG, "Left channel")
 
         if (ch.createdBy == coordinator.controlPlane.localPeer.id) {
-            coordinator.stopWiFiAwareHosting()
             _channels.value = _channels.value.filter { it.id != ch.id }
             coordinator.controlPlane.broadcast(BLECommand.ChannelEnded(channelID = ch.id))
         }
@@ -506,7 +480,6 @@ class ChannelService(
         _readyParticipantCount.value = 0
         _connectionState.value = SessionConnectionState.IDLE
         activeGuestRoute = null
-        awareGuestRoute = null
         attemptedGuestRoutes.clear()
         routeLease.reset()
     }
@@ -607,7 +580,7 @@ class ChannelService(
                             val updated = existing.copy(
                                 name = command.channelName,
                                 audioHostIP = command.audioHostIP,
-                                hasWiFiAware = existing.hasWiFiAware,
+                                hasWiFiAware = false,
                             )
                             _channels.value = _channels.value.map {
                                 if (it.id == command.channelID) updated else it
@@ -662,48 +635,6 @@ class ChannelService(
         }
     }
 
-    private fun listenForAwareAnnouncements() {
-        scope.launch {
-            coordinator.awareAnnouncements.collect { announcement ->
-                val channelID = announcement.sessionID.toString()
-                val existing = _channels.value.find { it.id.equals(channelID, ignoreCase = true) }
-                val updated = if (existing == null) {
-                    Channel(
-                        id = channelID,
-                        name = announcement.channelName,
-                        createdAt = nowAsSwiftRef(),
-                        createdBy = announcement.guideID.toString(),
-                        audioHostIP = null,
-                        hasWiFiAware = true,
-                    )
-                } else {
-                    existing.copy(name = announcement.channelName, hasWiFiAware = true)
-                }
-                _channels.value = if (existing == null) {
-                    _channels.value + updated
-                } else {
-                    _channels.value.map { if (it.id == existing.id) updated else it }
-                }
-                Log.i(TAG, "Discovered megaphone over Wi-Fi Aware")
-
-                if (
-                    updated.id.equals(_activeChannelID.value, ignoreCase = true) &&
-                    _listenState.value == ListenState.LISTENING &&
-                    _connectionState.value == SessionConnectionState.FAILED
-                ) {
-                    val credential = guestCredential ?: return@collect
-                    val participantID = runCatching {
-                        UUID.fromString(coordinator.controlPlane.localPeer.id)
-                    }.getOrNull() ?: return@collect
-                    attemptedGuestRoutes.clear()
-                    routeLease.reset()
-                    _connectionState.value = SessionConnectionState.CONNECTING
-                    tryNextGuestRoute(updated, announcement.sessionID, participantID, credential)
-                }
-            }
-        }
-    }
-
     private fun handleAudioSessionEvent(event: AudioSessionEvent) {
         when (event) {
             is AudioSessionEvent.Joined -> participantRegistry.register(event.participant)
@@ -729,83 +660,22 @@ class ChannelService(
         participantID: UUID,
         credential: SessionCredential,
     ) {
-        val available = SessionRouteAvailability(
-            hasLANHost = channel.audioHostIP != null,
-            hasWiFiAwareSession = channel.hasWiFiAware,
-        ).orderedRoutes
-        val preferred = activeGuestRoute?.takeIf(available::contains)
-        val ordered = buildList {
-            if (preferred != null) add(preferred)
-            addAll(available)
-        }.distinct()
-        val route = ordered.firstOrNull { it !in attemptedGuestRoutes }
-        if (route == null) {
-            if (available.isEmpty()) {
-                _connectionState.value = SessionConnectionState.FAILED
-                _tourFeatureError.value = "No local LAN or Wi-Fi Aware route is available"
-            } else {
-                activeGuestRoute = null
-                scheduleReconnect("Could not authenticate a route to the guide")
-            }
+        val hostIP = channel.audioHostIP
+        if (hostIP == null) {
+            _connectionState.value = SessionConnectionState.FAILED
+            _tourFeatureError.value = "No local LAN route is available"
             return
         }
-
-        attemptedGuestRoutes += route
-        activeGuestRoute = route
-        _connectionState.value = SessionConnectionState.CONNECTING
-        when (route) {
-            SessionTransportRoute.LOCAL_LAN -> {
-                val hostIP = channel.audioHostIP
-                if (hostIP == null) {
-                    tryNextGuestRoute(channel, sessionID, participantID, credential)
-                    return
-                }
-                awareGuestRoute = null
-                startGuestTransports(
-                    channel,
-                    hostIP,
-                    sessionID,
-                    participantID,
-                    credential,
-                    route,
-                    null,
-                )
-            }
-            SessionTransportRoute.WIFI_AWARE -> {
-                coordinator.connectWiFiAware(sessionID) { result ->
-                    scope.launch {
-                        if (
-                            _listenState.value != ListenState.LISTENING ||
-                            _activeChannelID.value?.equals(channel.id, ignoreCase = true) != true ||
-                            activeGuestRoute != SessionTransportRoute.WIFI_AWARE
-                        ) return@launch
-                        result.fold(
-                            onSuccess = { awareRoute ->
-                                awareGuestRoute = awareRoute
-                                startGuestTransports(
-                                    channel,
-                                    awareRoute.guideHost,
-                                    sessionID,
-                                    participantID,
-                                    credential,
-                                    route,
-                                    awareRoute,
-                                )
-                            },
-                            onFailure = { error ->
-                                failCurrentGuestRoute(
-                                    channel,
-                                    sessionID,
-                                    participantID,
-                                    credential,
-                                    error.message ?: error.javaClass.simpleName,
-                                )
-                            },
-                        )
-                    }
-                }
-            }
+        val route = SessionTransportRoute.LOCAL_LAN
+        if (route in attemptedGuestRoutes) {
+            activeGuestRoute = null
+            scheduleReconnect("Could not authenticate the local LAN route to the guide")
+            return
         }
+        attemptedGuestRoutes += SessionTransportRoute.LOCAL_LAN
+        activeGuestRoute = SessionTransportRoute.LOCAL_LAN
+        _connectionState.value = SessionConnectionState.CONNECTING
+        startGuestTransports(channel, hostIP, sessionID, participantID, credential)
     }
 
     private fun startGuestTransports(
@@ -814,15 +684,7 @@ class ChannelService(
         sessionID: UUID,
         participantID: UUID,
         credential: SessionCredential,
-        route: SessionTransportRoute,
-        awareRoute: WiFiAwareSessionTransport.GuestRoute?,
     ) {
-        val socketFactory = if (route == SessionTransportRoute.WIFI_AWARE) {
-            requireNotNull(awareRoute) { "Wi-Fi Aware route is missing its Android Network" }
-                .network.socketFactory
-        } else {
-            null
-        }
         tourControlService.configureSession(
             sessionID,
             participantID,
@@ -837,12 +699,12 @@ class ChannelService(
             ParticipantPlatform.ANDROID,
             credential,
         )
-        tourControlService.setGuestSocketFactory(socketFactory)
-        assetTransferService.setGuestSocketFactory(socketFactory)
+        tourControlService.setGuestSocketFactory(null)
+        assetTransferService.setGuestSocketFactory(null)
         tourControlService.startGuest(hostIP)
         assetTransferService.joinTour(hostIP)
 
-        val plane = coordinator.selectAudioPlane(route, awareRoute)
+        val plane = coordinator.selectAudioPlane()
         plane.configureSession(
             sessionID = sessionID,
             participantID = participantID,
@@ -911,7 +773,6 @@ class ChannelService(
         tourControlService.stop()
         assetTransferService.stop()
         audioEngine.stopPlayback()
-        awareGuestRoute = null
         _tourFeatureError.value = reason
         tryNextGuestRoute(channel, sessionID, participantID, credential)
     }
@@ -943,7 +804,6 @@ class ChannelService(
             audioEngine.stopPlayback()
             attemptedGuestRoutes.clear()
             routeLease.reset()
-            awareGuestRoute = null
             tryNextGuestRoute(channel, sessionID, participantID, credential)
         }
     }

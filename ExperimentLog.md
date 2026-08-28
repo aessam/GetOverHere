@@ -571,3 +571,22 @@ Commands and results:
    - Result: passed on the iPhone 17 Pro simulator after the six-second idle interval.
 3. `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereH1 test -only-testing:GetOverHereTests/LocalSessionTransportTests`
    - Result: the complete iOS local-session transport suite passed.
+
+## 2026-08-28 — Android API-floor and production Aware re-gate
+
+Implementation:
+
+- Removed `WiFiAwareSessionTransport` from the production Android object graph and removed the launch-time nearby-Wi-Fi permission request. The Android-14 lab remains available only through its explicit UI entry.
+- Added a verifier source audit that fails if production coordinator/service/view-model/screen call sites reintroduce Aware before P1 passes.
+- Replaced both API-33 `InputStream.readNBytes` calls with one bounded API-26 helper and added a two-stage bounded-read regression.
+- Added explicit microphone and nearby-Wi-Fi permission preflights, isolated Aware implementations behind Android-14 API boundaries, and handled discovery permission failures.
+- Added `lintDebug` as stage 7 of the now nine-stage session verifier.
+
+Commands and results:
+
+1. `./gradlew lintDebug testDebugUnitTest assembleDebug`
+   - Result: failed before Gradle started because the non-login shell had no Java runtime configured. No project stage ran.
+2. `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew lintDebug testDebugUnitTest assembleDebug`
+   - Result: passed. Android lint reported no errors; JVM tests and the debug APK build passed.
+3. `scripts/verify_tour_session.sh`
+   - Result: all nine stages passed, including Android lint, the production Aware call-site audit, cross-platform wire fixtures, Android integration/APK, and the iOS simulator suite. Final output: `Tour session verification passed`.

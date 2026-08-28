@@ -1,6 +1,8 @@
 package com.aessam.comeoverhere.ui
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.aessam.comeoverhere.core.WiFiAwareLabTransport
 
 @OptIn(ExperimentalMaterial3Api::class)
+@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @Composable
 fun WiFiAwareLabScreen(onBack: () -> Unit) {
     val context = LocalContext.current
