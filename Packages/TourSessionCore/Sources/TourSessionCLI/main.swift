@@ -6,7 +6,7 @@ enum TourSessionCLI {
     static func main() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX | decode-encrypted HEX | audio-fixture | simulate COUNT | faults | state | auth | recovery | focus")
+            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | state | auth | recovery | focus")
         }
 
         switch command {
@@ -15,13 +15,20 @@ enum TourSessionCLI {
         case "encrypted-fixture":
             print(try TourSessionFixtures.encryptedHelloFixture().encode().lowercaseHex)
         case "decode":
-            guard arguments.count == 2 else { fail("decode requires one hex argument") }
-            print(try TourSessionFixtures.describeHello(Data(hex: arguments[1])))
+            guard arguments.count == 2 else { fail("decode requires one |-separated hex argument") }
+            print(try TourSessionFixtures.describeEnvelopes(arguments[1]))
         case "decode-encrypted":
             guard arguments.count == 2 else { fail("decode-encrypted requires one hex argument") }
-            print(try TourSessionFixtures.describeEncryptedHello(Data(hex: arguments[1])))
+            print(try TourSessionFixtures.describeSealed(Data(hex: arguments[1])))
+        case "decode-audio":
+            guard arguments.count == 2 else { fail("decode-audio requires one hex argument") }
+            print(try TourSessionFixtures.describeAudioFrame(Data(hex: arguments[1])))
         case "audio-fixture":
             print(try TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex)
+        case "handshake":
+            print(try TourSessionFixtures.handshakeFixtureHex())
+        case "realtime-fixture":
+            print(try TourSessionFixtures.encryptedRealtimeFixture().encode().lowercaseHex)
         case "simulate":
             guard arguments.count == 2, let count = Int(arguments[1]), count >= 0 else {
                 fail("simulate requires a non-negative integer")

@@ -267,3 +267,21 @@
 **Root cause**: One `stop()` operation represented both transient reconnect and terminal session end, so it preserved the configuration needed by one case in the other case as well.
 **Resolution**: Add a required `clearSession()` boundary that stops transport activity and erases credentials and derived sealing state. Keep `stop()` for transient socket lifecycle only.
 **Decision**: Secrets follow the logical session lifetime, not the object lifetime. Every terminal path must use explicit erasure; reconnect may retain credentials only in the session owner.
+
+## 50. A contract ADR is done only when every path has its own test
+**What happened**: ADR-033 was marked accepted while half implemented. The Swift error carried only the remote major, Kotlin plaintext decode threw the untyped base exception, and the guest UI rendered `CONNECTION FAILED` for a version mismatch while only guide stages showed `tourFeatureError`.
+**Root cause**: No per-path checklist. The plaintext and sealed decode paths, the nine transport catch sites, the guide UI, and the guest UI were each assumed covered by the one sealed-path test.
+**Resolution**: `SessionProtocolError.unsupportedMajorVersion(received:supported:)` on both decode paths, `UnsupportedSessionVersionException` from Kotlin plaintext decode, every catch site binding both majors from the decoder, one `versionMismatchMessage` builder per `ChannelService`, and a pure guest-status presenter on each platform fed by that builder in tests.
+**Decision**: A contract ADR lists every decode path, every transport catch site, guide UI, and guest UI, each with its own test, before it is marked accepted.
+
+## 51. Only UTF-8 byte order is wire order
+**What happened**: Swift ordered and deduplicated manifest IDs by canonical Unicode equivalence and Kotlin ordered them by UTF-16 code units, so two builds could encode the same manifest with different bytes and Swift could reject a manifest Kotlin accepted.
+**Root cause**: Neither Swift `String` `<`/`==` (canonical scalar order and equivalence) nor Kotlin `compareTo` (UTF-16 code-unit order) is the order of the UTF-8 bytes that go on the wire. Fixtures used ASCII IDs with unique `order` values, which cannot expose either divergence.
+**Resolution**: Both cores sort by `(order, UTF-8 bytes)` with an unsigned byte comparator and dedup on exact bytes; `AssetManifestPayload` got the same rule. Fixtures now carry a U+FF5E/U+1F5FA pair sharing an `order`, an NFC/NFD pair, a `z`/`é` pair (signed-byte trap), and an `a`/`ab` pair (prefix trap), with the same golden hex on both sides.
+**Decision**: Every cross-platform ordering rule needs a non-ASCII, tie-breaking fixture whose golden is generated from both CLIs and diffed, never written by hand.
+
+## 52. A comparison inside `[[ ]]` cannot fail on a crashed command
+**What happened**: `if [[ "$(cli a)" != "$(cli b)" ]]` in the verifier would pass when both CLIs crashed, because `errexit` is suspended inside a condition and empty equals empty.
+**Root cause**: Command substitution inside a test expression discards the exit status; the gate only looked at the two strings.
+**Resolution**: Every fixture output is assigned to a variable first (so a non-zero exit fails `errexit`), guarded with `[[ -n ]]`, and only then compared; the same shape now covers `state`, `auth`, `handshake`, `realtime-fixture`, and all cross-decodes.
+**Decision**: Verifier comparisons never inline `$(...)` inside `[[ ]]`. Assign, guard for non-empty, then compare.

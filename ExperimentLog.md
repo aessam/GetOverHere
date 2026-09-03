@@ -663,3 +663,32 @@ Commands and results:
    - Result: passed. Android unit tests and lint completed with no errors.
 2. `scripts/verify_tour_session.sh`
    - Result: all nine stages passed: 26 Swift core tests, Kotlin core tests, byte-exact cross-language encrypted fixtures, security/source audits, Android API-floor lint, Android loopback/APK, and the complete iOS simulator suite including explicit simulator capture failure and credential erasure. Final output: `Tour session verification passed`.
+
+## 2026-09-02 — G1 cores: typed version error, guest mismatch text, canonical asset order, cross-decoded fixtures
+
+Environment (run on 2026-09-03): Apple M4 Max, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), Apple Swift 6.4 (swiftlang-6.4.0.25.4), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` (openjdk 21.0.8), simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG1/ios`, gate derived data `/tmp/GetOverHereFixG1/verifier-ios`, Swift scratch `/tmp/GetOverHereFixG1/swift` (focused) and `/tmp/GetOverHereFixG1/verifier-swift` (gate). No physical device; no emulator needed for this group.
+
+Implementation:
+
+- `SessionProtocolError.unsupportedMajorVersion(received:supported:)` on both Swift decode paths; Kotlin plaintext decode throws `UnsupportedSessionVersionException`; the nine iOS catch sites bind both majors from the decoder; `ChannelService.versionMismatchMessage` on both platforms; guest status presenters (`guestStatusText` / `guestConnectionStatusText`) render the recorded reason on FAILED, red and wrapping on iOS.
+- Tour-pack and slide manifests order by `(order, UTF-8 bytes)` and dedup on exact bytes on both cores (ADR-041, DSCN-7); new `SessionProtocolError.duplicateSlideID`.
+- Generalized CLI describers (`decode HEX[|HEX...]`, `decode-encrypted`, `decode-audio`), new `handshake` and `realtime-fixture` commands, `state` fixture extended with two tie-breaking slides, two tie-breaking tour-pack assets, and an `assetChunk` envelope; verifier stages 3/4 rewritten with variable-assigned, non-empty-guarded compares, cross-decodes for state/handshake/realtime/audio, and the per-element UTF-8 ordering invariant.
+
+Commands and results:
+
+1. Baseline before edits: `swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG1/swift`
+   - Result: 26 tests in 2 suites passed.
+2. Baseline before edits: `cd Android && JAVA_HOME=... ./gradlew :tour-session-core:test :tour-session-cli:installDist`
+   - Result: BUILD SUCCESSFUL (8 tasks up-to-date).
+3. Fail-before on unchanged sources: `swift test ... --filter 'tourPackOrderingIsUTF8ByteOrderWithExactDedup|slideManifestOrderingIsUTF8ByteOrderWithExactDedup'`
+   - Result: 2 tests failed with 5 issues. Tour pack: `Caught error: duplicate tour asset ID café` (NFC/NFD collapsed by `Set<String>`). Slide manifest: order `[astral, fullwidth, gate-left]`, `[[195,169],[122]]`, `[[97,98],[97]]` (no tie-break).
+4. Fail-before on unchanged sources: `./gradlew :tour-session-core:test --tests '...plaintextProtocolRejectsLegacyMajorExplicitly' --tests '...tourPackOrderingIsUtf8ByteOrderWithExactDedup' --tests '...slideManifestOrderingIsUtf8ByteOrderWithExactDedup'`
+   - Result: 3 tests completed, 3 failed (AssertionError at :147 caused by base `SessionProtocolException`; :177 astral sorted before fullwidth; :237 slide order).
+5. Fail-before for the two-value error shape: `swift build --build-tests ...` with `plaintextVersionMismatchCarriesBothMajors` added
+   - Result: `SessionProtocolTests.swift:164:40: error: extra argument 'supported' in call` and `:169:101`.
+6. After FND-10 edits: `swift test ...` → 29 tests, only the two FND-11 tie-break tests failing; `./gradlew :tour-session-core:test :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.GuestConnectionStatusTest' --continue` → core 29 tests, 2 failed (same two), `GuestConnectionStatusTest` 4/4; `DEVELOPER_DIR=... xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG1/ios test -only-testing:GetOverHereTests/GuestConnectionStatusTests -only-testing:GetOverHereTests/LocalSessionTransportTests` → exit 0.
+7. Golden generation after FND-11 edits: `swift build ... --product tour-session-swift`, `./gradlew :tour-session-cli:installDist`, then `diff <(swift-cli $c) <(kotlin-cli $c)` for `fixture encrypted-fixture audio-fixture state handshake realtime-fixture auth`
+   - Result: all seven identical. Cross-decodes (`decode`, `decode-encrypted`, `decode-audio`) of the other side's bytes identical in both directions for state (9 lines), handshake (3 lines), sealed realtime, and audio. Under bash, `state` elements 5 (assetManifest) and 6 (tourPackManifest) each contain `efbd9e` before `f09f97ba`. The 2-asset tie manifest hex was taken from the Swift and Kotlin test failure output against a `PENDING` placeholder and diffed: identical. Only identical strings were pasted into both test files.
+8. `swift test ...` → 32 tests in 2 suites passed. `./gradlew :tour-session-core:test` → BUILD SUCCESSFUL, `SessionProtocolTest` 20/20, `ParticipantRegistryTest` 12/12.
+9. `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG1/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG1/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG1/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG1/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: all nine stages passed. Stage 1: 32 Swift tests. Stage 2: Kotlin core tests and CLI install. Stages 3/4: exact bytes and cross-decodes for hello, encrypted hello, audio, handshake, realtime, state, auth, plus the per-element ordering invariant. Stage 8: `:app:testDebugUnitTest` 13 classes, 35 tests, 0 failures, `assembleDebug` built. Stage 9: `Test-GetOverHere-2026.09.03_16-26-16--0700.xcresult` totalTestCount 43, passedTests 43, failedTests 0. Final output: `Tour session verification passed`.

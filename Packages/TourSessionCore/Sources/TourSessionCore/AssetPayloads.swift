@@ -128,15 +128,19 @@ public struct TourPackManifestPayload: Equatable, Sendable {
         guard assets.count <= Int(UInt16.max) else {
             throw SessionProtocolError.tooManyAssets(assets.count)
         }
-        var assetIDs = Set<String>()
-        for asset in assets where !assetIDs.insert(asset.assetID).inserted {
+        // Dedup and order on the exact UTF-8 wire bytes (ADR-041). Swift `String` equality and
+        // `<` use canonical Unicode equivalence, which the wire does not.
+        var assetIDs = Set<Data>()
+        for asset in assets where !assetIDs.insert(Data(asset.assetID.utf8)).inserted {
             throw SessionProtocolError.duplicateAssetID(asset.assetID)
         }
         self.packID = packID
         self.manifestVersion = manifestVersion
         self.displayName = displayName
-        self.assets = assets.sorted {
-            ($0.order, $0.assetID) < ($1.order, $1.assetID)
+        self.assets = assets.sorted { lhs, rhs in
+            lhs.order != rhs.order
+                ? lhs.order < rhs.order
+                : lhs.assetID.utf8.lexicographicallyPrecedes(rhs.assetID.utf8)
         }
     }
 
@@ -178,9 +182,18 @@ public struct AssetManifestPayload: Equatable, Sendable {
         guard assets.count <= Int(UInt16.max) else {
             throw SessionProtocolError.tooManyAssets(assets.count)
         }
+        // Same wire-byte dedup and tie-break as TourPackManifestPayload (ADR-041, DSCN-7).
+        var slideIDs = Set<Data>()
+        for asset in assets where !slideIDs.insert(Data(asset.slideID.utf8)).inserted {
+            throw SessionProtocolError.duplicateSlideID(asset.slideID)
+        }
         self.deckID = deckID
         self.manifestVersion = manifestVersion
-        self.assets = assets.sorted { $0.order < $1.order }
+        self.assets = assets.sorted { lhs, rhs in
+            lhs.order != rhs.order
+                ? lhs.order < rhs.order
+                : lhs.slideID.utf8.lexicographicallyPrecedes(rhs.slideID.utf8)
+        }
     }
 
     public func encode() throws -> Data {

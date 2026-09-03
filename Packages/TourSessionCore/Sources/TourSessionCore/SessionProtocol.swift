@@ -70,6 +70,7 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
     case tooManyAssets(Int)
     case invalidAssetKind(UInt8)
     case duplicateAssetID(String)
+    case duplicateSlideID(String)
     case invalidAssetChunk
     case invalidAssetStatus(UInt8)
     case invalidAuthenticationNonceLength(Int)
@@ -103,6 +104,7 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
         case let .tooManyAssets(count): "manifest has \(count) assets; maximum is 65535"
         case let .invalidAssetKind(raw): "invalid tour asset kind \(raw)"
         case let .duplicateAssetID(assetID): "duplicate tour asset ID \(assetID)"
+        case let .duplicateSlideID(slideID): "duplicate slide ID \(slideID)"
         case .invalidAssetChunk: "asset chunk exceeds declared asset length"
         case let .invalidAssetStatus(raw): "invalid asset status \(raw)"
         case let .invalidAuthenticationNonceLength(count):

@@ -2,6 +2,24 @@ package com.aessam.toursession
 
 import java.util.UUID
 
+/**
+ * Canonical manifest tie-break: unsigned lexicographic order of the UTF-8 wire bytes,
+ * shorter prefix first (ADR-041). `String.compareTo` is UTF-16 code-unit order and
+ * `java.util.Arrays.compareUnsigned` is API 33+, so neither is usable here.
+ */
+private fun compareUtf8Bytes(a: String, b: String): Int {
+    val left = a.toByteArray(Charsets.UTF_8)
+    val right = b.toByteArray(Charsets.UTF_8)
+    val shared = minOf(left.size, right.size)
+    for (index in 0 until shared) {
+        val difference = (left[index].toInt() and 0xff) - (right[index].toInt() and 0xff)
+        if (difference != 0) return difference
+    }
+    return left.size - right.size
+}
+
+private fun utf8Key(value: String): List<Byte> = value.toByteArray(Charsets.UTF_8).toList()
+
 data class SlideAssetDescriptor(
     val slideID: String,
     val sha256: String,
@@ -40,14 +58,24 @@ data class SlideAssetDescriptor(
     }
 }
 
-data class AssetManifestPayload(
+class AssetManifestPayload(
     val deckID: UUID,
     val manifestVersion: Long,
-    val assets: List<SlideAssetDescriptor>,
+    assets: List<SlideAssetDescriptor>,
 ) {
+    // Same wire-byte dedup and tie-break as TourPackManifestPayload (ADR-041, DSCN-7).
+    val assets: List<SlideAssetDescriptor> = assets.sortedWith(
+        compareBy<SlideAssetDescriptor> { it.order }.thenComparator { a, b -> compareUtf8Bytes(a.slideID, b.slideID) },
+    )
+
     init {
         if (assets.size > 0xffff) {
             throw SessionProtocolException("manifest has ${assets.size} assets; maximum is 65535")
+        }
+        val duplicate = assets.groupingBy { utf8Key(it.slideID) }.eachCount().entries.firstOrNull { it.value > 1 }
+        if (duplicate != null) {
+            val slideID = assets.first { utf8Key(it.slideID) == duplicate.key }.slideID
+            throw SessionProtocolException("duplicate slide ID $slideID")
         }
     }
 
@@ -55,10 +83,21 @@ data class AssetManifestPayload(
         val writer = BinaryWriter()
         writer.appendUuid(deckID)
         writer.appendUInt64(manifestVersion)
-        val ordered = assets.sortedBy { it.order }
-        writer.appendUInt16(ordered.size)
-        ordered.forEach { it.encode(writer) }
+        writer.appendUInt16(assets.size)
+        assets.forEach { it.encode(writer) }
         return writer.toByteArray()
+    }
+
+    override fun equals(other: Any?): Boolean = other is AssetManifestPayload &&
+        deckID == other.deckID &&
+        manifestVersion == other.manifestVersion &&
+        assets == other.assets
+
+    override fun hashCode(): Int {
+        var result = deckID.hashCode()
+        result = 31 * result + manifestVersion.hashCode()
+        result = 31 * result + assets.hashCode()
+        return result
     }
 
     companion object {
@@ -70,7 +109,7 @@ data class AssetManifestPayload(
             if (reader.remaining != 0) {
                 throw SessionProtocolException("payload has ${reader.remaining} trailing bytes")
             }
-            return AssetManifestPayload(deckID, version, assets.sortedBy { it.order })
+            return AssetManifestPayload(deckID, version, assets)
         }
     }
 }
@@ -129,16 +168,19 @@ class TourPackManifestPayload(
     val displayName: String,
     assets: List<TourAssetDescriptor>,
 ) {
-    val assets: List<TourAssetDescriptor> =
-        assets.sortedWith(compareBy<TourAssetDescriptor> { it.order }.thenBy { it.assetID })
+    // Dedup and order on the exact UTF-8 wire bytes (ADR-041).
+    val assets: List<TourAssetDescriptor> = assets.sortedWith(
+        compareBy<TourAssetDescriptor> { it.order }.thenComparator { a, b -> compareUtf8Bytes(a.assetID, b.assetID) },
+    )
 
     init {
         if (assets.size > 0xffff) {
             throw SessionProtocolException("manifest has ${assets.size} assets; maximum is 65535")
         }
-        val duplicate = assets.groupingBy { it.assetID }.eachCount().entries.firstOrNull { it.value > 1 }
+        val duplicate = assets.groupingBy { utf8Key(it.assetID) }.eachCount().entries.firstOrNull { it.value > 1 }
         if (duplicate != null) {
-            throw SessionProtocolException("duplicate tour asset ID ${duplicate.key}")
+            val assetID = assets.first { utf8Key(it.assetID) == duplicate.key }.assetID
+            throw SessionProtocolException("duplicate tour asset ID $assetID")
         }
     }
 

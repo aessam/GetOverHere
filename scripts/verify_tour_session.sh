@@ -74,6 +74,46 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Fixture outputs are assigned to variables first so a crashed CLI fails errexit instead of
+# comparing empty against empty inside a condition; the [[ -n ]] guards make that explicit.
+SWIFT_HANDSHAKE_HEX="$($SWIFT_BIN handshake)"
+[[ -n "$SWIFT_HANDSHAKE_HEX" ]] || { echo "error: Swift handshake fixture produced no output" >&2; exit 1; }
+KOTLIN_HANDSHAKE_HEX="$(run_kotlin handshake)"
+[[ -n "$KOTLIN_HANDSHAKE_HEX" ]] || { echo "error: Kotlin handshake fixture produced no output" >&2; exit 1; }
+if [[ "$SWIFT_HANDSHAKE_HEX" != "$KOTLIN_HANDSHAKE_HEX" ]]; then
+    echo "error: Swift and Kotlin encoded different authChallenge/welcome/leave bytes" >&2
+    exit 1
+fi
+
+SWIFT_REALTIME_HEX="$($SWIFT_BIN realtime-fixture)"
+[[ -n "$SWIFT_REALTIME_HEX" ]] || { echo "error: Swift realtime fixture produced no output" >&2; exit 1; }
+KOTLIN_REALTIME_HEX="$(run_kotlin realtime-fixture)"
+[[ -n "$KOTLIN_REALTIME_HEX" ]] || { echo "error: Kotlin realtime fixture produced no output" >&2; exit 1; }
+if [[ "$SWIFT_REALTIME_HEX" != "$KOTLIN_REALTIME_HEX" ]]; then
+    echo "error: Swift and Kotlin sealed different realtime audioFrame envelopes" >&2
+    exit 1
+fi
+
+SWIFT_STATE_HEX="$($SWIFT_BIN state)"
+[[ -n "$SWIFT_STATE_HEX" ]] || { echo "error: Swift state fixture produced no output" >&2; exit 1; }
+KOTLIN_STATE_HEX="$(run_kotlin state)"
+[[ -n "$KOTLIN_STATE_HEX" ]] || { echo "error: Kotlin state fixture produced no output" >&2; exit 1; }
+if [[ "$SWIFT_STATE_HEX" != "$KOTLIN_STATE_HEX" ]]; then
+    echo "error: presentation, bearing, target, shared-screen, slide/tour-pack tie-break, request, status, or asset-chunk bytes differ" >&2
+    exit 1
+fi
+
+# Elements 5 (assetManifest) and 6 (tourPackManifest) each carry one U+FF5E and one U+1F5FA ID
+# sharing an order. UTF-8 order puts ef bd 9e before f0 9f 97 ba; UTF-16 order would invert it.
+# Each element is checked on its own so one correct element cannot mask the other.
+IFS='|' read -r -a SWIFT_STATE_ELEMENTS <<< "$SWIFT_STATE_HEX"
+for INDEX in 4 5; do
+    if [[ "${SWIFT_STATE_ELEMENTS[$INDEX]:-}" != *efbd9e*f09f97ba* ]]; then
+        echo "error: manifest tie-break in state element $((INDEX + 1)) is not UTF-8 byte order (U+FF5E must precede U+1F5FA)" >&2
+        exit 1
+    fi
+done
+
 echo "[4/9] Cross-language decode and participant churn"
 SWIFT_DESCRIPTION="$($SWIFT_BIN decode "$KOTLIN_HEX")"
 KOTLIN_DESCRIPTION="$(run_kotlin decode "$SWIFT_HEX")"
@@ -86,6 +126,42 @@ SWIFT_ENCRYPTED_DESCRIPTION="$($SWIFT_BIN decode-encrypted "$KOTLIN_ENCRYPTED_HE
 KOTLIN_ENCRYPTED_DESCRIPTION="$(run_kotlin decode-encrypted "$SWIFT_ENCRYPTED_HEX")"
 if [[ "$SWIFT_ENCRYPTED_DESCRIPTION" != "$KOTLIN_ENCRYPTED_DESCRIPTION" ]]; then
     echo "error: Swift and Kotlin decoded different encrypted session values" >&2
+    exit 1
+fi
+
+SWIFT_STATE_DESC="$($SWIFT_BIN decode "$KOTLIN_STATE_HEX")"
+[[ -n "$SWIFT_STATE_DESC" ]] || { echo "error: Swift could not decode Kotlin state bytes" >&2; exit 1; }
+KOTLIN_STATE_DESC="$(run_kotlin decode "$SWIFT_STATE_HEX")"
+[[ -n "$KOTLIN_STATE_DESC" ]] || { echo "error: Kotlin could not decode Swift state bytes" >&2; exit 1; }
+if [[ "$SWIFT_STATE_DESC" != "$KOTLIN_STATE_DESC" ]]; then
+    echo "error: Swift and Kotlin described different control/asset state values" >&2
+    exit 1
+fi
+
+SWIFT_HANDSHAKE_DESC="$($SWIFT_BIN decode "$KOTLIN_HANDSHAKE_HEX")"
+[[ -n "$SWIFT_HANDSHAKE_DESC" ]] || { echo "error: Swift could not decode Kotlin handshake bytes" >&2; exit 1; }
+KOTLIN_HANDSHAKE_DESC="$(run_kotlin decode "$SWIFT_HANDSHAKE_HEX")"
+[[ -n "$KOTLIN_HANDSHAKE_DESC" ]] || { echo "error: Kotlin could not decode Swift handshake bytes" >&2; exit 1; }
+if [[ "$SWIFT_HANDSHAKE_DESC" != "$KOTLIN_HANDSHAKE_DESC" ]]; then
+    echo "error: Swift and Kotlin described different handshake values" >&2
+    exit 1
+fi
+
+SWIFT_REALTIME_DESC="$($SWIFT_BIN decode-encrypted "$KOTLIN_REALTIME_HEX")"
+[[ -n "$SWIFT_REALTIME_DESC" ]] || { echo "error: Swift could not open Kotlin realtime bytes" >&2; exit 1; }
+KOTLIN_REALTIME_DESC="$(run_kotlin decode-encrypted "$SWIFT_REALTIME_HEX")"
+[[ -n "$KOTLIN_REALTIME_DESC" ]] || { echo "error: Kotlin could not open Swift realtime bytes" >&2; exit 1; }
+if [[ "$SWIFT_REALTIME_DESC" != "$KOTLIN_REALTIME_DESC" ]]; then
+    echo "error: Swift and Kotlin described different sealed realtime values" >&2
+    exit 1
+fi
+
+SWIFT_AUDIO_DESC="$($SWIFT_BIN decode-audio "$KOTLIN_AUDIO_HEX")"
+[[ -n "$SWIFT_AUDIO_DESC" ]] || { echo "error: Swift could not decode Kotlin audio payload" >&2; exit 1; }
+KOTLIN_AUDIO_DESC="$(run_kotlin decode-audio "$SWIFT_AUDIO_HEX")"
+[[ -n "$KOTLIN_AUDIO_DESC" ]] || { echo "error: Kotlin could not decode Swift audio payload" >&2; exit 1; }
+if [[ "$SWIFT_AUDIO_DESC" != "$KOTLIN_AUDIO_DESC" ]]; then
+    echo "error: Swift and Kotlin described different encoded audio frame values" >&2
     exit 1
 fi
 
@@ -106,18 +182,17 @@ if [[ "$($SWIFT_BIN faults)" != "$EXPECTED_FAULTS" || "$(run_kotlin faults)" != 
     exit 1
 fi
 
-if [[ "$($SWIFT_BIN state)" != "$(run_kotlin state)" ]]; then
-    echo "error: presentation, bearing, target, shared-screen, tour-pack, request, or status bytes differ" >&2
-    exit 1
-fi
-
 EXPECTED_FOCUS="initial=slides:0|guide=map:1,pointer:2|guest=pointer:2|stale=pointer:2|late=pointer:2"
 if [[ "$($SWIFT_BIN focus)" != "$EXPECTED_FOCUS" || "$(run_kotlin focus)" != "$EXPECTED_FOCUS" ]]; then
     echo "error: guide-selected shared-screen simulation failed" >&2
     exit 1
 fi
 
-if [[ "$($SWIFT_BIN auth)" != "$(run_kotlin auth)" ]]; then
+SWIFT_AUTH_HEX="$($SWIFT_BIN auth)"
+[[ -n "$SWIFT_AUTH_HEX" ]] || { echo "error: Swift auth fixture produced no output" >&2; exit 1; }
+KOTLIN_AUTH_HEX="$(run_kotlin auth)"
+[[ -n "$KOTLIN_AUTH_HEX" ]] || { echo "error: Kotlin auth fixture produced no output" >&2; exit 1; }
+if [[ "$SWIFT_AUTH_HEX" != "$KOTLIN_AUTH_HEX" ]]; then
     echo "error: Swift and Kotlin authentication proofs differ" >&2
     exit 1
 fi

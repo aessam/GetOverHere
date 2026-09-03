@@ -174,6 +174,195 @@ struct SessionProtocolTests {
         )
     }
 
+    @Test("Tour pack ordering is UTF-8 byte order with exact dedup")
+    func tourPackOrderingIsUTF8ByteOrderWithExactDedup() throws {
+        func asset(_ assetID: String, order: UInt32 = 0) throws -> TourAssetDescriptor {
+            try TourAssetDescriptor(
+                assetID: assetID,
+                kind: .slide,
+                sha256: String(repeating: "ab", count: 32),
+                byteLength: 1,
+                order: order,
+                mimeType: "image/jpeg"
+            )
+        }
+        let astral = "plaza-\u{1F5FA}"
+        let fullwidth = "plaza-\u{FF5E}"
+        let tie = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset(astral), asset(fullwidth)]
+        )
+        #expect(tie.assets.map { Array($0.assetID.utf8) } == [Array(fullwidth.utf8), Array(astral.utf8)])
+        let tieHex = try tie.encode().lowercaseHex
+        #expect(tieHex == "876543210fedcba9876543210fedcba90000000000000001000354696500020009706c617a612defbd9e01abababababababababababababababababababababababababababababababab000000000000000100000000000a696d6167652f6a706567000a706c617a612df09f97ba01abababababababababababababababababababababababababababababababab000000000000000100000000000a696d6167652f6a706567")
+        #expect(try TourPackManifestPayload.decode(tie.encode()).encode() == tie.encode())
+
+        let nfc = "caf\u{00E9}"
+        let nfd = "cafe\u{0301}"
+        let canonical = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset(nfc), asset(nfd)]
+        )
+        #expect(canonical.assets.count == 2)
+        #expect(Array(canonical.assets[0].assetID.utf8) == [0x63, 0x61, 0x66, 0x65, 0xCC, 0x81])
+        #expect(try TourPackManifestPayload.decode(canonical.encode()).encode() == canonical.encode())
+
+        let signed = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset("\u{00E9}"), asset("z")]
+        )
+        #expect(signed.assets.map { Array($0.assetID.utf8) } == [[0x7A], [0xC3, 0xA9]])
+        let prefix = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset("ab"), asset("a")]
+        )
+        #expect(prefix.assets.map { Array($0.assetID.utf8) } == [[0x61], [0x61, 0x62]])
+
+        #expect(throws: SessionProtocolError.duplicateAssetID("gate-left")) {
+            try TourPackManifestPayload(
+                packID: TourSessionFixtures.packID,
+                manifestVersion: 1,
+                displayName: "Tie",
+                assets: [asset("gate-left"), asset("gate-left", order: 1)]
+            )
+        }
+    }
+
+    @Test("Slide manifest ordering is UTF-8 byte order with exact dedup")
+    func slideManifestOrderingIsUTF8ByteOrderWithExactDedup() throws {
+        func slide(_ slideID: String, order: UInt32 = 0) throws -> SlideAssetDescriptor {
+            try SlideAssetDescriptor(
+                slideID: slideID,
+                sha256: String(repeating: "ab", count: 32),
+                byteLength: 1,
+                order: order,
+                mimeType: "image/jpeg"
+            )
+        }
+        let astral = "gate-\u{1F5FA}"
+        let fullwidth = "gate-\u{FF5E}"
+        let tie = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide(astral), slide("gate-left", order: 1), slide(fullwidth)]
+        )
+        #expect(tie.assets.map { Array($0.slideID.utf8) } == [
+            Array(fullwidth.utf8),
+            Array(astral.utf8),
+            Array("gate-left".utf8),
+        ])
+        #expect(try AssetManifestPayload.decode(tie.encode()).encode() == tie.encode())
+        #expect(try AssetManifestPayload.decode(tie.encode()).assets.map { Array($0.slideID.utf8) } == [
+            Array(fullwidth.utf8),
+            Array(astral.utf8),
+            Array("gate-left".utf8),
+        ])
+
+        let signed = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide("\u{00E9}"), slide("z")]
+        )
+        #expect(signed.assets.map { Array($0.slideID.utf8) } == [[0x7A], [0xC3, 0xA9]])
+        let prefix = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide("ab"), slide("a")]
+        )
+        #expect(prefix.assets.map { Array($0.slideID.utf8) } == [[0x61], [0x61, 0x62]])
+
+        #expect(throws: SessionProtocolError.duplicateSlideID("gate-left")) {
+            try AssetManifestPayload(
+                deckID: TourSessionFixtures.deckID,
+                manifestVersion: 1,
+                assets: [slide("gate-left"), slide("gate-left", order: 1)]
+            )
+        }
+    }
+
+    @Test("Handshake fixture is stable")
+    func handshakeFixtureIsStable() throws {
+        let hex = try TourSessionFixtures.handshakeFixtureHex()
+        #expect(hex == "474f4832020102050000000000000000000100112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000000001102000102030405060708090a0b0c0d0e0f|474f4832020102020000000000000000000200112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000000003102202122232425262728292a2b2c2d2e2fc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf|474f4832020102040000000000000000002b00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f00000000")
+        let envelopes = try hex.split(separator: "|").map { try SessionEnvelope.decode(Data(hex: String($0))) }
+        #expect(envelopes.map(\.kind) == [.authChallenge, .welcome, .leave])
+        #expect(envelopes.map(\.senderID) == [
+            TourSessionFixtures.guideID,
+            TourSessionFixtures.guideID,
+            TourSessionFixtures.guestID,
+        ])
+        #expect(envelopes.map(\.sequence) == [1, 2, 43])
+        #expect(try AuthChallengePayload.decode(envelopes[0].payload) == AuthChallengePayload(
+            requestedLane: .control,
+            challengeNonce: Data(0x00 ... 0x0F)
+        ))
+        #expect(try WelcomePayload.decode(envelopes[1].payload) == WelcomePayload(
+            requestedLane: .control,
+            guideNonce: Data(0x20 ... 0x2F),
+            credentialProof: Data(0xC0 ... 0xDF)
+        ))
+        #expect(envelopes[2].payload.isEmpty)
+    }
+
+    @Test("Realtime audio frame seals deterministically")
+    func realtimeAudioFrameSealsDeterministically() throws {
+        let sealed = try TourSessionFixtures.encryptedRealtimeFixture()
+        #expect(sealed.encode().lowercaseHex == "474f4832030001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003a508bbef93ea1dcb0c38c2cefcc62e6537aa1fc783534a87ce9fdca985c7a66991daac779d24f8bb1aa9ca14e7d13e6c0e730f9823579cb08f63c")
+        #expect(try TourSessionFixtures.encryptedRealtimeFixture().encode() == sealed.encode())
+        let opener = SessionFrameOpener(credential: try TourSessionFixtures.fixtureCredential())
+        let opened = try opener.open(sealed)
+        guard case let .opened(envelope) = opened else {
+            Issue.record("fresh realtime fixture opened as \(opened)")
+            return
+        }
+        #expect(envelope.lane == .realtime)
+        #expect(envelope.kind == .audioFrame)
+        #expect(envelope.sequence == 77)
+        #expect(envelope.senderID == TourSessionFixtures.guideID)
+        #expect(try EncodedAudioFramePayload.decode(envelope.payload) == TourSessionFixtures.encodedAudioFixture())
+    }
+
+    @Test("State fixture describes every control and asset kind")
+    func stateFixtureDescribesEveryControlAndAssetKind() throws {
+        let stateDescription = [
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=presentationSnapshot|sequence=9|stateVersion=7|deckID=12345678-90ab-cdef-1234-567890abcdef|slide=676174652d6c656674|visible=true|effectiveAtMilliseconds=123456",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=bearingSnapshot|sequence=10|stateVersion=8|reference=1|bearingMilliDegrees=271250|visible=true",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=targetSnapshot|sequence=11|stateVersion=9|targetID=abcdef01-2345-6789-abcd-ef0123456789|latitudeE7=371769000|longitudeE7=-35889000|label=4d61696e2047617465|visible=true",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=visualFocusSnapshot|sequence=12|stateVersion=10|mode=2",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=assetManifest|sequence=12|deckID=12345678-90ab-cdef-1234-567890abcdef|manifestVersion=3|assets=676174652d6c656674,000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f,2048,0,696d6167652f6a706567;676174652defbd9e,1212121212121212121212121212121212121212121212121212121212121212,256,0,696d6167652f6a706567;676174652df09f97ba,efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef,512,0,696d6167652f6a706567",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=tourPackManifest|sequence=13|packID=87654321-0fed-cba9-8765-43210fedcba9|manifestVersion=4|displayName=416c68616d627261|assets=616c68616d6272612d6d6170,2,cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd,4096,0,6170706c69636174696f6e2f766e642e706d74696c6573;676174652d6c656674,1,abababababababababababababababababababababababababababababababab,2048,1,696d6167652f6a706567;706c617a612defbd9e,1,1212121212121212121212121212121212121212121212121212121212121212,256,2,696d6167652f6a706567;706c617a612df09f97ba,1,efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef,512,2,696d6167652f6a706567",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=asset|kind=assetRequest|sequence=14|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|offset=1024",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=asset|kind=assetStatus|sequence=15|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|status=1|byteLength=2048|detail=",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=assetChunk|sequence=16|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|offset=1024|totalLength=2048|bytes=303132333435363738393a3b3c3d3e3f",
+        ].joined(separator: "\n")
+        #expect(try TourSessionFixtures.describeEnvelopes(TourSessionFixtures.stateFixtureHex()) == stateDescription)
+
+        let handshakeDescription = [
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=authChallenge|sequence=1|requestedLane=2|challengeNonce=000102030405060708090a0b0c0d0e0f",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=welcome|sequence=2|requestedLane=2|guideNonce=202122232425262728292a2b2c2d2e2f|credentialProof=c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=control|kind=leave|sequence=43|payloadBytes=0",
+        ].joined(separator: "\n")
+        #expect(try TourSessionFixtures.describeEnvelopes(TourSessionFixtures.handshakeFixtureHex()) == handshakeDescription)
+
+        let audioDescription = "codec=1|sampleRate=16000|channelCount=1|frameDurationMilliseconds=20|bitRate=20000|codecSpecificData=|capturedAtNanoseconds=1000000000|expiresAtNanoseconds=1250000000|encodedBytes=f8fffe010203"
+        #expect(try TourSessionFixtures.describeAudioFrame(TourSessionFixtures.encodedAudioFixture().encode()) == audioDescription)
+
+        let sealedDescription = try TourSessionFixtures.describeSealed(TourSessionFixtures.encryptedRealtimeFixture().encode())
+        #expect(sealedDescription.hasPrefix(
+            "version=\(SealedSessionEnvelope.majorVersion).\(SealedSessionEnvelope.minorVersion)"
+                + "|stream=0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0|"
+        ))
+        #expect(sealedDescription.hasSuffix("|lane=realtime|kind=audioFrame|sequence=77|audio=" + audioDescription))
+    }
+
     @Test("Encoded audio frame and codec negotiation are deterministic")
     func encodedAudioFrame() throws {
         let fixture = try TourSessionFixtures.encodedAudioFixture()
