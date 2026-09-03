@@ -330,7 +330,10 @@ struct ChannelDetailView: View {
                 .symbolEffect(.variableColor, isActive: service.listenState != .idle)
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name).font(.headline)
-                Text(status).font(.caption.bold()).foregroundStyle(accent)
+                Text(status)
+                    .font(.caption.bold())
+                    .foregroundStyle(service.connectionState == .failed ? Color.red : accent)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if !service.isCreator {
@@ -348,13 +351,7 @@ struct ChannelDetailView: View {
     }
 
     private var guestConnectionStatus: String {
-        switch service.connectionState {
-        case .idle: "IDLE"
-        case .connecting: "CONNECTING"
-        case .connected: "LISTENING"
-        case let .reconnecting(attempt): "RECONNECTING \(attempt)/5"
-        case .failed: "CONNECTION FAILED"
-        }
+        service.connectionState.guestStatusText(error: service.tourFeatureError)
     }
 
     private var featurePicker: some View {

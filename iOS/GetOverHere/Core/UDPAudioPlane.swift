@@ -312,10 +312,10 @@ final class UDPAudioPlane: AudioPlane {
                             configuration: configuration,
                             guideCapabilities: localCapabilities
                         )
-                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                         self?.callbacks.emitSession(.versionMismatch(
                             remoteMajor: remoteMajor,
-                            localMajor: SealedSessionEnvelope.majorVersion
+                            localMajor: localMajor
                         ))
                         socket.close()
                         return
@@ -453,10 +453,10 @@ final class UDPAudioPlane: AudioPlane {
                     configuration: configuration,
                     guestCapabilities: localCapabilities
                 )
-            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 self?.callbacks.emitSession(.versionMismatch(
                     remoteMajor: remoteMajor,
-                    localMajor: SealedSessionEnvelope.majorVersion
+                    localMajor: localMajor
                 ))
                 socket.close()
                 Task { @MainActor [weak self] in
@@ -518,10 +518,10 @@ final class UDPAudioPlane: AudioPlane {
                             self?.callbacks.emitAudio(pcm)
                         }
                     }
-                } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                     self?.callbacks.emitSession(.versionMismatch(
                         remoteMajor: remoteMajor,
-                        localMajor: SealedSessionEnvelope.majorVersion
+                        localMajor: localMajor
                     ))
                     break
                 } catch {

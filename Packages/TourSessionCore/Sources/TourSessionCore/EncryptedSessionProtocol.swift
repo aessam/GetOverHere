@@ -115,7 +115,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
         }
         let major = try reader.readUInt8()
         guard major == majorVersion else {
-            throw SessionProtocolError.unsupportedMajorVersion(major)
+            throw SessionProtocolError.unsupportedMajorVersion(received: major, supported: majorVersion)
         }
         let minor = try reader.readUInt8()
         let laneRaw = try reader.readUInt8()

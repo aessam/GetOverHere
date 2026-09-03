@@ -150,9 +150,28 @@ struct SessionProtocolTests {
     func encryptedVersionMismatch() throws {
         var bytes = try TourSessionFixtures.encryptedHelloFixture().encode()
         bytes[4] = SessionEnvelope.majorVersion
-        #expect(throws: SessionProtocolError.unsupportedMajorVersion(SessionEnvelope.majorVersion)) {
+        #expect(throws: SessionProtocolError.unsupportedMajorVersion(
+            received: SessionEnvelope.majorVersion,
+            supported: SealedSessionEnvelope.majorVersion
+        )) {
             try SealedSessionEnvelope.decode(bytes)
         }
+    }
+
+    @Test("Plaintext version mismatch carries both majors")
+    func plaintextVersionMismatchCarriesBothMajors() throws {
+        var bytes = try TourSessionFixtures.helloEnvelope().encode()
+        bytes[4] = SealedSessionEnvelope.majorVersion
+        #expect(throws: SessionProtocolError.unsupportedMajorVersion(
+            received: SealedSessionEnvelope.majorVersion,
+            supported: SessionEnvelope.majorVersion
+        )) {
+            try SessionEnvelope.decode(bytes)
+        }
+        #expect(
+            String(describing: SessionProtocolError.unsupportedMajorVersion(received: 3, supported: 2))
+                == "unsupported major version 3; this build requires 2"
+        )
     }
 
     @Test("Encoded audio frame and codec negotiation are deterministic")

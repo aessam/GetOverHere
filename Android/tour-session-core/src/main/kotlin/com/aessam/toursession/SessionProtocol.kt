@@ -155,7 +155,7 @@ data class SessionEnvelope(
             }
             val major = reader.readUInt8()
             if (major != MAJOR_VERSION) {
-                throw SessionProtocolException("unsupported major version $major")
+                throw UnsupportedSessionVersionException(major, MAJOR_VERSION)
             }
             val minor = reader.readUInt8()
             val lane = SessionLane.fromRaw(reader.readUInt8())

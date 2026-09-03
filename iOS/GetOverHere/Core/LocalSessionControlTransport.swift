@@ -129,11 +129,11 @@ private final class LocalAuthenticatedSessionTransport {
                             configuration: configuration,
                             requestedLane: expectedApplicationLane
                         )
-                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                         Task { @MainActor [weak self] in
                             self?.emit(.versionMismatch(
                                 remoteMajor: remoteMajor,
-                                localMajor: SealedSessionEnvelope.majorVersion
+                                localMajor: localMajor
                             ))
                         }
                         socket.close()
@@ -188,11 +188,11 @@ private final class LocalAuthenticatedSessionTransport {
                                 self?.emit(.envelopeReceived(envelope))
                             }
                             if envelope.kind == .leave { break }
-                        } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                        } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                             Task { @MainActor [weak self] in
                                 self?.emit(.versionMismatch(
                                     remoteMajor: remoteMajor,
-                                    localMajor: SealedSessionEnvelope.majorVersion
+                                    localMajor: localMajor
                                 ))
                             }
                             break
@@ -291,13 +291,13 @@ private final class LocalAuthenticatedSessionTransport {
                     requestedLane: expectedApplicationLane,
                     maximumFrameSize: maximumFrameSize
                 )
-            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 socket.close()
                 Task { @MainActor [weak self] in
                     self?.clearGuestSocket(socket, generation: generation)
                     self?.emit(.versionMismatch(
                         remoteMajor: remoteMajor,
-                        localMajor: SealedSessionEnvelope.majorVersion
+                        localMajor: localMajor
                     ))
                 }
                 return
@@ -346,11 +346,11 @@ private final class LocalAuthenticatedSessionTransport {
                     }
                     Task { @MainActor [weak self] in self?.emit(.envelopeReceived(envelope)) }
                     if envelope.kind == .leave { break }
-                } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+                } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                     Task { @MainActor [weak self] in
                         self?.emit(.versionMismatch(
                             remoteMajor: remoteMajor,
-                            localMajor: SealedSessionEnvelope.majorVersion
+                            localMajor: localMajor
                         ))
                     }
                     break

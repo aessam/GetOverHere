@@ -140,6 +140,23 @@ class SessionProtocolTest {
     }
 
     @Test
+    fun plaintextProtocolRejectsLegacyMajorExplicitly() {
+        val bytes = TourSessionFixtures.helloEnvelope().encode().also {
+            it[4] = SealedSessionEnvelope.MAJOR_VERSION.toByte()
+        }
+        val error = assertThrows(UnsupportedSessionVersionException::class.java) {
+            SessionEnvelope.decode(bytes)
+        }
+        assertEquals(SealedSessionEnvelope.MAJOR_VERSION, error.receivedMajorVersion)
+        assertEquals(SessionEnvelope.MAJOR_VERSION, error.supportedMajorVersion)
+        assertEquals(
+            "unsupported major version ${SealedSessionEnvelope.MAJOR_VERSION}; " +
+                "this build requires ${SessionEnvelope.MAJOR_VERSION}",
+            error.message,
+        )
+    }
+
+    @Test
     fun encodedAudioFrameAndCodecNegotiationAreDeterministic() {
         val fixture = TourSessionFixtures.encodedAudioFixture()
         assertEquals(

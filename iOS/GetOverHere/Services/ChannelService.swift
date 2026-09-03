@@ -600,6 +600,11 @@ final class ChannelService {
         })
     }
 
+    /// Single source of the user-facing version-mismatch text for every guest and guide path.
+    nonisolated static func versionMismatchMessage(remoteMajor: UInt8, localMajor: UInt8) -> String {
+        "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
+    }
+
     private func handleAudioSessionEvent(_ event: AudioSessionEvent) {
         switch event {
         case let .joined(participant):
@@ -612,7 +617,7 @@ final class ChannelService {
             Logger.channel.info("Session connection left; listeners=\(self.listenerCount)")
         case let .versionMismatch(remoteMajor, localMajor):
             connectionState = .failed
-            tourFeatureError = "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
+            tourFeatureError = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
         case let .failed(message):
             connectionState = .failed
             tourFeatureError = message
@@ -678,7 +683,7 @@ final class ChannelService {
             reconnectTask?.cancel()
             reconnectTask = nil
             connectionState = .failed
-            tourFeatureError = "Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app."
+            tourFeatureError = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
         case let .failed(message):
             scheduleReconnect(reason: message)
         }

@@ -50,7 +50,7 @@ public enum ParticipantPlatform: UInt8, Sendable {
 public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
     case truncated
     case invalidMagic
-    case unsupportedMajorVersion(UInt8)
+    case unsupportedMajorVersion(received: UInt8, supported: UInt8)
     case unknownLane(UInt8)
     case unknownMessageKind(UInt8)
     case wrongLane(kind: SessionMessageKind, actual: SessionLane)
@@ -81,7 +81,8 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .truncated: "truncated data"
         case .invalidMagic: "invalid GOH2 magic"
-        case let .unsupportedMajorVersion(version): "unsupported major version \(version)"
+        case let .unsupportedMajorVersion(received, supported):
+            "unsupported major version \(received); this build requires \(supported)"
         case let .unknownLane(raw): "unknown lane \(raw)"
         case let .unknownMessageKind(raw): "unknown message kind \(raw)"
         case let .wrongLane(kind, actual): "\(kind) requires \(kind.requiredLane), got \(actual)"
@@ -178,7 +179,7 @@ public struct SessionEnvelope: Equatable, Sendable {
         }
         let major = try reader.readUInt8()
         guard major == majorVersion else {
-            throw SessionProtocolError.unsupportedMajorVersion(major)
+            throw SessionProtocolError.unsupportedMajorVersion(received: major, supported: majorVersion)
         }
         let minor = try reader.readUInt8()
         let laneRaw = try reader.readUInt8()

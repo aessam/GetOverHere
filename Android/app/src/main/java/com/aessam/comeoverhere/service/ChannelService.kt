@@ -167,6 +167,10 @@ class ChannelService(
 
     companion object {
         private const val TAG = "ChannelService"
+
+        /** Single source of the user-facing version-mismatch text for every guest and guide path. */
+        fun versionMismatchMessage(remoteMajor: Int, localMajor: Int): String =
+            "Tour protocol version mismatch (remote $remoteMajor, local $localMajor). Update the older app."
     }
 
     init {
@@ -636,9 +640,7 @@ class ChannelService(
             is AudioSessionEvent.Disconnected -> participantRegistry.disconnect(event.connectionID)
             is AudioSessionEvent.VersionMismatch -> {
                 _connectionState.value = SessionConnectionState.FAILED
-                _tourFeatureError.value =
-                    "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
-                    "Update the older app."
+                _tourFeatureError.value = versionMismatchMessage(event.remoteMajor, event.localMajor)
             }
             is AudioSessionEvent.Failed -> {
                 _connectionState.value = SessionConnectionState.FAILED
@@ -739,9 +741,7 @@ class ChannelService(
                 reconnectJob?.cancel()
                 reconnectJob = null
                 _connectionState.value = SessionConnectionState.FAILED
-                _tourFeatureError.value =
-                    "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
-                    "Update the older app."
+                _tourFeatureError.value = versionMismatchMessage(event.remoteMajor, event.localMajor)
             }
             is TourControlConnectionEvent.Failed -> {
                 val channel = activeChannel ?: return

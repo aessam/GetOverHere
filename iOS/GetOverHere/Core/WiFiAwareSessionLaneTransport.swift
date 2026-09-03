@@ -143,10 +143,10 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 }
             } catch is CancellationError {
                 // Expected during route replacement or shutdown.
-            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 await self?.emit(.versionMismatch(
                     remoteMajor: remoteMajor,
-                    localMajor: SealedSessionEnvelope.majorVersion
+                    localMajor: localMajor
                 ))
             } catch {
                 await self?.emit(.failed("Aware guest lane failed"))
@@ -188,10 +188,10 @@ private final class WiFiAwareAuthenticatedLaneTransport {
                 }
             } catch is CancellationError {
                 // Expected during route replacement or shutdown.
-            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor) {
+            } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 await self?.emit(.versionMismatch(
                     remoteMajor: remoteMajor,
-                    localMajor: SealedSessionEnvelope.majorVersion
+                    localMajor: localMajor
                 ))
             } catch {
                 await self?.emit(.failed("Aware guide lane failed"))

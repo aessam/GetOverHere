@@ -326,6 +326,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         listenerOutput = listenerOutput,
                         connectionState = connectionState,
                         reconnectAttempt = reconnectAttempt,
+                        tourFeatureError = tourFeatureError,
                         presentation = presentation,
                         readySlideFiles = readySlideFiles,
                         minimizedSlide = guestMinimizedSlide,
@@ -740,6 +741,7 @@ private fun ListenerView(
     listenerOutput: ListenerOutput,
     connectionState: SessionConnectionState,
     reconnectAttempt: Int,
+    tourFeatureError: String?,
     presentation: PresentationSnapshotPayload?,
     readySlideFiles: Map<String, File>,
     minimizedSlide: Boolean,
@@ -775,13 +777,7 @@ private fun ListenerView(
             Column {
                 Text(channel.name, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    when (connectionState) {
-                        SessionConnectionState.IDLE -> "IDLE"
-                        SessionConnectionState.CONNECTING -> "CONNECTING"
-                        SessionConnectionState.CONNECTED -> "LISTENING"
-                        SessionConnectionState.RECONNECTING -> "RECONNECTING $reconnectAttempt/5"
-                        SessionConnectionState.FAILED -> "CONNECTION FAILED"
-                    },
+                    guestConnectionStatusText(connectionState, reconnectAttempt, tourFeatureError),
                     color = if (connectionState == SessionConnectionState.FAILED) {
                         MaterialTheme.colorScheme.error
                     } else {
