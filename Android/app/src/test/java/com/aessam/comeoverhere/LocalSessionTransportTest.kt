@@ -32,6 +32,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -48,12 +50,14 @@ class LocalSessionTransportTest {
         val provider = PassThroughRealtimeAudioCodecProvider()
         val guide = UDPAudioPlane(provider)
         val guest = UDPAudioPlane(provider)
+        val factory = CountingSocketFactory()
         val sessionID = UUID.randomUUID()
         val guestID = UUID.randomUUID()
         val credential = testCredential(sessionID)
         val joined = CountDownLatch(1)
         val audioReceived = CountDownLatch(1)
         val receivedPayload = AtomicReference<ByteArray>()
+        val audioThreadName = AtomicReference<String>()
 
         try {
             guide.configureSession(
@@ -72,6 +76,7 @@ class LocalSessionTransportTest {
             guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
 
             guest.hostIP = "127.0.0.1"
+            guest.setGuestSocketFactory(factory)
             guest.configureSession(
                 sessionID,
                 guestID,
@@ -81,16 +86,112 @@ class LocalSessionTransportTest {
             )
             guest.startListening(sessionID.toString()) { payload ->
                 receivedPayload.set(payload)
+                // FND-5: PCM must be delivered from the clocked playout thread, never the read loop.
+                audioThreadName.set(Thread.currentThread().name)
                 audioReceived.countDown()
             }
 
             assertTrue("Guest did not join", joined.await(3, TimeUnit.SECONDS))
+            // FND-4: Nagle is disabled on the connecting and the accepted realtime socket.
+            assertTrue("guest socket keeps Nagle", factory.created.single().tcpNoDelay)
+            assertTrue("accepted socket keeps Nagle", guide.acceptedClientSockets().single().tcpNoDelay)
+
             val expected = byteArrayOf(0x10, 0x20, 0x30, 0x40)
             guide.sendAudio(expected)
             guide.sendAudio(expected)
             guide.sendAudio(expected)
             assertTrue("Audio did not arrive", audioReceived.await(3, TimeUnit.SECONDS))
             assertArrayEquals(expected, receivedPayload.get())
+            assertEquals("goh2-audio-playout", audioThreadName.get())
+            // FND-3: encode+seal never runs on the caller (main) thread.
+            assertEquals(setOf("audio-encode-seal"), provider.encodeThreadNames.toSet())
+            assertFalse(provider.encodeThreadNames.contains(Thread.currentThread().name))
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun guestAudioLaneReportsGuideClose() {
+        val provider = PassThroughRealtimeAudioCodecProvider()
+        val guide = UDPAudioPlane(provider)
+        val guest = UDPAudioPlane(provider)
+        val sessionID = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val joined = CountDownLatch(1)
+        val failed = CountDownLatch(1)
+        val failureMessage = AtomicReference<String>()
+
+        try {
+            startAudioPair(guide, guest, sessionID, credential, credential, joined) { event ->
+                if (event is AudioSessionEvent.Failed) {
+                    failureMessage.set(event.message)
+                    failed.countDown()
+                }
+            }
+            assertTrue("Guest did not join", joined.await(3, TimeUnit.SECONDS))
+
+            guide.stop()
+
+            assertTrue("Guest audio lane did not report the guide close", failed.await(3, TimeUnit.SECONDS))
+            assertTrue(failureMessage.get(), failureMessage.get().startsWith("Guide audio connection lost ("))
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun guestAudioLaneStaysSilentOnLocalStop() {
+        val provider = PassThroughRealtimeAudioCodecProvider()
+        val guide = UDPAudioPlane(provider)
+        val guest = UDPAudioPlane(provider)
+        val sessionID = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val joined = CountDownLatch(1)
+        val failed = CountDownLatch(1)
+
+        try {
+            startAudioPair(guide, guest, sessionID, credential, credential, joined) { event ->
+                if (event is AudioSessionEvent.Failed) failed.countDown()
+            }
+            assertTrue("Guest did not join", joined.await(3, TimeUnit.SECONDS))
+
+            guest.stop()
+
+            assertFalse("Local stop must not report a lost guide", failed.await(500, TimeUnit.MILLISECONDS))
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun audioLaneWrongCodeStaysSilent() {
+        val provider = PassThroughRealtimeAudioCodecProvider()
+        val guide = UDPAudioPlane(provider)
+        val guest = UDPAudioPlane(provider)
+        val sessionID = UUID.randomUUID()
+        val joined = CountDownLatch(1)
+        val guestFailed = CountDownLatch(1)
+
+        try {
+            // RSK-3: the guest opens the guide's sealed challenge with its own credential first, so a
+            // wrong code fails AEAD authentication (log only), never the handshake-EOF path.
+            startAudioPair(
+                guide,
+                guest,
+                sessionID,
+                testCredential(sessionID),
+                SessionCredential.derive("23456789AC", sessionID),
+                joined,
+            ) { event ->
+                if (event is AudioSessionEvent.Failed) guestFailed.countDown()
+            }
+
+            assertFalse("Wrong code must not schedule a reconnect", guestFailed.await(500, TimeUnit.MILLISECONDS))
+            assertEquals(1L, joined.count)
         } finally {
             guest.stop()
             guide.stop()
@@ -510,13 +611,33 @@ class LocalSessionTransportTest {
 private fun testCredential(sessionID: UUID): SessionCredential =
     SessionCredential.derive("23456789AB", sessionID)
 
+private fun startAudioPair(
+    guide: UDPAudioPlane,
+    guest: UDPAudioPlane,
+    sessionID: UUID,
+    guideCredential: SessionCredential,
+    guestCredential: SessionCredential,
+    joined: CountDownLatch,
+    guestHandler: (AudioSessionEvent) -> Unit,
+) {
+    guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, guideCredential)
+    guide.setSessionEventHandler { event -> if (event is AudioSessionEvent.Joined) joined.countDown() }
+    guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
+
+    guest.hostIP = "127.0.0.1"
+    guest.configureSession(sessionID, UUID.randomUUID(), "Guest", ParticipantPlatform.ANDROID, guestCredential)
+    guest.setSessionEventHandler(guestHandler)
+    guest.startListening(sessionID.toString()) { }
+}
+
 private class CountingSocketFactory : SocketFactory() {
     private val delegate = getDefault()
     val createdCount = AtomicInteger()
+    val created = CopyOnWriteArrayList<Socket>()
 
     override fun createSocket(): Socket {
         createdCount.incrementAndGet()
-        return delegate.createSocket()
+        return delegate.createSocket().also(created::add)
     }
 
     override fun createSocket(host: String, port: Int): Socket = delegate.createSocket(host, port)
@@ -539,11 +660,13 @@ private class CountingSocketFactory : SocketFactory() {
 }
 
 private class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvider {
+    val encodeThreadNames = CopyOnWriteArraySet<String>()
+
     override fun sessionCapabilities(): Long =
         SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit
 
     override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface =
-        PassThroughRealtimeAudioEncoder(codec)
+        PassThroughRealtimeAudioEncoder(codec, encodeThreadNames)
 
     override fun makeDecoder(
         configuration: SessionAudioCodecConfiguration,
@@ -552,6 +675,7 @@ private class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvider
 
 private class PassThroughRealtimeAudioEncoder(
     override val codec: SessionAudioCodec,
+    private val encodeThreadNames: MutableSet<String>,
 ) : RealtimeAudioEncoderInterface {
     override val inputPCMByteCount: Int = 4
     private val configuration = SessionAudioCodecConfiguration(
@@ -562,8 +686,10 @@ private class PassThroughRealtimeAudioEncoder(
         20_000,
     )
 
-    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket =
-        NativeEncodedAudioPacket(configuration, pcm16LittleEndian.copyOf())
+    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket {
+        encodeThreadNames += Thread.currentThread().name
+        return NativeEncodedAudioPacket(configuration, pcm16LittleEndian.copyOf())
+    }
 
     override fun close() = Unit
 }

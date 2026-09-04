@@ -17,6 +17,32 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.sqrt
 
+/** The `AudioTrack.write` seam: a JVM test cannot build an AudioTrack, so the loop is pure. */
+internal fun interface PcmPlaybackSink {
+    fun write(data: ByteArray, offset: Int, size: Int): Int
+}
+
+sealed interface PlaybackWriteOutcome {
+    data object Written : PlaybackWriteOutcome
+    /** The track buffer filled before the frame was consumed (timer-vs-DAC drift, FND-5). */
+    data class Short(val written: Int, val expected: Int) : PlaybackWriteOutcome
+    /** A negative `AudioTrack` error code such as `ERROR_DEAD_OBJECT`. */
+    data class Failed(val code: Int) : PlaybackWriteOutcome
+}
+
+internal object PlaybackWriter {
+    fun write(sink: PcmPlaybackSink, data: ByteArray): PlaybackWriteOutcome {
+        var offset = 0
+        while (offset < data.size) {
+            val written = sink.write(data, offset, data.size - offset)
+            if (written < 0) return PlaybackWriteOutcome.Failed(written)
+            if (written == 0) return PlaybackWriteOutcome.Short(offset, data.size)
+            offset += written
+        }
+        return PlaybackWriteOutcome.Written
+    }
+}
+
 /**
  * Audio capture and playback engine matching the shared codec boundary:
  * 16 kHz mono signed PCM16 little-endian.
@@ -26,6 +52,13 @@ import kotlin.math.sqrt
 class AudioEngine(context: Context) {
     @Volatile var isCapturing = false; private set
     @Volatile var isPlaying = false; private set
+
+    /** Non-blocking writes that filled the track buffer; the drift signal P3 physical must record. */
+    @Volatile var playbackShortWriteCount = 0; private set
+    @Volatile var playbackWriteErrorCount = 0; private set
+    /** Invoked once per playback run with the first negative `AudioTrack.write` code. */
+    var playbackFailureHandler: ((Int) -> Unit)? = null
+    private var playbackFailureReported = false
 
     // Android microphone processing is device-dependent; a non-zero default gate
     // was suppressing speech on some devices when broadcasting to iOS.
@@ -169,6 +202,9 @@ class AudioEngine(context: Context) {
         track.play()
         audioTrack = track
         isPlaying = true
+        playbackFailureReported = false
+        playbackShortWriteCount = 0
+        playbackWriteErrorCount = 0
         applyListenerOutputRoute()
         Log.i(TAG, "Playback started: ${SAMPLE_RATE}Hz mono PCM16")
     }
@@ -184,7 +220,30 @@ class AudioEngine(context: Context) {
             Log.e(TAG, "Rejected invalid PCM16 playback packet: ${data.size} bytes")
             return
         }
-        track.write(data, 0, data.size, AudioTrack.WRITE_NON_BLOCKING)
+        val outcome = PlaybackWriter.write(
+            { buffer, offset, size -> track.write(buffer, offset, size, AudioTrack.WRITE_NON_BLOCKING) },
+            data,
+        )
+        when (outcome) {
+            PlaybackWriteOutcome.Written -> Unit
+            is PlaybackWriteOutcome.Short -> {
+                playbackShortWriteCount++
+                if (playbackShortWriteCount == 1 || playbackShortWriteCount % 100 == 0) {
+                    Log.e(
+                        TAG,
+                        "AudioTrack short write ${outcome.written}/${outcome.expected} bytes (count=$playbackShortWriteCount)",
+                    )
+                }
+            }
+            is PlaybackWriteOutcome.Failed -> {
+                playbackWriteErrorCount++
+                Log.e(TAG, "AudioTrack write failed: ${outcome.code} (count=$playbackWriteErrorCount)")
+                if (!playbackFailureReported) {
+                    playbackFailureReported = true
+                    playbackFailureHandler?.invoke(outcome.code)
+                }
+            }
+        }
     }
 
     fun stopPlayback() {

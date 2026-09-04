@@ -635,6 +635,37 @@ public enum TourSessionFixtures {
         ].joined(separator: "|")
     }
 
+    /// Deterministic playout-decision script shared with the Kotlin core (ADR-045). Every pop is
+    /// at now=200 except the final pop at 2_000, which expires the buffered frame 12.
+    /// Tokens: `w` wait, `f<seq>` frame, `c<seq>` conceal. Expected: `w,w,f1,f2,w,c3,f4,f10,f11,w`.
+    public static func simulatePlayout() throws -> String {
+        let payload = try EncodedAudioFramePayload(
+            configuration: encodedAudioFixture().configuration,
+            capturedAtNanoseconds: 100,
+            expiresAtNanoseconds: 1_000,
+            encodedBytes: Data([0x01])
+        )
+        var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 4)
+        var tokens: [String] = []
+        func pop(_ now: UInt64) {
+            switch jitter.popForPlayout(nowNanoseconds: now) {
+            case .wait: tokens.append("w")
+            case let .frame(frame): tokens.append("f\(frame.sequence)")
+            case let .conceal(missing): tokens.append("c\(missing)")
+            }
+        }
+        func offer(_ sequence: UInt64) {
+            _ = jitter.offer(SequencedEncodedAudioFrame(sequence: sequence, payload: payload), nowNanoseconds: 200)
+        }
+        pop(200)
+        offer(1); pop(200)
+        offer(2); pop(200); pop(200); pop(200)
+        offer(4); pop(200); pop(200)
+        offer(10); offer(11); pop(200); pop(200)
+        offer(12); pop(2_000)
+        return tokens.joined(separator: ",")
+    }
+
     public static func deterministicUUID(index: Int) -> UUID {
         let suffix = String(format: "%012llx", UInt64(index))
         return UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-\(suffix)")!

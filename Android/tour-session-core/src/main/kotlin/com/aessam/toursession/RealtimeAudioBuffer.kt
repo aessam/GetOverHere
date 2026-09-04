@@ -45,6 +45,16 @@ enum class EncodedAudioFrameOfferResult {
     CAPACITY_EXCEEDED,
 }
 
+/**
+ * One clock tick's playout decision (ADR-045): a playable frame, a single lost
+ * sequence to conceal with one silence frame, or nothing to play yet.
+ */
+sealed class EncodedAudioPlayoutDecision {
+    data class Frame(val frame: SequencedEncodedAudioFrame) : EncodedAudioPlayoutDecision()
+    data class Conceal(val missingSequence: Long) : EncodedAudioPlayoutDecision()
+    data object Wait : EncodedAudioPlayoutDecision()
+}
+
 class EncodedAudioJitterBuffer(
     val targetFrameCount: Int,
     val maximumFrameCount: Int,
@@ -87,24 +97,37 @@ class EncodedAudioJitterBuffer(
         return EncodedAudioFrameOfferResult.ACCEPTED
     }
 
-    fun popReady(nowNanoseconds: Long): SequencedEncodedAudioFrame? {
+    /**
+     * Clock-driven drain. Called once per negotiated frame duration by the playout timer.
+     * A missing expected sequence while the buffer is below the target depth is concealed
+     * (one silence frame keeps the timeline); at or above the target depth the buffer resyncs
+     * to its oldest frame instead of waiting for a frame that is probably lost.
+     */
+    fun popForPlayout(nowNanoseconds: Long): EncodedAudioPlayoutDecision {
         frames.entries.removeAll { (_, frame) -> frame.localDeadlineNanoseconds <= nowNanoseconds }
-        if (frames.isEmpty()) return null
+        if (frames.isEmpty()) return EncodedAudioPlayoutDecision.Wait
 
         if (!hasStarted) {
-            if (frames.size < targetFrameCount) return null
+            if (frames.size < targetFrameCount) return EncodedAudioPlayoutDecision.Wait
             hasStarted = true
             expectedSequence = frames.firstKey()
         }
 
-        var sequence = expectedSequence ?: return null
-        if (!frames.containsKey(sequence)) {
-            if (frames.size < targetFrameCount) return null
-            sequence = frames.firstKey()
+        val sequence = expectedSequence ?: return EncodedAudioPlayoutDecision.Wait
+        frames.remove(sequence)?.let { buffered ->
+            expectedSequence = if (sequence == Long.MAX_VALUE) null else sequence + 1
+            return EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(sequence, buffered.payload))
         }
-        val buffered = frames.remove(sequence) ?: return null
+        if (frames.size >= targetFrameCount) {
+            val next = frames.firstKey()
+            val buffered = frames.remove(next)
+            if (buffered != null) {
+                expectedSequence = if (next == Long.MAX_VALUE) null else next + 1
+                return EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(next, buffered.payload))
+            }
+        }
         expectedSequence = if (sequence == Long.MAX_VALUE) null else sequence + 1
-        return SequencedEncodedAudioFrame(sequence, buffered.payload)
+        return EncodedAudioPlayoutDecision.Conceal(sequence)
     }
 
     fun reset() {

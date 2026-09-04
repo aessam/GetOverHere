@@ -34,11 +34,12 @@ fun main(arguments: Array<String>) {
                 println(TourSessionFixtures.simulateParticipants(count))
             }
             "faults" -> println(RealtimeSequenceAudit.analyze(listOf(1, 2, 2, 5, 4, 7)).report)
+            "playout" -> println(TourSessionFixtures.simulatePlayout())
             "state" -> println(TourSessionFixtures.stateFixtureHex())
             "auth" -> println(TourSessionFixtures.authenticationFixtureHex())
             "recovery" -> println(TourSessionFixtures.simulateRecovery())
             "focus" -> println(TourSessionFixtures.simulateVisualFocus())
-            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | state | auth | recovery | focus")
+            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
             else -> fail("unknown command: $command")
         }
     } catch (error: Exception) {

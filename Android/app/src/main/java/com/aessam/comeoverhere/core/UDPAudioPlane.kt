@@ -9,6 +9,7 @@ import com.aessam.toursession.ParticipantSession
 import com.aessam.toursession.EncodedAudioFramePayload
 import com.aessam.toursession.EncodedAudioFrameOfferResult
 import com.aessam.toursession.EncodedAudioJitterBuffer
+import com.aessam.toursession.EncodedAudioPlayoutDecision
 import com.aessam.toursession.PCMFrameAccumulator
 import com.aessam.toursession.SealedSessionEnvelope
 import com.aessam.toursession.SequencedEncodedAudioFrame
@@ -36,6 +37,8 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
@@ -74,19 +77,160 @@ class UDPAudioPlane(
         var sequence: Long = 0
     }
 
-    private class ReceiveCodecState(
-        val decoder: RealtimeAudioDecoderInterface,
+    /**
+     * Encode + seal + fan-out on one dedicated worker (FND-3, mirrors the iOS `audio.encode.seal`
+     * queue of ADR-039). The capture flow is collected on the application's main dispatcher, so
+     * running the codec there stalled the UI every 10 ms.
+     */
+    private class BroadcastProcessor(
+        private val configured: SessionConfiguration,
+        private val codecProvider: RealtimeAudioCodecProvider,
+    ) {
+        private val executor = Executors.newSingleThreadExecutor { body ->
+            Thread(body, "audio-encode-seal").apply { isDaemon = true }
+        }
+        private val sealer = SessionFrameSealer(configured.credential)
+        // Confined to the executor thread.
+        private val codecStates = mutableMapOf<SessionAudioCodec, BroadcastCodecState>()
+        private var sentPacketCount = 0
+        @Volatile private var stopped = false
+
+        fun submit(pcm: ByteArray, destinations: Map<SessionAudioCodec, List<BoundedSocketFrameWriter>>) {
+            if (stopped) return
+            try {
+                executor.execute { process(pcm, destinations) }
+            } catch (error: RejectedExecutionException) {
+                Log.e(TAG, "TCP: encode worker rejected a frame after stop (${error.javaClass.simpleName})")
+            }
+        }
+
+        fun stop() {
+            stopped = true
+            executor.execute {
+                codecStates.values.forEach { it.encoder.close() }
+                codecStates.clear()
+            }
+            executor.shutdown()
+        }
+
+        private fun process(pcm: ByteArray, destinations: Map<SessionAudioCodec, List<BoundedSocketFrameWriter>>) {
+            if (stopped) return
+            destinations.forEach { (codec, writers) ->
+                if (writers.isEmpty()) return@forEach
+                try {
+                    val state = codecStates.getOrPut(codec) {
+                        BroadcastCodecState(codecProvider.makeEncoder(codec))
+                    }
+                    state.accumulator.append(pcm).forEach { pcmFrame ->
+                        val packet = state.encoder.encode(pcmFrame) ?: return@forEach
+                        val capturedAt = wallClockNanoseconds()
+                        val payload = EncodedAudioFramePayload(
+                            packet.configuration,
+                            capturedAt,
+                            capturedAt + FRAME_LIFETIME_NANOSECONDS,
+                            packet.bytes,
+                        )
+                        val logical = SessionEnvelope(
+                            lane = SessionLane.REALTIME,
+                            kind = SessionMessageKind.AUDIO_FRAME,
+                            sequence = state.sequence++,
+                            sessionId = configured.sessionID,
+                            senderId = configured.participantID,
+                            payload = payload.encode(),
+                        )
+                        val frame = sealer.seal(logical, state.streamID).encode()
+                        sentPacketCount++
+                        if (sentPacketCount == 1) {
+                            Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
+                        }
+                        writers.forEach { it.enqueue(frame) }
+                    }
+                } catch (error: Exception) {
+                    Log.e(TAG, "TCP: encoded audio frame failed (${error.javaClass.simpleName})")
+                }
+            }
+        }
+    }
+
+    /**
+     * Clock-driven realtime playout (ADR-045). A fixed-rate timer at the negotiated frame duration
+     * drains the jitter buffer on its own thread, decodes there (the native decoder never runs on
+     * the receive thread), and conceals a single lost frame with one silence frame so the timeline
+     * is preserved. Production calls [start] right after construction; tests drive [tick] with an
+     * injected clock.
+     */
+    internal class PlayoutClock(
+        private val decoder: RealtimeAudioDecoderInterface,
+        private val clock: () -> Long,
+        private val onAudio: (ByteArray) -> Unit,
+        private val onDecodeFailure: () -> Unit,
     ) : AutoCloseable {
-        val jitter: EncodedAudioJitterBuffer
+        val configuration: SessionAudioCodecConfiguration get() = decoder.configuration
+
+        /** Exactly one negotiated frame of PCM16 zeros: sampleRate * frameDuration / 1000 * channels * 2. */
+        val silenceFrame: ByteArray
+
+        private val lock = Any()
+        private val jitter: EncodedAudioJitterBuffer
+        private val executor = Executors.newSingleThreadScheduledExecutor { body ->
+            Thread(body, "goh2-audio-playout").apply { isDaemon = true }
+        }
+        @Volatile private var stopped = false
+        private val failureReported = AtomicBoolean(false)
 
         init {
-            val duration = decoder.configuration.frameDurationMilliseconds
+            val duration = configuration.frameDurationMilliseconds
             val targetFrames = maxOf(1, (60 + duration - 1) / duration)
             val maximumFrames = maxOf(targetFrames, (250 + duration - 1) / duration)
             jitter = EncodedAudioJitterBuffer(targetFrames, maximumFrames)
+            silenceFrame = ByteArray(
+                (configuration.sampleRate * duration / 1_000 * configuration.channelCount * 2).toInt(),
+            )
         }
 
-        override fun close() = decoder.close()
+        fun start() {
+            val duration = configuration.frameDurationMilliseconds.toLong()
+            executor.scheduleAtFixedRate(::tick, duration, duration, TimeUnit.MILLISECONDS)
+        }
+
+        fun offer(frame: SequencedEncodedAudioFrame, nowNanoseconds: Long): EncodedAudioFrameOfferResult =
+            synchronized(lock) { jitter.offer(frame, nowNanoseconds) }
+
+        /** One playout period. Runs on the playout thread in production; tests call it directly. */
+        internal fun tick() {
+            if (stopped) return
+            val decision = synchronized(lock) { jitter.popForPlayout(clock()) }
+            try {
+                when (decision) {
+                    is EncodedAudioPlayoutDecision.Frame ->
+                        decoder.decode(decision.frame.payload.encodedBytes)?.let(onAudio)
+                    is EncodedAudioPlayoutDecision.Conceal -> onAudio(silenceFrame)
+                    EncodedAudioPlayoutDecision.Wait -> Unit
+                }
+            } catch (error: Exception) {
+                // Mandatory: an uncaught exception silently cancels scheduleAtFixedRate.
+                Log.e(TAG, "TCP: native audio decode failed (${error.javaClass.simpleName})")
+                stopped = true
+                if (failureReported.compareAndSet(false, true)) onDecodeFailure()
+            }
+        }
+
+        override fun close() {
+            stopped = true
+            executor.shutdownNow()
+            // The receive thread is interrupted by stop(); clear the flag so the wait is real.
+            val wasInterrupted = Thread.interrupted()
+            try {
+                if (!executor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                    Log.e(TAG, "TCP: playout thread did not stop before decoder close")
+                }
+            } catch (error: InterruptedException) {
+                Log.e(TAG, "TCP: interrupted while stopping the playout thread (${error.javaClass.simpleName})")
+            } finally {
+                if (wasInterrupted) Thread.currentThread().interrupt()
+            }
+            decoder.close()
+        }
     }
 
     private val maximumFrameSize = 1_048_576
@@ -102,13 +246,14 @@ class UDPAudioPlane(
     private val acceptExecutor = Executors.newSingleThreadExecutor()
     private val clientExecutor = Executors.newCachedThreadPool()
     private var receiveThread: Thread? = null
-    @Volatile private var outboundSealer: SessionFrameSealer? = null
-    private val codecStates = mutableMapOf<SessionAudioCodec, BroadcastCodecState>()
-    private var sentPacketCount = 0
+    @Volatile private var broadcastProcessor: BroadcastProcessor? = null
     private var receivedPacketCount = 0
 
     var hostIP: String? = null
     @Volatile private var guestSocketFactory: SocketFactory = SocketFactory.getDefault()
+
+    /** Test accessor for socket-option and admission assertions (FND-4). */
+    internal fun acceptedClientSockets(): List<Socket> = clients.map { it.socket }
 
     companion object {
         private const val TAG = "UDPAudioPlane"
@@ -160,9 +305,7 @@ class UDPAudioPlane(
         closeSockets()
         active.set(true)
         val epoch = runEpoch.incrementAndGet()
-        outboundSealer = SessionFrameSealer(configured.credential)
-        codecStates.clear()
-        sentPacketCount = 0
+        broadcastProcessor = BroadcastProcessor(configured, codecProvider)
         try {
             val ip = findLocalIPv4()
             if (hostIP == null) hostIP = ip
@@ -177,7 +320,7 @@ class UDPAudioPlane(
             acceptExecutor.execute {
                 while (active.get()) {
                     val socket = try {
-                        server.accept()
+                        server.accept().apply { tcpNoDelay = true }
                     } catch (error: Exception) {
                         if (active.get()) Log.e(TAG, "TCP accept failed (${error.javaClass.simpleName})")
                         break
@@ -193,50 +336,13 @@ class UDPAudioPlane(
         }
     }
 
-    @Synchronized
     override fun sendAudio(data: ByteArray) {
-        val configured = configuration ?: return
-        val sealer = outboundSealer ?: return
+        val processor = broadcastProcessor ?: return
         if (!active.get() || clients.isEmpty()) return
-
-        val deliveries = mutableListOf<Pair<ByteArray, List<ClientConnection>>>()
-        clients.groupBy(ClientConnection::codec).forEach { (codec, destinations) ->
-            try {
-                val state = codecStates.getOrPut(codec) {
-                    BroadcastCodecState(codecProvider.makeEncoder(codec))
-                }
-                state.accumulator.append(data).forEach { pcmFrame ->
-                    val packet = state.encoder.encode(pcmFrame) ?: return@forEach
-                    val capturedAt = wallClockNanoseconds()
-                    val payload = EncodedAudioFramePayload(
-                        packet.configuration,
-                        capturedAt,
-                        capturedAt + FRAME_LIFETIME_NANOSECONDS,
-                        packet.bytes,
-                    )
-                    val logical = SessionEnvelope(
-                        lane = SessionLane.REALTIME,
-                        kind = SessionMessageKind.AUDIO_FRAME,
-                        sequence = state.sequence++,
-                        sessionId = configured.sessionID,
-                        senderId = configured.participantID,
-                        payload = payload.encode(),
-                    )
-                    deliveries += sealer.seal(logical, state.streamID).encode() to destinations
-                }
-            } catch (error: Exception) {
-                Log.e(TAG, "TCP: encoded audio frame failed (${error.javaClass.simpleName})")
-            }
-        }
-        if (deliveries.isEmpty()) return
-
-        deliveries.forEach { (frame, destinations) ->
-            sentPacketCount++
-            if (sentPacketCount == 1) {
-                Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
-            }
-            destinations.forEach { it.writer.enqueue(frame) }
-        }
+        processor.submit(
+            data,
+            clients.groupBy(ClientConnection::codec).mapValues { (_, connections) -> connections.map { it.writer } },
+        )
     }
 
     private fun authenticateAndMonitor(
@@ -355,23 +461,29 @@ class UDPAudioPlane(
         }
 
         active.set(true)
+        val epoch = runEpoch.incrementAndGet()
+        val failureEmitted = AtomicBoolean(false)
         receivedPacketCount = 0
         receiveThread = Thread {
             var socket: Socket? = null
-            var decodeState: ReceiveCodecState? = null
+            var playout: PlayoutClock? = null
+            var authenticated = false
             try {
                 Log.i(TAG, "TCP: connecting to guide")
-                socket = guestSocketFactory.createSocket().apply {
+                val connected = guestSocketFactory.createSocket().apply {
+                    tcpNoDelay = true
                     connect(InetSocketAddress(host, audioPort), 5_000)
                 }
-                clientSocket = socket
-                val output = socket.getOutputStream()
-                socket.soTimeout = 5_000
-                val guideID = authenticateGuide(socket, output, configured, localCapabilities)
-                socket.soTimeout = 0
+                socket = connected
+                clientSocket = connected
+                val output = connected.getOutputStream()
+                connected.soTimeout = 5_000
+                val guideID = authenticateGuide(connected, output, configured, localCapabilities)
+                authenticated = true
+                connected.soTimeout = 0
                 Log.i(TAG, "TCP: authenticated GOH2 session joined")
 
-                val input = socket.getInputStream()
+                val input = connected.getInputStream()
                 val opener = SessionFrameOpener(configured.credential)
                 while (active.get()) {
                     val envelope = when (
@@ -391,40 +503,64 @@ class UDPAudioPlane(
                     receivedPacketCount++
                     if (receivedPacketCount == 1) Log.i(TAG, "TCP: received first GOH2 audio frame")
                     val encoded = EncodedAudioFramePayload.decode(envelope.payload)
-                    if (decodeState?.decoder?.configuration != encoded.configuration) {
-                        decodeState?.close()
-                        decodeState = ReceiveCodecState(codecProvider.makeDecoder(encoded.configuration))
+                    if (playout?.configuration != encoded.configuration) {
+                        // The receive thread only offers; the clock drains, decodes, and conceals (ADR-045).
+                        playout?.close()
+                        playout = PlayoutClock(
+                            decoder = codecProvider.makeDecoder(encoded.configuration),
+                            clock = ::wallClockNanoseconds,
+                            onAudio = onAudio,
+                            onDecodeFailure = {
+                                emitFailedOnce(epoch, failureEmitted, "Native audio decode failed")
+                                closeSocket(connected)
+                            },
+                        ).also { it.start() }
                     }
-                    val state = decodeState ?: continue
-                    val offer = state.jitter.offer(
-                        SequencedEncodedAudioFrame(envelope.sequence, encoded),
-                        wallClockNanoseconds(),
-                    )
-                    if (offer != EncodedAudioFrameOfferResult.ACCEPTED) continue
-                    while (true) {
-                        val ready = state.jitter.popReady(wallClockNanoseconds()) ?: break
-                        state.decoder.decode(ready.payload.encodedBytes)?.let(onAudio)
-                    }
+                    val clock = playout ?: continue
+                    clock.offer(SequencedEncodedAudioFrame(envelope.sequence, encoded), wallClockNanoseconds())
                 }
             } catch (error: UnsupportedSessionVersionException) {
-                if (active.get()) {
+                if (isRunActive(epoch)) {
                     sessionEventHandler?.invoke(
                         AudioSessionEvent.VersionMismatch(
                             error.receivedMajorVersion,
                             error.supportedMajorVersion,
                         ),
                     )
+                    failureEmitted.set(true)
                 }
             } catch (error: Exception) {
-                if (active.get()) Log.e(TAG, "TCP receive failed (${error.javaClass.simpleName})")
+                if (isRunActive(epoch)) {
+                    Log.e(TAG, "TCP receive failed (${error.javaClass.simpleName})")
+                    // Pre-authentication IllegalArgumentException is a credential or protocol
+                    // rejection (a wrong tour code fails to open the guide's sealed challenge as
+                    // SessionFrameSecurityException): log only, the control lane reports admission.
+                    // Everything else, and anything after authentication, is transport loss.
+                    if (authenticated || error !is IllegalArgumentException) {
+                        emitFailedOnce(
+                            epoch,
+                            failureEmitted,
+                            "Guide audio connection lost (${error.javaClass.simpleName})",
+                        )
+                    }
+                }
             } finally {
-                decodeState?.close()
+                playout?.close()
                 socket?.let(::closeSocket)
             }
         }.also {
             it.name = "goh2-audio-receive"
             it.isDaemon = true
             it.start()
+        }
+    }
+
+    private fun isRunActive(epoch: Long): Boolean = active.get() && runEpoch.get() == epoch
+
+    /** Emits at most one [AudioSessionEvent.Failed] per guest run, and none for a superseded run. */
+    private fun emitFailedOnce(epoch: Long, failureEmitted: AtomicBoolean, message: String) {
+        if (isRunActive(epoch) && failureEmitted.compareAndSet(false, true)) {
+            sessionEventHandler?.invoke(AudioSessionEvent.Failed(message))
         }
     }
 
@@ -653,9 +789,8 @@ class UDPAudioPlane(
         }
         clientSocket?.let(::closeSocket)
         clients.toList().forEach(::removeClient)
-        codecStates.values.forEach { state -> state.encoder.close() }
-        codecStates.clear()
-        outboundSealer = null
+        broadcastProcessor?.stop()
+        broadcastProcessor = null
         serverSocket = null
         clientSocket = null
     }

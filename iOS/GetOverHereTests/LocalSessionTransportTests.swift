@@ -23,7 +23,7 @@ struct LocalSessionTransportTests {
         let credential = try transportCredential(sessionID)
         let payload = Data([0x10, 0x20, 0x30, 0x40])
         let (events, eventContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
-        let (audio, audioContinuation) = AsyncStream.makeStream(of: Data.self)
+        let (audio, audioContinuation) = AsyncStream.makeStream(of: (Data, String).self)
 
         defer {
             guest.stop()
@@ -51,7 +51,8 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guest.startListening(channelID: sessionID.uuidString) { data in
-            audioContinuation.yield(data)
+            // FND-5: PCM must be delivered from the clocked playout queue, never the read loop.
+            audioContinuation.yield((data, String(cString: __dispatch_queue_get_label(nil))))
         }
 
         let event = try await next(from: events)
@@ -62,10 +63,125 @@ struct LocalSessionTransportTests {
         #expect(participant.participantID == guestID)
         #expect(participant.displayName == "Guest")
 
+        // FND-4: Nagle is disabled on the connecting and the accepted realtime socket (DSCN-18).
+        #expect(tcpNoDelay(fd: try #require(guest.guestSocketDescriptor)) != 0)
+        #expect(guide.connectedClientDescriptors.count == 1)
+        #expect(tcpNoDelay(fd: try #require(guide.connectedClientDescriptors.first)) != 0)
+
         guide.sendAudio(payload)
         guide.sendAudio(payload)
         guide.sendAudio(payload)
-        #expect(try await next(from: audio) == payload)
+        let (received, deliveryQueueLabel) = try await next(from: audio)
+        #expect(received == payload)
+        #expect(deliveryQueueLabel == "audio.tcp.playout")
+    }
+
+    @Test("Guest audio lane reports the guide closing the realtime socket")
+    @MainActor
+    func guestAudioLaneReportsGuideClose() async throws {
+        let provider = PassThroughRealtimeAudioCodecProvider()
+        let guide = UDPAudioPlane(codecProvider: provider)
+        let guest = UDPAudioPlane(codecProvider: provider)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            guideContinuation.finish()
+            guestContinuation.finish()
+        }
+
+        try startAudioPair(
+            guide: guide,
+            guest: guest,
+            sessionID: sessionID,
+            guideCredential: credential,
+            guestCredential: credential,
+            guideEvents: guideContinuation,
+            guestEvents: guestContinuation
+        )
+        guard case .joined = try await next(from: guideEvents) else {
+            Issue.record("Expected a joined event")
+            return
+        }
+
+        guide.stop()
+
+        guard case let .failed(message) = try await next(from: guestEvents) else {
+            Issue.record("Expected the guest audio lane to report the guide close")
+            return
+        }
+        #expect(message == "Guide audio connection closed")
+    }
+
+    @Test("Guest audio lane stays silent on a local stop")
+    @MainActor
+    func guestAudioLaneStaysSilentOnLocalStop() async throws {
+        let provider = PassThroughRealtimeAudioCodecProvider()
+        let guide = UDPAudioPlane(codecProvider: provider)
+        let guest = UDPAudioPlane(codecProvider: provider)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            guideContinuation.finish()
+            guestContinuation.finish()
+        }
+
+        try startAudioPair(
+            guide: guide,
+            guest: guest,
+            sessionID: sessionID,
+            guideCredential: credential,
+            guestCredential: credential,
+            guideEvents: guideContinuation,
+            guestEvents: guestContinuation
+        )
+        guard case .joined = try await next(from: guideEvents) else {
+            Issue.record("Expected a joined event")
+            return
+        }
+
+        guest.stop()
+
+        try await expectSilence(on: guestEvents)
+    }
+
+    @Test("Audio lane with a wrong tour code is rejected without a reconnect trigger")
+    @MainActor
+    func audioLaneWrongCodeStaysSilent() async throws {
+        let provider = PassThroughRealtimeAudioCodecProvider()
+        let guide = UDPAudioPlane(codecProvider: provider)
+        let guest = UDPAudioPlane(codecProvider: provider)
+        let sessionID = UUID()
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            guideContinuation.finish()
+            guestContinuation.finish()
+        }
+
+        // RSK-3: the guest opens the guide's sealed challenge with its own credential first, so a
+        // wrong code fails AEAD authentication (log only), never the handshake-EOF path.
+        try startAudioPair(
+            guide: guide,
+            guest: guest,
+            sessionID: sessionID,
+            guideCredential: try transportCredential(sessionID),
+            guestCredential: try SessionCredential.derive(shortCode: "23456789AC", sessionID: sessionID),
+            guideEvents: guideContinuation,
+            guestEvents: guestContinuation
+        )
+
+        try await expectSilence(on: guestEvents)
+        try await expectSilence(on: guideEvents)
     }
 
     @Test("Audio lane reports a legacy protocol version explicitly")
@@ -674,7 +790,59 @@ struct LocalSessionTransportTests {
         #expect(try AssetRequestPayload.decode(requestEnvelope.payload) == request)
     }
 
-    private func next<Element: Sendable>(from stream: AsyncStream<Element>) async throws -> Element {
+    @MainActor
+    private func startAudioPair(
+        guide: UDPAudioPlane,
+        guest: UDPAudioPlane,
+        sessionID: UUID,
+        guideCredential: SessionCredential,
+        guestCredential: SessionCredential,
+        guideEvents: AsyncStream<AudioSessionEvent>.Continuation,
+        guestEvents: AsyncStream<AudioSessionEvent>.Continuation
+    ) throws {
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: guideCredential
+        )
+        guide.setSessionEventHandler { guideEvents.yield($0) }
+        guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
+
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guest",
+            platform: .iOS,
+            credential: guestCredential
+        )
+        guest.setSessionEventHandler { guestEvents.yield($0) }
+        guest.startListening(channelID: sessionID.uuidString) { _ in }
+    }
+
+    /// Passes only when no event arrives within 500 ms; any event is recorded as an issue.
+    private func expectSilence(on stream: AsyncStream<AudioSessionEvent>) async throws {
+        do {
+            let event = try await next(from: stream, timeout: .milliseconds(500))
+            Issue.record("Unexpected audio session event: \(event)")
+        } catch TestTimeout.expired {
+            // Silence is the expected outcome.
+        }
+    }
+
+    private func tcpNoDelay(fd: Int32) -> Int32 {
+        var value: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, &length)
+        return value
+    }
+
+    private func next<Element: Sendable>(
+        from stream: AsyncStream<Element>,
+        timeout: Duration = .seconds(3)
+    ) async throws -> Element {
         try await withThrowingTaskGroup(of: Element.self) { group in
             group.addTask {
                 var iterator = stream.makeAsyncIterator()
@@ -682,7 +850,7 @@ struct LocalSessionTransportTests {
                 return element
             }
             group.addTask {
-                try await Task.sleep(for: .seconds(3))
+                try await Task.sleep(for: timeout)
                 throw TestTimeout.expired
             }
             guard let first = try await group.next() else { throw TestTimeout.streamEnded }

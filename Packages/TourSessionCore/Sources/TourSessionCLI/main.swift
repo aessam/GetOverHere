@@ -6,7 +6,7 @@ enum TourSessionCLI {
     static func main() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | state | auth | recovery | focus")
+            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
         }
 
         switch command {
@@ -36,6 +36,8 @@ enum TourSessionCLI {
             print(TourSessionFixtures.simulateParticipants(count: count))
         case "faults":
             print(RealtimeSequenceAudit(sequences: [1, 2, 2, 5, 4, 7]).report)
+        case "playout":
+            print(try TourSessionFixtures.simulatePlayout())
         case "state":
             print(try TourSessionFixtures.stateFixtureHex())
         case "auth":

@@ -579,6 +579,39 @@ object TourSessionFixtures {
         ).joinToString("|")
     }
 
+    /**
+     * Deterministic playout-decision script shared with the Swift core (ADR-045). Every pop is
+     * at now=200 except the final pop at 2_000, which expires the buffered frame 12.
+     * Tokens: `w` wait, `f<seq>` frame, `c<seq>` conceal. Expected: `w,w,f1,f2,w,c3,f4,f10,f11,w`.
+     */
+    fun simulatePlayout(): String {
+        val payload = EncodedAudioFramePayload(
+            configuration = encodedAudioFixture().configuration,
+            capturedAtNanoseconds = 100,
+            expiresAtNanoseconds = 1_000,
+            encodedBytes = byteArrayOf(1),
+        )
+        val jitter = EncodedAudioJitterBuffer(targetFrameCount = 2, maximumFrameCount = 4)
+        val tokens = mutableListOf<String>()
+        fun pop(now: Long) {
+            tokens += when (val decision = jitter.popForPlayout(now)) {
+                EncodedAudioPlayoutDecision.Wait -> "w"
+                is EncodedAudioPlayoutDecision.Frame -> "f${decision.frame.sequence}"
+                is EncodedAudioPlayoutDecision.Conceal -> "c${decision.missingSequence}"
+            }
+        }
+        fun offer(sequence: Long) {
+            jitter.offer(SequencedEncodedAudioFrame(sequence, payload), 200)
+        }
+        pop(200)
+        offer(1); pop(200)
+        offer(2); pop(200); pop(200); pop(200)
+        offer(4); pop(200); pop(200)
+        offer(10); offer(11); pop(200); pop(200)
+        offer(12); pop(2_000)
+        return tokens.joinToString(",")
+    }
+
     fun deterministicUuid(index: Int): UUID {
         val suffix = index.toLong().toString(16).padStart(12, '0')
         return UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-$suffix")

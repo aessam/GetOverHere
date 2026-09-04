@@ -182,6 +182,14 @@ if [[ "$($SWIFT_BIN faults)" != "$EXPECTED_FAULTS" || "$(run_kotlin faults)" != 
     exit 1
 fi
 
+EXPECTED_PLAYOUT="w,w,f1,f2,w,c3,f4,f10,f11,w"
+SWIFT_PLAYOUT="$($SWIFT_BIN playout)"
+KOTLIN_PLAYOUT="$(run_kotlin playout)"
+if [[ "$SWIFT_PLAYOUT" != "$EXPECTED_PLAYOUT" || "$KOTLIN_PLAYOUT" != "$EXPECTED_PLAYOUT" ]]; then
+    echo "error: clocked playout concealment/resync mismatch" >&2
+    exit 1
+fi
+
 EXPECTED_FOCUS="initial=slides:0|guide=map:1,pointer:2|guest=pointer:2|stale=pointer:2|late=pointer:2"
 if [[ "$($SWIFT_BIN focus)" != "$EXPECTED_FOCUS" || "$(run_kotlin focus)" != "$EXPECTED_FOCUS" ]]; then
     echo "error: guide-selected shared-screen simulation failed" >&2
@@ -266,6 +274,29 @@ if rg -n 'Task \{ @concurrent|sendQueue|sendExecutor' \
     "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/UDPAudioPlane.kt" \
     "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/LocalSessionControlTransport.kt" >/dev/null; then
     echo "error: production socket I/O again uses the cooperative pool or one shared send queue" >&2
+    exit 1
+fi
+
+# One rg per file: a single rg over two files exits 0 when either matches.
+if ! rg -q 'TCP_NODELAY' "$PROJECT_ROOT/iOS/GetOverHere/Core/UDPAudioPlane.swift" \
+    || ! rg -q 'tcpNoDelay = true' "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/UDPAudioPlane.kt"; then
+    echo "error: realtime audio sockets no longer disable Nagle" >&2
+    exit 1
+fi
+
+if ! rg -q '"audio\.encode\.seal"' "$PROJECT_ROOT/iOS/GetOverHere/Core/UDPAudioPlane.swift" \
+    || ! rg -q '"audio-encode-seal"' "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/UDPAudioPlane.kt"; then
+    echo "error: realtime encode/seal is no longer isolated on a dedicated worker" >&2
+    exit 1
+fi
+if rg -q '@Synchronized\s+override fun sendAudio' "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/UDPAudioPlane.kt"; then
+    echo "error: Android sendAudio again encodes on the caller thread" >&2
+    exit 1
+fi
+
+if ! rg -q '"audio\.tcp\.playout"' "$PROJECT_ROOT/iOS/GetOverHere/Core/UDPAudioPlane.swift" \
+    || ! rg -q '"goh2-audio-playout"' "$ANDROID_ROOT/app/src/main/java/com/aessam/comeoverhere/core/UDPAudioPlane.kt"; then
+    echo "error: realtime playout is no longer clock-driven" >&2
     exit 1
 fi
 

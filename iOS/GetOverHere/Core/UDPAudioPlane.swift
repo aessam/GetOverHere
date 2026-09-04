@@ -38,22 +38,6 @@ final class UDPAudioPlane: AudioPlane {
         }
     }
 
-    nonisolated private final class ReceiveCodecState {
-        let decoder: any RealtimeAudioDecoderInterface
-        var jitter: EncodedAudioJitterBuffer
-
-        init(decoder: any RealtimeAudioDecoderInterface) throws {
-            self.decoder = decoder
-            let duration = Int(decoder.configuration.frameDurationMilliseconds)
-            let targetFrames = max(1, (60 + duration - 1) / duration)
-            let maximumFrames = max(targetFrames, (250 + duration - 1) / duration)
-            jitter = try EncodedAudioJitterBuffer(
-                targetFrameCount: targetFrames,
-                maximumFrameCount: maximumFrames
-            )
-        }
-    }
-
     nonisolated private final class BroadcastProcessor: @unchecked Sendable {
         private let queue = DispatchQueue(label: "audio.encode.seal", qos: .userInteractive)
         private let lock = NSLock()
@@ -179,6 +163,10 @@ final class UDPAudioPlane: AudioPlane {
     private(set) var isActive = false
     var hostIP: String?
 
+    /// Test accessors for socket-option and admission assertions (FND-4).
+    var connectedClientDescriptors: [Int32] { connectedClients.map(\.writer.socket.fd) }
+    var guestSocketDescriptor: Int32? { guestSocket?.fd }
+
     private let port: UInt16
     private let maximumFrameSize = 1_048_576
     private let frameLifetimeNanoseconds: UInt64 = 500_000_000
@@ -294,6 +282,7 @@ final class UDPAudioPlane: AudioPlane {
                     }
                 }
                 guard acceptedFD >= 0 else { break }
+                Self.setNoDelay(fd: acceptedFD)
                 let socket = ManagedSocket(fd: acceptedFD, generation: generation)
                 let connectionQueue = DispatchQueue(
                     label: "audio.tcp.client.\(UUID().uuidString)",
@@ -405,9 +394,11 @@ final class UDPAudioPlane: AudioPlane {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             guard fd >= 0 else {
                 Logger.audio.error("TCP: socket failed: \(String(cString: strerror(errno)))")
+                self?.callbacks.emitSession(.failed("Guide audio socket failed"))
                 return
             }
             let socket = ManagedSocket(fd: fd, generation: generation)
+            Self.setNoDelay(fd: fd)
             let registration = DispatchSemaphore(value: 0)
             Task { @MainActor [weak self] in
                 self?.setGuestSocket(socket, generation: generation)
@@ -425,6 +416,9 @@ final class UDPAudioPlane: AudioPlane {
             address.sin_port = audioPort.bigEndian
             guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else {
                 Logger.audio.error("TCP: invalid guide address")
+                if !socket.isCancelled {
+                    self?.callbacks.emitSession(.failed("Guide audio connection failed"))
+                }
                 socket.close()
                 Task { @MainActor [weak self] in
                     self?.clearGuestSocket(socket, generation: generation)
@@ -439,6 +433,9 @@ final class UDPAudioPlane: AudioPlane {
             }
             guard connectResult == 0 else {
                 Logger.audio.error("TCP: connect failed: \(String(cString: strerror(errno)))")
+                if !socket.isCancelled {
+                    self?.callbacks.emitSession(.failed("Guide audio connection failed"))
+                }
                 socket.close()
                 Task { @MainActor [weak self] in
                     self?.clearGuestSocket(socket, generation: generation)
@@ -463,7 +460,21 @@ final class UDPAudioPlane: AudioPlane {
                     self?.clearGuestSocket(socket, generation: generation)
                 }
                 return
+            } catch AudioAuthenticationError.incompleteHandshake {
+                // Transport loss during the handshake (EOF or the 5 s receive timeout).
+                Logger.audio.error("TCP: guide audio handshake did not complete")
+                if !socket.isCancelled {
+                    self?.callbacks.emitSession(.failed("Guide audio handshake did not complete"))
+                }
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                }
+                return
             } catch {
+                // Credential or protocol rejection (a wrong tour code fails to open the guide's
+                // sealed challenge; a forged or malformed welcome fails proof validation). Log only:
+                // the control lane already reports admission failures and a retry cannot succeed.
                 Logger.audio.error("TCP: authentication failed")
                 socket.close()
                 Task { @MainActor [weak self] in
@@ -474,8 +485,9 @@ final class UDPAudioPlane: AudioPlane {
             Logger.audio.info("TCP: authenticated GOH2 session joined")
 
             let opener = SessionFrameOpener(credential: configuration.credential)
-            var decodeState: ReceiveCodecState?
+            var playout: PlayoutClock?
             var receivedPacketCount = 0
+            var terminalEventEmitted = false
             while !socket.isCancelled {
                 guard let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) else {
                     break
@@ -500,38 +512,48 @@ final class UDPAudioPlane: AudioPlane {
                     }
                     let encoded = try EncodedAudioFramePayload.decode(envelope.payload)
                     let now = Self.wallClockNanoseconds()
-                    if decodeState?.decoder.configuration != encoded.configuration {
-                        decodeState = try ReceiveCodecState(
-                            decoder: provider.makeDecoder(configuration: encoded.configuration)
+                    if playout?.configuration != encoded.configuration {
+                        // The read loop only offers; the clock drains, decodes, and conceals (ADR-045).
+                        playout?.stop()
+                        let clock = try PlayoutClock(
+                            decoder: provider.makeDecoder(configuration: encoded.configuration),
+                            clock: { UDPAudioPlane.wallClockNanoseconds() },
+                            emit: { [weak self] pcm in self?.callbacks.emitAudio(pcm) },
+                            onDecodeFailure: { [weak self] in
+                                self?.callbacks.emitSession(.failed("Native audio decode failed"))
+                                socket.cancel()
+                            }
                         )
+                        clock.start()
+                        playout = clock
                     }
-                    guard let decodeState else { continue }
-                    let result = decodeState.jitter.offer(
+                    guard let playout else { continue }
+                    _ = playout.offer(
                         SequencedEncodedAudioFrame(sequence: envelope.sequence, payload: encoded),
                         nowNanoseconds: now
                     )
-                    guard result == .accepted else { continue }
-                    while let ready = decodeState.jitter.popReady(
-                        nowNanoseconds: Self.wallClockNanoseconds()
-                    ) {
-                        if let pcm = try decodeState.decoder.decode(packet: ready.payload.encodedBytes) {
-                            self?.callbacks.emitAudio(pcm)
-                        }
-                    }
                 } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                     self?.callbacks.emitSession(.versionMismatch(
                         remoteMajor: remoteMajor,
                         localMajor: localMajor
                     ))
+                    terminalEventEmitted = true
                     break
                 } catch {
                     Logger.audio.error("TCP: invalid encrypted audio frame")
                     break
                 }
             }
+            playout?.stop()
+            // Computed before close(): ManagedSocket.close() marks the socket cancelled, which would
+            // make a remote loss indistinguishable from a local stop.
+            let lostRemotely = !socket.isCancelled && !terminalEventEmitted
             socket.close()
             Task { @MainActor [weak self] in
                 self?.clearGuestSocket(socket, generation: generation)
+            }
+            if lostRemotely {
+                self?.callbacks.emitSession(.failed("Guide audio connection closed"))
             }
             Logger.audio.info("TCP: disconnected")
         }
@@ -872,6 +894,12 @@ final class UDPAudioPlane: AudioPlane {
         UInt64((ProcessInfo.processInfo.systemUptime * 1_000_000_000).rounded(.down))
     }
 
+    /// Realtime frames are ~150 bytes every 20 ms; Nagle plus delayed ACK would batch them (FND-4).
+    nonisolated private static func setNoDelay(fd: Int32) {
+        var yes: Int32 = 1
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
+    }
+
     private func stopSockets() {
         if serverFD >= 0 {
             shutdown(serverFD, SHUT_RDWR)
@@ -882,5 +910,114 @@ final class UDPAudioPlane: AudioPlane {
         guestSocket = nil
         for client in connectedClients { client.writer.stop() }
         connectedClients.removeAll()
+    }
+}
+
+/// Clock-driven realtime playout (ADR-045). A timer at the negotiated frame duration drains the
+/// jitter buffer on its own queue, decodes there (the native decoder never runs on the read loop),
+/// and conceals a single lost frame with one silence frame so the timeline is preserved. Production
+/// calls `start()` right after construction; tests drive `tick()` with an injected clock.
+nonisolated final class PlayoutClock: @unchecked Sendable {
+    let decoder: any RealtimeAudioDecoderInterface
+    /// Exactly one negotiated frame of PCM16 zeros: sampleRate * frameDuration / 1000 * channels * 2.
+    let silenceFrame: Data
+
+    private let lock = NSLock()
+    private var jitter: EncodedAudioJitterBuffer
+    private var stopped = false
+    private var timer: DispatchSourceTimer?
+    private let clock: @Sendable () -> UInt64
+    private let emit: @Sendable (Data) -> Void
+    private let onDecodeFailure: @Sendable () -> Void
+    private let queue = DispatchQueue(label: "audio.tcp.playout", qos: .userInteractive)
+
+    var configuration: SessionAudioCodecConfiguration { decoder.configuration }
+
+    init(
+        decoder: any RealtimeAudioDecoderInterface,
+        clock: @escaping @Sendable () -> UInt64,
+        emit: @escaping @Sendable (Data) -> Void,
+        onDecodeFailure: @escaping @Sendable () -> Void
+    ) throws {
+        self.decoder = decoder
+        self.clock = clock
+        self.emit = emit
+        self.onDecodeFailure = onDecodeFailure
+        let configuration = decoder.configuration
+        let duration = Int(configuration.frameDurationMilliseconds)
+        let targetFrames = max(1, (60 + duration - 1) / duration)
+        let maximumFrames = max(targetFrames, (250 + duration - 1) / duration)
+        jitter = try EncodedAudioJitterBuffer(
+            targetFrameCount: targetFrames,
+            maximumFrameCount: maximumFrames
+        )
+        silenceFrame = Data(
+            count: Int(configuration.sampleRate) * duration / 1_000 * Int(configuration.channelCount) * 2
+        )
+    }
+
+    deinit {
+        timer?.cancel()
+    }
+
+    func start() {
+        let duration = Int(configuration.frameDurationMilliseconds)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(
+            deadline: .now() + .milliseconds(duration),
+            repeating: .milliseconds(duration),
+            leeway: .milliseconds(1)
+        )
+        timer.setEventHandler { [weak self] in self?.tick() }
+        lock.lock()
+        self.timer = timer
+        lock.unlock()
+        timer.resume()
+    }
+
+    func offer(_ frame: SequencedEncodedAudioFrame, nowNanoseconds: UInt64) -> EncodedAudioFrameOfferResult {
+        lock.lock()
+        defer { lock.unlock() }
+        return jitter.offer(frame, nowNanoseconds: nowNanoseconds)
+    }
+
+    /// One playout period. Runs on `queue` in production; tests call it directly.
+    func tick() {
+        lock.lock()
+        guard !stopped else {
+            lock.unlock()
+            return
+        }
+        let decision = jitter.popForPlayout(nowNanoseconds: clock())
+        lock.unlock()
+
+        switch decision {
+        case let .frame(frame):
+            do {
+                if let pcm = try decoder.decode(packet: frame.payload.encodedBytes) {
+                    emit(pcm)
+                }
+            } catch {
+                Logger.audio.error("TCP: native audio decode failed")
+                lock.lock()
+                let alreadyStopped = stopped
+                stopped = true
+                lock.unlock()
+                if !alreadyStopped { onDecodeFailure() }
+            }
+        case .conceal:
+            emit(silenceFrame)
+        case .wait:
+            break
+        }
+    }
+
+    func stop() {
+        lock.lock()
+        stopped = true
+        let timer = self.timer
+        self.timer = nil
+        lock.unlock()
+        timer?.cancel()
     }
 }

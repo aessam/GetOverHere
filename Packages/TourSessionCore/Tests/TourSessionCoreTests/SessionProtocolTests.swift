@@ -422,10 +422,10 @@ struct SessionProtocolTests {
         var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 3, maximumFrameCount: 4)
         #expect(jitter.offer(.init(sequence: 11, payload: payload), nowNanoseconds: 200) == .accepted)
         #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .accepted)
-        #expect(jitter.popReady(nowNanoseconds: 200) == nil)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
         #expect(jitter.offer(.init(sequence: 12, payload: payload), nowNanoseconds: 200) == .accepted)
-        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 10)
-        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 11)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 10, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 11, payload: payload)))
         #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .duplicate)
 
         var full = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 2)
@@ -436,8 +436,39 @@ struct SessionProtocolTests {
 
         var skewed = try EncodedAudioJitterBuffer(targetFrameCount: 1, maximumFrameCount: 2)
         #expect(skewed.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 10_000) == .accepted)
-        #expect(skewed.popReady(nowNanoseconds: 10_899)?.sequence == 1)
+        #expect(skewed.popForPlayout(nowNanoseconds: 10_899) == .frame(.init(sequence: 1, payload: payload)))
         #expect(skewed.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 11_000) == .expired)
+    }
+
+    @Test("Clocked playout conceals a single gap and resyncs to the oldest frame")
+    func clockedPlayoutConcealsGapsAndResyncs() throws {
+        let payload = try EncodedAudioFramePayload(
+            configuration: TourSessionFixtures.encodedAudioFixture().configuration,
+            capturedAtNanoseconds: 100,
+            expiresAtNanoseconds: 1_000,
+            encodedBytes: Data([0x01])
+        )
+        var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 4)
+        // Every pop is at now=200 except the final pop at 2_000, which expires the buffered frame.
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 1, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 2, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 4, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .conceal(missingSequence: 3))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 4, payload: payload)))
+        #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.offer(.init(sequence: 11, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 10, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 11, payload: payload)))
+        #expect(jitter.offer(.init(sequence: 12, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 2_000) == .wait)
+        #expect(jitter.bufferedFrameCount == 0)
+
+        #expect(try TourSessionFixtures.simulatePlayout() == "w,w,f1,f2,w,c3,f4,f10,f11,w")
     }
 
     @Test("Message kinds cannot enter the wrong lane")

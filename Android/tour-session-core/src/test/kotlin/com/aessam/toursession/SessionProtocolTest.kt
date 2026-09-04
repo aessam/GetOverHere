@@ -412,13 +412,19 @@ class SessionProtocolTest {
             EncodedAudioFrameOfferResult.ACCEPTED,
             jitter.offer(SequencedEncodedAudioFrame(10, payload), nowNanoseconds = 200),
         )
-        assertNull(jitter.popReady(nowNanoseconds = 200))
+        assertEquals(EncodedAudioPlayoutDecision.Wait, jitter.popForPlayout(nowNanoseconds = 200))
         assertEquals(
             EncodedAudioFrameOfferResult.ACCEPTED,
             jitter.offer(SequencedEncodedAudioFrame(12, payload), nowNanoseconds = 200),
         )
-        assertEquals(10L, jitter.popReady(nowNanoseconds = 200)?.sequence)
-        assertEquals(11L, jitter.popReady(nowNanoseconds = 200)?.sequence)
+        assertEquals(
+            EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(10, payload)),
+            jitter.popForPlayout(nowNanoseconds = 200),
+        )
+        assertEquals(
+            EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(11, payload)),
+            jitter.popForPlayout(nowNanoseconds = 200),
+        )
         assertEquals(
             EncodedAudioFrameOfferResult.DUPLICATE,
             jitter.offer(SequencedEncodedAudioFrame(10, payload), nowNanoseconds = 200),
@@ -447,11 +453,46 @@ class SessionProtocolTest {
             EncodedAudioFrameOfferResult.ACCEPTED,
             skewed.offer(SequencedEncodedAudioFrame(1, payload), nowNanoseconds = 10_000),
         )
-        assertEquals(1L, skewed.popReady(nowNanoseconds = 10_899)?.sequence)
+        assertEquals(
+            EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(1, payload)),
+            skewed.popForPlayout(nowNanoseconds = 10_899),
+        )
         assertEquals(
             EncodedAudioFrameOfferResult.EXPIRED,
             skewed.offer(SequencedEncodedAudioFrame(2, payload), nowNanoseconds = 11_000),
         )
+    }
+
+    @Test
+    fun clockedPlayoutConcealsGapsAndResyncs() {
+        val payload = EncodedAudioFramePayload(
+            configuration = TourSessionFixtures.encodedAudioFixture().configuration,
+            capturedAtNanoseconds = 100,
+            expiresAtNanoseconds = 1_000,
+            encodedBytes = byteArrayOf(1),
+        )
+        fun frame(sequence: Long) = EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(sequence, payload))
+        val jitter = EncodedAudioJitterBuffer(targetFrameCount = 2, maximumFrameCount = 4)
+        // Every pop is at now=200 except the final pop at 2_000, which expires the buffered frame.
+        assertEquals(EncodedAudioPlayoutDecision.Wait, jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(1, payload), 200))
+        assertEquals(EncodedAudioPlayoutDecision.Wait, jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(2, payload), 200))
+        assertEquals(frame(1), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(frame(2), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioPlayoutDecision.Wait, jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(4, payload), 200))
+        assertEquals(EncodedAudioPlayoutDecision.Conceal(3), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(frame(4), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(10, payload), 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(11, payload), 200))
+        assertEquals(frame(10), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(frame(11), jitter.popForPlayout(nowNanoseconds = 200))
+        assertEquals(EncodedAudioFrameOfferResult.ACCEPTED, jitter.offer(SequencedEncodedAudioFrame(12, payload), 200))
+        assertEquals(EncodedAudioPlayoutDecision.Wait, jitter.popForPlayout(nowNanoseconds = 2_000))
+        assertEquals(0, jitter.bufferedFrameCount)
+
+        assertEquals("w,w,f1,f2,w,c3,f4,f10,f11,w", TourSessionFixtures.simulatePlayout())
     }
 
     @Test

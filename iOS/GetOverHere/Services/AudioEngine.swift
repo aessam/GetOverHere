@@ -102,7 +102,7 @@ final class AudioEngine {
 
         inputNode.installTap(
             onBus: 0,
-            bufferSize: 345, // ~7 ms at 48 kHz; the codec accumulator forms exact frames.
+            bufferSize: 345, // Requested ~7 ms at 48 kHz, but AVAudioEngine's input tap delivers ~100 ms buffers regardless (DSCN-5; LessonsLearned 58). The codec accumulator forms exact codec frames from whatever arrives.
             format: nil
         ) { @Sendable [converterRef, continuationLock] buffer, _ in
             // Noise gate: compute RMS and drop quiet buffers (echo, background noise)

@@ -55,6 +55,14 @@ public enum EncodedAudioFrameOfferResult: Equatable, Sendable {
     case capacityExceeded
 }
 
+/// One clock tick's playout decision (ADR-045): a playable frame, a single lost
+/// sequence to conceal with one silence frame, or nothing to play yet.
+public enum EncodedAudioPlayoutDecision: Equatable, Sendable {
+    case frame(SequencedEncodedAudioFrame)
+    case conceal(missingSequence: UInt64)
+    case wait
+}
+
 public struct EncodedAudioJitterBuffer: Sendable {
     private struct BufferedFrame: Sendable {
         let payload: EncodedAudioFramePayload
@@ -106,24 +114,32 @@ public struct EncodedAudioJitterBuffer: Sendable {
         return .accepted
     }
 
-    public mutating func popReady(nowNanoseconds: UInt64) -> SequencedEncodedAudioFrame? {
+    /// Clock-driven drain. Called once per negotiated frame duration by the playout timer.
+    /// A missing expected sequence while the buffer is below the target depth is concealed
+    /// (one silence frame keeps the timeline); at or above the target depth the buffer resyncs
+    /// to its oldest frame instead of waiting for a frame that is probably lost.
+    public mutating func popForPlayout(nowNanoseconds: UInt64) -> EncodedAudioPlayoutDecision {
         discardExpiredFrames(nowNanoseconds: nowNanoseconds)
-        guard !frames.isEmpty else { return nil }
+        guard !frames.isEmpty else { return .wait }
 
         if !hasStarted {
-            guard frames.count >= targetFrameCount else { return nil }
+            guard frames.count >= targetFrameCount else { return .wait }
             hasStarted = true
             expectedSequence = frames.keys.min()
         }
 
-        guard var sequence = expectedSequence else { return nil }
-        if frames[sequence] == nil {
-            guard frames.count >= targetFrameCount, let next = frames.keys.min() else { return nil }
-            sequence = next
+        guard let sequence = expectedSequence else { return .wait }
+        if let buffered = frames.removeValue(forKey: sequence) {
+            expectedSequence = sequence == UInt64.max ? nil : sequence + 1
+            return .frame(SequencedEncodedAudioFrame(sequence: sequence, payload: buffered.payload))
         }
-        guard let buffered = frames.removeValue(forKey: sequence) else { return nil }
+        if frames.count >= targetFrameCount, let next = frames.keys.min(),
+           let buffered = frames.removeValue(forKey: next) {
+            expectedSequence = next == UInt64.max ? nil : next + 1
+            return .frame(SequencedEncodedAudioFrame(sequence: next, payload: buffered.payload))
+        }
         expectedSequence = sequence == UInt64.max ? nil : sequence + 1
-        return SequencedEncodedAudioFrame(sequence: sequence, payload: buffered.payload)
+        return .conceal(missingSequence: sequence)
     }
 
     public mutating func reset() {
