@@ -53,6 +53,11 @@ class TourNavigationTest {
         composeRule.onNodeWithText("Channel name").performTextInput("Alhambra")
         composeRule.onNodeWithText("Create").performClick()
 
+        // Credential stretching is asynchronous; Compose idleness alone does not mean startup finished.
+        composeRule.waitUntil(10_000) {
+            channelService().connectionState.value == SessionConnectionState.CONNECTED
+        }
+
         composeRule.onNodeWithText("Slides").assertIsDisplayed()
         composeRule.onNodeWithText("Map").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("No offline map").assertIsDisplayed()

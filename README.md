@@ -80,11 +80,16 @@ Physical devices are required for final audio, local-network, compass, location,
 ```bash
 scripts/verify_tour_session.sh
 
+# With the Android emulator already running: host gate, iOS UI, Android instrumentation.
+scripts/verify_virtual_devices.sh
+
 cd Android
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew connectedDebugAndroidTest
 ```
 
 The first command tests Swift and Kotlin protocol parity, exact wire bytes, authentication, participant churn at 1/8/20/50 guests, fault accounting, Android JVM integration/APK assembly, and the iOS Simulator suite.
+
+`verify_virtual_devices.sh` additionally runs the full iOS UI and Android instrumented suites. It defaults to Android `emulator-5554` (override with `ANDROID_SERIAL`) and the iPhone 17 Pro simulator. Unsupported simulator guide capture and unavailable emulator earpiece routes are reported as explicit skips; they still require physical acceptance.
 
 ## Build
 

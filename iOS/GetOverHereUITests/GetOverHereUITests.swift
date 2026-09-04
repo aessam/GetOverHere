@@ -15,6 +15,9 @@ final class GetOverHereUITests: XCTestCase {
 
     @MainActor
     func testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("A live guide requires physical microphone capture; simulator rollback has its own UI test")
+#else
         addUIInterruptionMonitor(withDescription: "Tour permissions") { alert in
             for title in ["Allow", "OK"] where alert.buttons[title].exists {
                 alert.buttons[title].tap()
@@ -51,6 +54,7 @@ final class GetOverHereUITests: XCTestCase {
             app.staticTexts["Only the selected bearing angle is shared. Device location and guest compass readings stay local."]
                 .waitForExistence(timeout: 2)
         )
+#endif
     }
 
     @MainActor
@@ -70,7 +74,7 @@ final class GetOverHereUITests: XCTestCase {
 
         let error = app.staticTexts["tourStartupError"]
         XCTAssertTrue(error.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertFalse(error.label.isEmpty)
+        XCTAssertEqual(error.label, "Microphone capture is unavailable in the iOS Simulator")
         XCTAssertFalse(app.segmentedControls.firstMatch.exists, "Failed startup must not show a live tour")
         XCTAssertTrue(addButton.exists, "The user must be able to retry")
 #else

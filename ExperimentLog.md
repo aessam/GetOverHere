@@ -932,3 +932,31 @@ Environment: macOS 27.0, selected Xcode beta, iPhone 17 Pro simulator on iOS 27.
 - `git diff --check`: exit 0.
 
 These tests verify failure visibility, not physical audio or RF acceptance. No hosted CI run or physical-device gate was performed. An untracked `Android/.kotlin/` directory contains an older August 21 compiler error log and was preserved.
+
+## 2026-09-04 — Full virtual-device verification and hosted CI closeout
+
+User authorized committing, simulator/emulator testing, and finishing pending work. Startup visibility committed as `d6f0a5a`; branch CI trigger as `38fa919`; verified wrapper as `9b02452`. Branch pushed to `origin/fix/deep-dive-2026-09-02`; main was not changed.
+
+Environment: macOS 27.0, selected Xcode beta, iPhone 17 Pro simulator (iOS 27.0), Android Studio JBR 21, `emulator-5554` / `GetOverHere_API_36` on Android 16. Hosted runner: arm64 macOS 26, Swift 6.3.3, Temurin 21.0.12.
+
+Failures found by the broader gates:
+
+- Full Android `connectedDebugAndroidTest` initially failed the physical earpiece assertion (expected type 1, actual speaker type 2) and guide navigation. The emulator exposes no earpiece; the test now uses the same availability assumption as the existing focus test. Navigation asserted before asynchronous credential stretching completed; it now waits for CONNECTED. Capture teardown also stops capture explicitly.
+- Full iOS `-only-testing:GetOverHereUITests` initially failed `testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration`. Its recorded accessibility tree showed the exact expected production error, `Microphone capture is unavailable in the iOS Simulator`. The live-guide test now explicitly skips Simulator and remains enabled on physical devices. The simulator startup rollback test now asserts that exact error string.
+- Hosted [run 33930362544](https://github.com/aessam/GetOverHere/actions/runs/33930362544) passed 34 Swift core tests but failed because `Android/gradle/wrapper/gradle-wrapper.jar` was absent from git. `git check-ignore -v` identified the global `*.jar` rule. Regenerated with `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew wrapper --gradle-version 8.13 --distribution-type bin` from Android; the JAR SHA-256 is `81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f`, matching `https://services.gradle.org/distributions/gradle-8.13-wrapper.jar.sha256`. Added a repository ignore exception and committed the generated wrapper. [Run 33930529033](https://github.com/aessam/GetOverHere/actions/runs/33930529033) on `9b02452` passed. Its deprecated-action warnings prompted selecting official `actions/checkout@v7.0.1` and `actions/setup-java@v6.0.0`; both declare Node 24, verified from their tagged `action.yml` files.
+
+Final local command (exit 0):
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+```
+
+Results, captured in `/tmp/GetOverHere-final-virtual-gate.log`:
+
+- Host gate: `Tour session verification passed`; 34 Swift core tests, Swift/Kotlin byte comparisons and cross-decodes, churn/fault/recovery/privacy audits, Android lint/APK, 74 Android JVM tests, 82 iOS unit/integration tests. Gradle reused unchanged successful JVM outputs on the final combined run; the earlier full gate executed the suite.
+- iOS UI: `Test-GetOverHere-2026.09.04_16-45-14--0700.xcresult`, summary `Passed`, 3 test methods passed (6 runs across configurations), 1 physical-guide method skipped, 0 failed.
+- Android instrumentation: XML contains 16 test cases, 14 passed, 2 earpiece checks skipped, 0 failures/errors. Includes native Opus/AAC encode/decode, encrypted realtime transport, audio-lane reconnect, audio focus, local PMTiles rendering, startup-error UI, Slides/Map/Pointer navigation, and Activity recreation. Gradle's console says `Finished 18 tests`; totals above come from the testcase XML, not that console counter.
+- Final output: `Virtual-device verification passed; physical audio and radio gates remain separate`.
+- `bash -n scripts/verify_virtual_devices.sh` and `git diff --check` passed. Negative preflight with `ANDROID_SERIAL=physical-device` reports `select an emulator with ANDROID_SERIAL; physical gates run separately` before starting any tests.
+
+Remaining: physical guide capture/UI, earpiece routing, both cross-platform guide directions, sustained LAN audio/latency/background/thermal/battery acceptance, followed by the physical Aware gate and its dependent production/BLE work. Virtual-device results do not satisfy those gates.

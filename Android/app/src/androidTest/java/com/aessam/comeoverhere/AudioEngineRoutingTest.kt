@@ -34,12 +34,17 @@ class AudioEngineRoutingTest {
 
     @After
     fun tearDown() {
+        audioEngine.stopCapture()
         audioEngine.stopPlayback()
     }
 
     @Test
     fun listenerOutputSwitchesPhysicalCommunicationDevice() {
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        assumeTrue(
+            "No built-in earpiece; private communication-device routing requires physical hardware",
+            audioManager.availableCommunicationDevices.any { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE },
+        )
 
         audioEngine.setListenerOutput(ListenerOutput.PRIVATE_AUDIO)
         audioEngine.startPlayback()

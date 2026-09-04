@@ -375,3 +375,9 @@
 **Root cause**: Both platforms rendered the error only inside a view requiring an active channel, while rollback correctly cleared that channel. Service-state tests did not prove visibility.
 **Resolution**: Render the failure reason on the channel list when no tour is active and the connection state is failed. UI regression tests exercise real simulator capture failure on iOS and real control-port bind failure on Android.
 **Decision**: Verify a startup failure at the screen reached after rollback, not only in service state. Gate the banner on failed state so normal leave does not reveal an old tour error.
+
+## 68. Clean-checkout CI and full UI suites expose gaps hidden by local gates
+**What happened**: The first hosted parity run failed because `gradle-wrapper.jar` was missing. The full emulator UI suite asserted navigation before asynchronous tour startup finished, and hardware-only routing/capture assertions failed on virtual devices.
+**Root cause**: A global `*.jar` ignore rule hid the locally installed wrapper. Compose idleness did not await PBKDF2 startup. The existing local verifier ran iOS unit/integration tests but did not run the complete UI or emulator suites.
+**Resolution**: Regenerated and committed the Gradle 8.13 wrapper, matching its official SHA-256 (`81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f`), with a repository ignore exception. Branch pushes trigger CI. Navigation tests wait for CONNECTED; unavailable physical earpiece checks and simulator guide capture explicitly skip. Android capture tests release capture in teardown. `scripts/verify_virtual_devices.sh` composes the host gate, iOS UI suite, and emulator instrumentation.
+**Decision**: A local cache is not a build dependency manifest. Test asynchronous completion explicitly and report hardware coverage separately from software failures.
