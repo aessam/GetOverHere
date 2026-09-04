@@ -14,7 +14,7 @@ Android code lives in `Android/app/src/main/java/com/aessam/comeoverhere/`, spli
 - `cd Android && ./gradlew testDebugUnitTest` runs JVM unit tests.
 - `cd Android && ./gradlew connectedDebugAndroidTest` runs instrumented tests on a connected device or emulator.
 
-Use physical devices for BLE, hotspot, MultipeerConnectivity, and end-to-end audio verification; simulators do not prove those paths.
+Use physical devices for BLE, Wi-Fi Aware, and end-to-end audio verification; simulators do not prove those paths.
 
 ## Coding Style & Naming Conventions
 

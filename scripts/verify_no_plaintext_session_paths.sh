@@ -42,11 +42,6 @@ fail_on_match \
     "${PAYLOAD_TRANSPORTS[@]}"
 
 fail_on_match \
-    "a retired Multipeer transport can send plaintext application audio" \
-    'session\.send\s*\(' \
-    "$IOS_CORE/MultipeerAudioPlane.swift"
-
-fail_on_match \
     "a Wi-Fi Aware wrapper bypasses encoded, encrypted realtime frames" \
     'lane\.send\s*\(\s*kind:\s*\.audioFrame\s*,\s*payload:\s*data' \
     "$IOS_CORE/WiFiAwareSessionLaneTransport.swift"
@@ -68,9 +63,25 @@ for transport in "${PAYLOAD_TRANSPORTS[@]}"; do
     require_match "production transport has no sealed-envelope decoder" 'SealedSessionEnvelope\.decode' "$transport"
 done
 
-if rg -n 'MultipeerAudioPlane\s*\(' "$PROJECT_ROOT/iOS/GetOverHere" \
-    | rg -v 'final class MultipeerAudioPlane' >/dev/null; then
-    echo "error: retired plaintext Multipeer audio was made reachable" >&2
+# Retired plaintext or hotspot transports are deleted (ADR-050); an existence check cannot pass
+# silently the way an rg over a missing path did (rg exits 2, the audit's `if` was false).
+RETIRED_FILES=(
+    "$IOS_CORE/MultipeerAudioPlane.swift"
+    "$IOS_CORE/MultipeerTransport.swift"
+    "$IOS_CORE/WiFiHotspotJoiner.swift"
+    "$IOS_CORE/LeaderElection.swift"
+    "$ANDROID_CORE/WiFiHotspotManager.kt"
+    "$ANDROID_CORE/LeaderElection.kt"
+)
+for retired in "${RETIRED_FILES[@]}"; do
+    if [[ -e "$retired" ]]; then
+        echo "error: retired transport returned: $retired" >&2
+        exit 1
+    fi
+done
+
+if rg -q 'HotspotConfiguration' "$PROJECT_ROOT/iOS/GetOverHere/GetOverHere.entitlements"; then
+    echo "error: hotspot entitlement returned without a hotspot owner" >&2
     exit 1
 fi
 

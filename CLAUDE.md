@@ -13,7 +13,7 @@ Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product c
 
 `UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. The handshake authenticates admission but does not encrypt application payloads. Do not claim otherwise.
 
-BLE, Android LocalOnlyHotspot, RAFT, and iOS Multipeer files remain compiled legacy/experimental code but are not selected by `NetworkCoordinator`. Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
+BLE control-plane files remain compiled experimental code but are not selected by `NetworkCoordinator`; LocalOnlyHotspot, RAFT leader election, Multipeer, and the chat/file/walkie-talkie stubs were deleted (ADR-050). Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
 
 The iOS production Wi-Fi Aware lane wrappers currently have no connection owner or product call sites. Do not claim that the normal app works over Aware until the isolated cross-platform probe and production wiring gates pass.
 
