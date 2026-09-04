@@ -69,6 +69,10 @@ final class ChannelService {
     private var reconnectTask: Task<Void, Never>?
     /// Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20).
     private var sessionAttempt: UInt64 = 0
+    /// An audio-lane loss observed before the control lane connected; consumed on `.connected` (ADR-044).
+    private var pendingAudioLaneFailure: String?
+    /// Audio-lane losses since the last delivered PCM buffer; terminal at 5 (DSCN-19).
+    private var consecutiveAudioLaneFailures = 0
 
     // MARK: - Computed
 
@@ -514,6 +518,8 @@ final class ChannelService {
         reconnectTask?.cancel()
         reconnectTask = nil
         reconnectAttempt = 0
+        pendingAudioLaneFailure = nil
+        consecutiveAudioLaneFailures = 0
         guestCredential = nil
         if listenState == .broadcasting {
             audioEngine.stopCapture()
@@ -722,14 +728,65 @@ final class ChannelService {
             platform: .iOS,
             credential: credential
         )
-        plane.setSessionEventHandler(nil)
+        plane.setSessionEventHandler { [weak self] event in
+            Task { @MainActor [weak self] in self?.handleGuestAudioSessionEvent(event) }
+        }
         if let tcpPlane = plane as? UDPAudioPlane {
             tcpPlane.hostIP = hostIP
         }
+        pendingAudioLaneFailure = nil
         audioEngine.startPlayback()
+        // The first delivered PCM buffer of this run proves the audio lane works again (DSCN-19).
+        let awaitingFirstBuffer = OSAllocatedUnfairLock(initialState: true)
         plane.startListening(channelID: channel.id) { [weak self] data in
-            Task { @MainActor [weak self] in self?.audioEngine.enqueuePlayback(data) }
+            let isFirstBuffer = awaitingFirstBuffer.withLock { flag in
+                defer { flag = false }
+                return flag
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if isFirstBuffer { self.consecutiveAudioLaneFailures = 0 }
+                self.audioEngine.enqueuePlayback(data)
+            }
         }
+    }
+
+    /// Guest-side audio-lane events. Loss is a reconnect trigger with the same authority as
+    /// control-lane loss (ADR-044); `handleAudioSessionEvent` stays guide-only.
+    private func handleGuestAudioSessionEvent(_ event: AudioSessionEvent) {
+        guard listenState == .listening else { return }
+        switch event {
+        case .joined, .disconnected:
+            break // Guide-side membership events; never emitted to a guest.
+        case let .versionMismatch(remoteMajor, localMajor):
+            handleControlConnectionEvent(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
+        case let .failed(message):
+            consecutiveAudioLaneFailures += 1
+            guard consecutiveAudioLaneFailures < 5 else {
+                failGuestSession(message: "Audio connection lost repeatedly")
+                return
+            }
+            switch connectionState {
+            case .connected:
+                handleControlConnectionEvent(.failed(message))
+            case .connecting, .reconnecting:
+                // The control handshake of this run is still in flight (initial join or a reconnect
+                // cycle); `.connected` would otherwise cancel the reconnect and leave a mute
+                // CONNECTED guest. Consumed in handleControlConnectionEvent, cleared per run.
+                pendingAudioLaneFailure = message
+            case .idle, .failed:
+                break // The session is not running or is terminal.
+            }
+        }
+    }
+
+    /// Terminal guest failure: the failed channel stays on screen with its reason.
+    private func failGuestSession(message: String) {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        stopCurrentActivity()
+        connectionState = .failed
+        tourFeatureError = message
     }
 
     private func handleControlConnectionEvent(_ event: TourControlConnectionEvent) {
@@ -741,6 +798,10 @@ final class ChannelService {
             reconnectAttempt = 0
             connectionState = .connected
             tourFeatureError = nil
+            if let pending = pendingAudioLaneFailure {
+                pendingAudioLaneFailure = nil
+                scheduleReconnect(reason: pending)
+            }
         case .disconnected:
             scheduleReconnect(reason: "Guide connection closed")
         case .sessionEnded:
@@ -756,6 +817,7 @@ final class ChannelService {
     }
 
     private func scheduleReconnect(reason: String) {
+        pendingAudioLaneFailure = nil
         guard reconnectTask == nil,
               reconnectAttempt < 5,
               let channel = activeChannel,

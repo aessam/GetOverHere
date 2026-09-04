@@ -291,3 +291,33 @@
 **Root cause**: ADR-023 treated the short code as key material and reused the HKDF-style extract that suits high-entropy inputs; the confidentiality claim in ADR-030 inherited that bound unexamined.
 **Resolution**: PBKDF2-HMAC-SHA256 with 600,000 iterations and a session-bound salt on both cores, sealed protocol major 4 so a legacy peer is an explicit version mismatch, known-answer fixtures on both sides computed independently in Python before either core changed, a normalization-before-stretch assertion, and `derive` moved off the main thread behind a `sessionAttempt` guard because a real stretch is user-visible (0.150 s on the simulator, 1,545 ms on the API 36 arm64 emulator through BouncyCastle).
 **Decision**: Any secret a human types is stretched before it becomes a key; the stretch parameters are wire-contract constants with cross-platform known-answer tests, and every known-answer input set includes one non-normalized code so normalization order is pinned. The 50-bit entropy bound stays documented until the QR 128-bit credential ships. P3 physical item: measure `derive()` on the oldest supported iPhone and the slowest Android target; if Android exceeds ~1.5 s the owner revisits the iteration count, which regenerates every credential-derived fixture.
+
+## 54. A lane that can lose the guide must be able to say so
+**What happened**: A guest whose realtime socket died stayed CONNECTED and mute until the control lane also failed; the guest audio handler was nil'd and the read-loop exit only logged on both platforms.
+**Root cause**: Only the control lane owned reconnect, so the audio lane had no event to raise and no consumer for it. The iOS startup race (`.connected` cancels the reconnect task) meant even an emitted event could have been cancelled by the control handshake.
+**Resolution**: One `.failed`/`Failed` per guest run on transport loss with run guards (`!socket.isCancelled` captured before `close()`, `isRunActive(epoch)` + `emitFailedOnce`), routed through the control-lane handler; `pendingAudioLaneFailure` on iOS for the CONNECTING race; a five-strike terminal cap (DSCN-19). Wrong codes stay log-only because the guest fails AEAD on the sealed challenge before any hello.
+**Decision**: Every lane that can lose the guide reports it through the single reconnect path, exactly once per run, never for a local stop, a version mismatch, or a pre-authentication rejection. A ChannelService-level proof needs a discovered channel; on Android the emulator's NSD provides it, on iOS the G4 injection seam will.
+
+## 55. `flowOn` moves the producer, not the collector
+**What happened**: Android encode + seal + fan-out for every 10 ms capture buffer ran on the UI thread.
+**Root cause**: `startCapture()` used `flowOn(Dispatchers.IO)`, which only moves the upstream `AudioRecord.read`; `ChannelService` collected on the application scope built with `Dispatchers.Main`, so `plane.sendAudio` and the whole codec path executed there.
+**Resolution**: `BroadcastProcessor` on a dedicated `audio-encode-seal` single-thread executor (mirror of iOS ADR-039), `sendAudio` no longer `@Synchronized`; the roundtrip test asserts the encoder thread name set is exactly `{audio-encode-seal}`; the verifier requires both worker labels and rejects a `@Synchronized sendAudio`.
+**Decision**: Codec work never runs on a UI dispatcher; the worker label is a verifier-audited contract on both platforms.
+
+## 56. Nagle on a 20 ms voice stream
+**What happened**: The realtime lane sent ~150-byte sealed frames every 20 ms over sockets with Nagle enabled while the control lanes already set `TCP_NODELAY`.
+**Root cause**: `UDPAudioPlane.swift` set only `SO_REUSEADDR`/`SO_RCVTIMEO`; `UDPAudioPlane.kt` used default sockets. Nagle waits for the previous segment's ACK and the receiver delays ACKs, so small frames were batched.
+**Resolution**: `TCP_NODELAY` on the accepted and the connecting descriptor on both platforms; the tests read the option back (`getsockopt != 0`, `Socket.tcpNoDelay`); the verifier requires the literals in both files, one `rg` per file.
+**Decision**: Every realtime socket disables Nagle at creation, and the audit checks each file on its own so one file cannot mask the other.
+
+## 57. Playout timing comes from a local clock, never from the network
+**What happened**: The jitter buffer drained only when a frame arrived, so a lost frame shortened the timeline instead of being concealed, and the spec's PLC claim was false.
+**Root cause**: `popReady` was called from the read loop after every accepted frame, and native Opus/AAC decoders expose no PLC API, so nothing could fill a gap.
+**Resolution**: `popForPlayout` on both cores returns `frame`, `conceal(missing)`, or `wait`; `PlayoutClock` ticks every frame duration on its own thread, emits one exact-duration silence frame per concealed sequence, resyncs above the target depth, decodes only on that thread, and reports a decoder failure once. The `playout` CLI fixture (`w,w,f1,f2,w,c3,f4,f10,f11,w`) is a verifier gate; transport tests drive `tick()` with a fixed clock.
+**Decision**: Clocked playout with silence concealment is the contract; timer-versus-DAC drift is a documented limitation bounded by the jitter cap and surfaced by short-write counters, to be measured physically in P3.
+
+## 58. The ~100 ms tap floor and the ignored `AudioTrack.write` result
+**What happened**: `AudioEngine.swift` claimed a ~7 ms capture tap, and `AudioEngine.kt` discarded the return value of `AudioTrack.write(..., WRITE_NON_BLOCKING)`.
+**Root cause**: `installTap(bufferSize: 345)` is a request; AVAudioEngine's input tap delivers ~100 ms buffers regardless. A non-blocking `AudioTrack.write` returns the bytes accepted, so a full buffer (timer-versus-DAC drift) or a dead track returned 0 or a negative code that nobody read.
+**Resolution**: Comment corrected (DSCN-5, no rework this round); `PlaybackWriter` write loop with `Written`/`Short`/`Failed` outcomes, JVM-tested over an injected sink because `AudioTrack` cannot be built on the JVM; short writes counted and logged, errors surfaced once per playback run into `tourFeatureError`.
+**Decision**: The ~100 ms tap floor is a P3 physical measurement item included in mouth-to-ear; every audio-hardware write result is inspected and counted so drift is observable before it is audible.

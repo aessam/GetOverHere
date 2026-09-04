@@ -18,6 +18,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Coordinates audio, presentation state, and tour assets for one local session.
@@ -157,6 +159,8 @@ class ChannelService(
     private var guestCredential: SessionCredential? = null
     /** Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20). */
     private var sessionAttempt = 0L
+    /** Audio-lane losses since the last delivered PCM buffer; terminal at 5 (DSCN-19). */
+    private val consecutiveAudioLaneFailures = AtomicInteger(0)
     private var participantRegistry = ParticipantRegistry()
     private var activeGuestRoute: SessionTransportRoute? = null
     private var attemptedGuestRoutes = mutableSetOf<SessionTransportRoute>()
@@ -177,6 +181,9 @@ class ChannelService(
     }
 
     init {
+        audioEngine.playbackFailureHandler = { code ->
+            _tourFeatureError.value = "Tour audio playback failed ($code)"
+        }
         assetTransferService.setEventHandler { event ->
             when (event) {
                 is TourAssetTransferEvent.ManifestReceived -> {
@@ -507,6 +514,7 @@ class ChannelService(
         reconnectJob?.cancel()
         reconnectJob = null
         _reconnectAttempt.value = 0
+        consecutiveAudioLaneFailures.set(0)
         guestCredential = null
         if (_listenState.value == ListenState.BROADCASTING) {
             audioEngine.stopCapture()
@@ -747,10 +755,47 @@ class ChannelService(
             platform = ParticipantPlatform.ANDROID,
             credential = credential,
         )
-        plane.setSessionEventHandler(null)
+        plane.setSessionEventHandler { event ->
+            scope.launch { handleGuestAudioSessionEvent(event) }
+        }
         if (plane is UDPAudioPlane) plane.hostIP = hostIP
         audioEngine.startPlayback()
-        plane.startListening(channelID = channel.id, audioEngine::enqueuePlayback)
+        // The first delivered PCM buffer of this run proves the audio lane works again (DSCN-19).
+        val awaitingFirstBuffer = AtomicBoolean(true)
+        plane.startListening(channelID = channel.id) { pcm ->
+            if (awaitingFirstBuffer.compareAndSet(true, false)) consecutiveAudioLaneFailures.set(0)
+            audioEngine.enqueuePlayback(pcm)
+        }
+    }
+
+    /**
+     * Guest-side audio-lane events. Loss is a reconnect trigger with the same authority as
+     * control-lane loss (ADR-044); [handleAudioSessionEvent] stays guide-only.
+     */
+    private fun handleGuestAudioSessionEvent(event: AudioSessionEvent) {
+        if (_listenState.value != ListenState.LISTENING) return
+        when (event) {
+            is AudioSessionEvent.Joined, is AudioSessionEvent.Disconnected -> Unit // guide-side membership
+            is AudioSessionEvent.VersionMismatch -> handleControlConnectionEvent(
+                TourControlConnectionEvent.VersionMismatch(event.remoteMajor, event.localMajor),
+            )
+            is AudioSessionEvent.Failed -> {
+                if (consecutiveAudioLaneFailures.incrementAndGet() >= 5) {
+                    failGuestSession("Audio connection lost repeatedly")
+                    return
+                }
+                handleControlConnectionEvent(TourControlConnectionEvent.Failed(event.message))
+            }
+        }
+    }
+
+    /** Terminal guest failure: the failed channel stays on screen with its reason. */
+    private fun failGuestSession(message: String) {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        stopCurrentActivity()
+        _connectionState.value = SessionConnectionState.FAILED
+        _tourFeatureError.value = message
     }
 
     private fun handleControlConnectionEvent(event: TourControlConnectionEvent) {
