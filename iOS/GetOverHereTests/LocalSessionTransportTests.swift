@@ -457,7 +457,7 @@ struct LocalSessionTransportTests {
         #expect(envelope.payload == payload)
     }
 
-    @Test("Twenty-four control guests authenticate without cooperative-pool starvation")
+    @Test("Twenty-four control guests authenticate and each receives a guide control frame")
     @MainActor
     func controlLaneScalesBeyondProcessorCount() async throws {
         let port: UInt16 = 50_036
@@ -466,6 +466,8 @@ struct LocalSessionTransportTests {
         let credential = try transportCredential(sessionID)
         let guideID = UUID()
         let guestIDs = Set((0 ..< 24).map { _ in UUID() })
+        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        let (received, receivedContinuation) = AsyncStream.makeStream(of: UUID.self)
         let guests = guestIDs.enumerated().map { index, guestID in
             let guest = LocalSessionControlTransport(port: port)
             guest.hostIP = "127.0.0.1"
@@ -476,13 +478,18 @@ struct LocalSessionTransportTests {
                 platform: .iOS,
                 credential: credential
             )
+            guest.setEventHandler { event in
+                if case let .envelopeReceived(envelope) = event, envelope.kind == .heartbeat {
+                    receivedContinuation.yield(guestID)
+                }
+            }
             return guest
         }
-        let (events, continuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
         defer {
             guests.forEach { $0.stop() }
             guide.stop()
             continuation.finish()
+            receivedContinuation.finish()
         }
 
         guide.configureSession(
@@ -515,6 +522,303 @@ struct LocalSessionTransportTests {
             return result
         }
         #expect(joined == guestIDs)
+
+        // FND-12: admission alone proved nothing about fan-out; every guest must get the frame.
+        guide.send(kind: .heartbeat, payload: Data([0x47, 0x4f, 0x48, 0x32]))
+        let receivedIDs = try await withThrowingTaskGroup(of: Set<UUID>.self) { group in
+            group.addTask {
+                var participantIDs: Set<UUID> = []
+                for await guestID in received {
+                    participantIDs.insert(guestID)
+                    if participantIDs.count == guestIDs.count { return participantIDs }
+                }
+                throw TestTimeout.streamEnded
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(8))
+                throw TestTimeout.expired
+            }
+            guard let result = try await group.next() else { throw TestTimeout.streamEnded }
+            group.cancelAll()
+            return result
+        }
+        #expect(receivedIDs == guestIDs)
+    }
+
+    @Test("One stalled guest does not delay healthy guests")
+    @MainActor
+    func stalledGuestDoesNotDelayHealthyGuests() async throws {
+        let port: UInt16 = 50_037
+        let guide = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let credential = try transportCredential(sessionID)
+        let healthyIDs = [UUID(), UUID()]
+        let stalledID = UUID()
+        let frameCount = 8
+        let largePayloadSize = 512 * 1_024
+        let guideLog = ControlEventLog()
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        let (receipts, receiptContinuation) = AsyncStream.makeStream(of: (UUID, Int).self)
+        let healthy = healthyIDs.map { guestID in
+            let guest = LocalSessionControlTransport(port: port)
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(
+                sessionID: sessionID,
+                participantID: guestID,
+                displayName: "Guest",
+                platform: .iOS,
+                credential: credential
+            )
+            guest.setEventHandler { event in
+                if case let .envelopeReceived(envelope) = event, envelope.kind == .heartbeat {
+                    receiptContinuation.yield((guestID, envelope.payload.count))
+                }
+            }
+            return guest
+        }
+        var stalled: RawGuestClient?
+        defer {
+            stalled?.close()
+            healthy.forEach { $0.stop() }
+            guide.stop()
+            guideContinuation.finish()
+            receiptContinuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.setEventHandler { event in
+            guideLog.append(event)
+            guideContinuation.yield(event)
+        }
+        try guide.startGuide()
+        healthy.forEach { $0.startGuest() }
+        // An authenticated peer with a 4 KiB receive window that never reads again. The handshake
+        // blocks, so it runs off the main actor (the guide registers clients on the main actor).
+        stalled = try await Task { @concurrent in
+            let client = try RawGuestClient(port: port, receiveBufferBytes: 4_096)
+            _ = try client.authenticate(
+                sessionID: sessionID,
+                participantID: stalledID,
+                displayName: "Stalled",
+                platform: .iOS,
+                credential: credential,
+                lane: .control
+            )
+            return client
+        }.value
+
+        var joined: Set<UUID> = []
+        for _ in 0 ..< 3 {
+            let event = try await nextControlEvent(from: guideEvents) {
+                if case .guestJoined = $0 { true } else { false }
+            }
+            if case let .guestJoined(participant) = event { joined.insert(participant.participantID) }
+        }
+        #expect(joined == Set(healthyIDs + [stalledID]))
+
+        for index in 0 ..< frameCount {
+            guide.send(kind: .heartbeat, payload: Data(repeating: UInt8(index), count: largePayloadSize))
+        }
+        // ADR-039: healthy peers must not wait on the stalled writer's 2 s send timeout.
+        let largeReceipts = try await collectReceipts(
+            from: receipts,
+            count: healthyIDs.count * frameCount,
+            timeout: .seconds(1)
+        ) { $0.1 == largePayloadSize }
+        #expect(largeReceipts == Dictionary(uniqueKeysWithValues: healthyIDs.map { ($0, frameCount) }))
+
+        let evicted = try await nextControlEvent(from: guideEvents, timeout: .seconds(6)) {
+            if case let .guestDisconnected(participantID) = $0 { participantID == stalledID } else { false }
+        }
+        guard case .guestDisconnected = evicted else {
+            Issue.record("Expected the stalled peer to be evicted")
+            return
+        }
+
+        guide.send(kind: .heartbeat, payload: Data([0x47, 0x4f, 0x48, 0x32]))
+        let smallReceipts = try await collectReceipts(
+            from: receipts,
+            count: healthyIDs.count,
+            timeout: .seconds(3)
+        ) { $0.1 == 4 }
+        #expect(smallReceipts == Dictionary(uniqueKeysWithValues: healthyIDs.map { ($0, 1) }))
+
+        let events = guideLog.events
+        #expect(!events.contains {
+            if case let .guestDisconnected(participantID) = $0 { healthyIDs.contains(participantID) } else { false }
+        })
+        #expect(!events.contains { if case .failed = $0 { true } else { false } })
+    }
+
+    @Test("Guide disconnects a guest that forges the guide sender ID")
+    @MainActor
+    func guideDisconnectsGuestThatForgesGuideSenderID() async throws {
+        let port: UInt16 = 50_038
+        let guide = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let guideID = UUID()
+        let guestID = UUID()
+        let credential = try transportCredential(sessionID)
+        let guideLog = ControlEventLog()
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        var raw: RawGuestClient?
+        defer {
+            raw?.close()
+            guide.stop()
+            guideContinuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: guideID,
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.setEventHandler { event in
+            guideLog.append(event)
+            guideContinuation.yield(event)
+        }
+        try guide.startGuide()
+
+        let client = try await Task { @concurrent in
+            let client = try RawGuestClient(port: port)
+            _ = try client.authenticate(
+                sessionID: sessionID,
+                participantID: guestID,
+                displayName: "Forger",
+                platform: .iOS,
+                credential: credential,
+                lane: .control
+            )
+            return client
+        }.value
+        raw = client
+        _ = try await nextControlEvent(from: guideEvents) {
+            if case let .guestJoined(participant) = $0 { participant.participantID == guestID } else { false }
+        }
+
+        // ADR-038: an authenticated guest that stamps the guide's sender ID is dropped.
+        try await Task { @concurrent in
+            let forged = try SessionEnvelope(
+                lane: .control,
+                kind: .heartbeat,
+                sequence: 1,
+                sessionID: sessionID,
+                senderID: guideID,
+                payload: Data("GOH2".utf8)
+            )
+            try client.send(forged, sealer: SessionFrameSealer(credential: credential), streamID: UUID())
+        }.value
+
+        let disconnected = try await nextControlEvent(from: guideEvents) {
+            if case .guestDisconnected = $0 { true } else { false }
+        }
+        guard case let .guestDisconnected(participantID) = disconnected else {
+            Issue.record("Expected the forging guest to be disconnected")
+            return
+        }
+        #expect(participantID == guestID)
+        let events = guideLog.events
+        #expect(!events.contains { if case .envelopeReceived = $0 { true } else { false } })
+        #expect(!events.contains { if case .failed = $0 { true } else { false } })
+        let eof = await Task { @concurrent in client.readFrame() }.value
+        #expect(eof == nil)
+    }
+
+    @Test("Guest reconnects after guide restart three times")
+    @MainActor
+    func guestReconnectsAfterGuideRestartThreeTimes() async throws {
+        let port: UInt16 = 50_039
+        let guide = LocalSessionControlTransport(port: port)
+        let guest = LocalSessionControlTransport(port: port)
+        let sessionID = UUID()
+        let guestID = UUID()
+        let credential = try transportCredential(sessionID)
+        let guideLog = ControlEventLog()
+        let guestLog = ControlEventLog()
+        let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
+        defer {
+            guest.stop()
+            guide.stop()
+            guideContinuation.finish()
+            guestContinuation.finish()
+        }
+
+        guide.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: credential
+        )
+        guide.setEventHandler { event in
+            guideLog.append(event)
+            guideContinuation.yield(event)
+        }
+        try guide.startGuide()
+
+        guest.hostIP = "127.0.0.1"
+        guest.configureSession(
+            sessionID: sessionID,
+            participantID: guestID,
+            displayName: "Guest",
+            platform: .iOS,
+            credential: credential
+        )
+        guest.setEventHandler { event in
+            guestLog.append(event)
+            guestContinuation.yield(event)
+        }
+        guest.startGuest()
+        _ = try await nextControlEvent(from: guideEvents) {
+            if case let .guestJoined(participant) = $0 { participant.participantID == guestID } else { false }
+        }
+        _ = try await nextControlEvent(from: guestEvents) {
+            if case .connected = $0 { true } else { false }
+        }
+
+        for cycle in 0 ..< 3 {
+            guide.stop()
+            try guide.startGuide()
+            _ = try await nextControlEvent(from: guestEvents) {
+                if case .disconnected = $0 { true } else { false }
+            }
+
+            // A local stop must emit nothing. Polling the log keeps the stream intact: cancelling a
+            // timed-out AsyncStream consumer would finish the stream for the rest of the test.
+            let stopIndex = guestLog.events.count
+            guest.stop()
+            try await Task.sleep(for: .milliseconds(250))
+            #expect(guestLog.events.count == stopIndex, "local stop emitted \(guestLog.events[stopIndex...])")
+
+            guest.startGuest()
+            _ = try await nextControlEvent(from: guestEvents) {
+                if case .connected = $0 { true } else { false }
+            }
+            _ = try await nextControlEvent(from: guideEvents) {
+                if case let .guestJoined(participant) = $0 { participant.participantID == guestID } else { false }
+            }
+
+            guide.send(kind: .heartbeat, payload: Data([UInt8(cycle)]))
+            let event = try await nextControlEvent(from: guestEvents) {
+                if case let .envelopeReceived(envelope) = $0 { envelope.kind == .heartbeat } else { false }
+            }
+            guard case let .envelopeReceived(envelope) = event else {
+                Issue.record("Expected heartbeat after reconnect \(cycle)")
+                return
+            }
+            #expect(envelope.payload == Data([UInt8(cycle)]))
+        }
+        #expect(!guideLog.events.contains { if case .failed = $0 { true } else { false } })
+        #expect(!guestLog.events.contains { if case .failed = $0 { true } else { false } })
     }
 
     @Test("Authenticated guide leave is delivered before transport shutdown")
@@ -872,6 +1176,7 @@ struct LocalSessionTransportTests {
 
     private func nextControlEvent(
         from stream: AsyncStream<SessionControlEvent>,
+        timeout: Duration = .seconds(3),
         matching predicate: @escaping @Sendable (SessionControlEvent) -> Bool
     ) async throws -> SessionControlEvent {
         try await withThrowingTaskGroup(of: SessionControlEvent.self) { group in
@@ -880,7 +1185,36 @@ struct LocalSessionTransportTests {
                 throw TestTimeout.streamEnded
             }
             group.addTask {
-                try await Task.sleep(for: .seconds(3))
+                try await Task.sleep(for: timeout)
+                throw TestTimeout.expired
+            }
+            guard let first = try await group.next() else { throw TestTimeout.streamEnded }
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Counts matching `(guestID, payloadCount)` receipts per guest until `count` arrived or the
+    /// window expired.
+    private func collectReceipts(
+        from stream: AsyncStream<(UUID, Int)>,
+        count: Int,
+        timeout: Duration,
+        matching predicate: @escaping @Sendable ((UUID, Int)) -> Bool
+    ) async throws -> [UUID: Int] {
+        try await withThrowingTaskGroup(of: [UUID: Int].self) { group in
+            group.addTask {
+                var counts: [UUID: Int] = [:]
+                var collected = 0
+                for await receipt in stream where predicate(receipt) {
+                    counts[receipt.0, default: 0] += 1
+                    collected += 1
+                    if collected == count { return counts }
+                }
+                throw TestTimeout.streamEnded
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
                 throw TestTimeout.expired
             }
             guard let first = try await group.next() else { throw TestTimeout.streamEnded }
@@ -911,6 +1245,24 @@ struct LocalSessionTransportTests {
 
 private func transportCredential(_ sessionID: UUID) throws -> SessionCredential {
     try SessionCredential.derive(shortCode: "23456789AB", sessionID: sessionID)
+}
+
+/// Records every control event a handler saw so a test can assert on what did not happen.
+private final class ControlEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [SessionControlEvent] = []
+
+    func append(_ event: SessionControlEvent) {
+        lock.lock()
+        storage.append(event)
+        lock.unlock()
+    }
+
+    var events: [SessionControlEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
 }
 
 private enum TestSocketError: Error {

@@ -94,7 +94,7 @@ class AudioEngine(context: Context) : AudioEngineInterface {
     private var emittedPacketCount = 0
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
-    private var listenerOutput = ListenerOutput.PRIVATE_AUDIO
+    private var listenerOutput = DEFAULT_LISTENER_OUTPUT
     private var previousAudioMode: Int? = null
     private var focusRequest: AudioFocusRequest? = null
     private var noisyReceiverRegistered = false
@@ -106,6 +106,8 @@ class AudioEngine(context: Context) : AudioEngineInterface {
 
     companion object {
         private const val TAG = "AudioEngine"
+        /** Listener playback defaults to the receiver or connected headset (anti-feedback, ADR-034). */
+        val DEFAULT_LISTENER_OUTPUT: ListenerOutput = ListenerOutput.PRIVATE_AUDIO
         const val SAMPLE_RATE = 16000
         const val CHANNEL_IN = AudioFormat.CHANNEL_IN_MONO
         const val CHANNEL_OUT = AudioFormat.CHANNEL_OUT_MONO

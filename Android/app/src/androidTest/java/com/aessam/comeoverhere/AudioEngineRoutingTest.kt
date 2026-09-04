@@ -61,7 +61,9 @@ class AudioEngineRoutingTest {
             audioEngine.startCapture().first()
         }
 
-        assertEquals(0, frame.size % Float.SIZE_BYTES)
+        // ADR-034: one 10 ms PCM16 mono frame (160 samples), never a Float32 buffer.
+        assertEquals(AudioEngine.SAMPLE_RATE / 100 * Short.SIZE_BYTES, frame.size)
+        assertEquals(0, frame.size % Short.SIZE_BYTES)
         assertTrue(frame.isNotEmpty())
     }
 }

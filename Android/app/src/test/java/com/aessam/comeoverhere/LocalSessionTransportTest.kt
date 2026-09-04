@@ -19,6 +19,8 @@ import com.aessam.toursession.SessionAudioCodec
 import com.aessam.toursession.SessionAudioCodecConfiguration
 import com.aessam.toursession.SessionCapability
 import com.aessam.toursession.SessionEnvelope
+import com.aessam.toursession.SessionFrameSealer
+import com.aessam.toursession.SessionLane
 import com.aessam.toursession.AssetRequestPayload
 import com.aessam.toursession.TourAssetDescriptor
 import com.aessam.toursession.TourAssetKind
@@ -33,6 +35,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.CountDownLatch
@@ -43,6 +46,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.io.DataOutputStream
+import java.io.EOFException
 import javax.net.SocketFactory
 
 class LocalSessionTransportTest {
@@ -610,6 +614,300 @@ class LocalSessionTransportTest {
             guest.send(SessionMessageKind.ASSET_REQUEST, AssetRequestPayload(hash, 7).encode(), null)
             assertTrue("Asset request did not arrive", requestReceived.await(3, TimeUnit.SECONDS))
             assertEquals(null, failure.get())
+        } finally {
+            guest.stop()
+            guide.stop()
+        }
+    }
+    @Test
+    fun twentyFourGuestsAuthenticateAndEachReceivesAControlFrame() {
+        val port = 50_037
+        val guide = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val guestIds = (0 until 24).map { UUID.randomUUID() }.toSet()
+        val joinedIds = ConcurrentHashMap.newKeySet<UUID>()
+        val joined = CountDownLatch(guestIds.size)
+        val receivedIds = ConcurrentHashMap.newKeySet<UUID>()
+        val received = CountDownLatch(guestIds.size)
+        val failure = AtomicReference<String>()
+        val guests = guestIds.mapIndexed { index, guestId ->
+            LocalSessionControlTransport(port).apply {
+                hostIP = "127.0.0.1"
+                configureSession(sessionID, guestId, "Guest $index", ParticipantPlatform.ANDROID, credential)
+                setEventHandler { event ->
+                    when (event) {
+                        is SessionControlEvent.EnvelopeReceived -> {
+                            if (event.envelope.kind == SessionMessageKind.HEARTBEAT && receivedIds.add(guestId)) {
+                                received.countDown()
+                            }
+                        }
+                        is SessionControlEvent.Failed -> failure.compareAndSet(null, event.message)
+                        else -> Unit
+                    }
+                }
+            }
+        }
+
+        try {
+            guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
+            guide.setEventHandler { event ->
+                when (event) {
+                    is SessionControlEvent.GuestJoined -> {
+                        if (joinedIds.add(event.participant.participantId)) joined.countDown()
+                    }
+                    is SessionControlEvent.Failed -> failure.compareAndSet(null, event.message)
+                    else -> Unit
+                }
+            }
+            guide.startGuide()
+            guests.forEach { it.startGuest() }
+
+            assertTrue("Not every guest authenticated", joined.await(8, TimeUnit.SECONDS))
+            assertEquals(guestIds, joinedIds)
+
+            // FND-12: admission alone proved nothing about fan-out; every guest must get the frame.
+            guide.send(SessionMessageKind.HEARTBEAT, byteArrayOf(0x47, 0x4f, 0x48, 0x32))
+            assertTrue("Not every guest received the control frame", received.await(8, TimeUnit.SECONDS))
+            assertEquals(guestIds, receivedIds)
+            assertEquals(null, failure.get())
+        } finally {
+            guests.forEach { it.stop() }
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun stalledGuestDoesNotDelayHealthyGuests() {
+        val port = 50_038
+        val guide = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val healthyIds = listOf(UUID.randomUUID(), UUID.randomUUID())
+        val stalledId = UUID.randomUUID()
+        val frameCount = 8
+        val largePayloadSize = 512 * 1_024
+        val joined = CountDownLatch(healthyIds.size + 1)
+        val largeReceipts = CountDownLatch(healthyIds.size * frameCount)
+        val smallReceipts = CountDownLatch(healthyIds.size)
+        val stalledDisconnected = CountDownLatch(1)
+        val healthyDisconnected = CopyOnWriteArrayList<UUID>()
+        val guideFailures = CopyOnWriteArrayList<String>()
+        val guestFailures = CopyOnWriteArrayList<String>()
+        val healthy = healthyIds.map { guestId ->
+            LocalSessionControlTransport(port).apply {
+                hostIP = "127.0.0.1"
+                configureSession(sessionID, guestId, "Guest", ParticipantPlatform.ANDROID, credential)
+                setEventHandler { event ->
+                    when (event) {
+                        is SessionControlEvent.EnvelopeReceived -> {
+                            if (event.envelope.kind != SessionMessageKind.HEARTBEAT) return@setEventHandler
+                            when (event.envelope.payload.size) {
+                                largePayloadSize -> largeReceipts.countDown()
+                                4 -> smallReceipts.countDown()
+                            }
+                        }
+                        is SessionControlEvent.Failed -> guestFailures += event.message
+                        else -> Unit
+                    }
+                }
+            }
+        }
+        var stalled: RawGuestClient? = null
+
+        try {
+            guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
+            guide.setEventHandler { event ->
+                when (event) {
+                    is SessionControlEvent.GuestJoined -> joined.countDown()
+                    is SessionControlEvent.GuestDisconnected -> {
+                        if (event.participantID == stalledId) stalledDisconnected.countDown() else healthyDisconnected += event.participantID
+                    }
+                    is SessionControlEvent.Failed -> guideFailures += event.message
+                    else -> Unit
+                }
+            }
+            guide.startGuide()
+            healthy.forEach { it.startGuest() }
+            // An authenticated peer with a 2 KiB receive window that never reads again.
+            stalled = RawGuestClient(port, receiveBufferSize = 2_048).also {
+                it.authenticate(sessionID, stalledId, "Stalled", ParticipantPlatform.ANDROID, credential, SessionLane.CONTROL)
+            }
+            assertTrue("Not every guest authenticated", joined.await(5, TimeUnit.SECONDS))
+
+            repeat(frameCount) { index ->
+                guide.send(SessionMessageKind.HEARTBEAT, ByteArray(largePayloadSize) { index.toByte() })
+            }
+            // ADR-039: healthy peers must not wait on the stalled writer's 2 s send timeout.
+            assertTrue("Healthy guests were delayed by the stalled peer", largeReceipts.await(1, TimeUnit.SECONDS))
+            assertTrue("Stalled peer was not evicted", stalledDisconnected.await(6, TimeUnit.SECONDS))
+
+            guide.send(SessionMessageKind.HEARTBEAT, byteArrayOf(0x47, 0x4f, 0x48, 0x32))
+            assertTrue("Healthy guests stopped receiving after the eviction", smallReceipts.await(3, TimeUnit.SECONDS))
+
+            assertEquals(emptyList<UUID>(), healthyDisconnected)
+            assertEquals(emptyList<String>(), guestFailures)
+            // The Kotlin guide reports the eviction as a connection failure from the stalled peer's
+            // reader thread (SocketException on the closed socket): exactly one, never more.
+            assertEquals(guideFailures.toString(), 1, guideFailures.size)
+            assertTrue(guideFailures.single(), guideFailures.single().startsWith("Session: guest connection failed:"))
+        } finally {
+            stalled?.close()
+            healthy.forEach { it.stop() }
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun guideDisconnectsGuestThatForgesGuideSenderId() {
+        val port = 50_039
+        val guide = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val guideId = UUID.randomUUID()
+        val guestId = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val joined = CountDownLatch(1)
+        val disconnected = CountDownLatch(1)
+        val disconnectedId = AtomicReference<UUID>()
+        val envelopes = CopyOnWriteArrayList<SessionEnvelope>()
+        val failures = CopyOnWriteArrayList<String>()
+
+        try {
+            guide.configureSession(sessionID, guideId, "Guide", ParticipantPlatform.ANDROID, credential)
+            guide.setEventHandler { event ->
+                when (event) {
+                    is SessionControlEvent.GuestJoined -> joined.countDown()
+                    is SessionControlEvent.GuestDisconnected -> {
+                        disconnectedId.set(event.participantID)
+                        disconnected.countDown()
+                    }
+                    is SessionControlEvent.EnvelopeReceived -> envelopes += event.envelope
+                    is SessionControlEvent.Failed -> failures += event.message
+                    else -> Unit
+                }
+            }
+            guide.startGuide()
+
+            RawGuestClient(port).use { raw ->
+                raw.authenticate(sessionID, guestId, "Forger", ParticipantPlatform.ANDROID, credential, SessionLane.CONTROL)
+                assertTrue("Guest did not authenticate", joined.await(3, TimeUnit.SECONDS))
+
+                // ADR-038: an authenticated guest that stamps the guide's sender ID is dropped.
+                val forged = SessionEnvelope(
+                    lane = SessionLane.CONTROL,
+                    kind = SessionMessageKind.HEARTBEAT,
+                    sequence = 1,
+                    sessionId = sessionID,
+                    senderId = guideId,
+                    payload = "GOH2".toByteArray(),
+                )
+                raw.send(forged, SessionFrameSealer(credential), UUID.randomUUID())
+
+                assertTrue("Forging guest was not disconnected", disconnected.await(3, TimeUnit.SECONDS))
+                assertEquals(guestId, disconnectedId.get())
+                assertEquals(emptyList<SessionEnvelope>(), envelopes)
+                assertEquals(
+                    listOf("Session: guest connection failed: control envelope is not from the authenticated guest"),
+                    failures,
+                )
+                assertThrows(EOFException::class.java) { raw.readFrame() }
+            }
+        } finally {
+            guide.stop()
+        }
+    }
+
+    @Test
+    fun guestReconnectsAfterGuideRestartThreeTimes() {
+        val port = 50_040
+        val guide = LocalSessionControlTransport(port)
+        val guest = LocalSessionControlTransport(port)
+        val sessionID = UUID.randomUUID()
+        val guestId = UUID.randomUUID()
+        val credential = testCredential(sessionID)
+        val guideJoined = AtomicReference(CountDownLatch(1))
+        val guestConnected = AtomicReference(CountDownLatch(1))
+        val guestDisconnected = AtomicReference(CountDownLatch(1))
+        val heartbeat = AtomicReference(CountDownLatch(1))
+        val heartbeatPayload = AtomicReference<ByteArray>()
+        val guestEvents = CopyOnWriteArrayList<SessionControlEvent>()
+        val guideFailures = CopyOnWriteArrayList<String>()
+
+        try {
+            guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
+            guide.setEventHandler { event ->
+                when (event) {
+                    is SessionControlEvent.GuestJoined -> {
+                        assertEquals(guestId, event.participant.participantId)
+                        guideJoined.get().countDown()
+                    }
+                    is SessionControlEvent.Failed -> guideFailures += event.message
+                    else -> Unit
+                }
+            }
+            guide.startGuide()
+
+            guest.hostIP = "127.0.0.1"
+            guest.configureSession(sessionID, guestId, "Guest", ParticipantPlatform.ANDROID, credential)
+            guest.setEventHandler { event ->
+                guestEvents += event
+                when (event) {
+                    SessionControlEvent.Connected -> guestConnected.get().countDown()
+                    SessionControlEvent.Disconnected -> guestDisconnected.get().countDown()
+                    is SessionControlEvent.EnvelopeReceived -> {
+                        if (event.envelope.kind == SessionMessageKind.HEARTBEAT) {
+                            heartbeatPayload.set(event.envelope.payload)
+                            heartbeat.get().countDown()
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+            guest.startGuest()
+            assertTrue("Guest did not authenticate", guideJoined.get().await(3, TimeUnit.SECONDS))
+            assertTrue("Guest did not receive welcome", guestConnected.get().await(3, TimeUnit.SECONDS))
+
+            for (cycle in 0 until 3) {
+                val restartIndex = guestEvents.size
+                guestDisconnected.set(CountDownLatch(1))
+                guideJoined.set(CountDownLatch(1))
+                guide.stop()
+                guide.startGuide()
+                assertTrue("cycle $cycle: guest did not observe the guide restart", guestDisconnected.get().await(3, TimeUnit.SECONDS))
+                // The Kotlin guest reports the guide's close as a connection failure from its reader
+                // thread (EOFException) before the Disconnected: exactly one, always before.
+                val lossEvents = guestEvents.subList(restartIndex, guestEvents.size).toList()
+                assertEquals("cycle $cycle: $lossEvents", 2, lossEvents.size)
+                val loss = lossEvents[0]
+                assertTrue("cycle $cycle: $loss", loss is SessionControlEvent.Failed)
+                assertTrue(
+                    "cycle $cycle: $loss",
+                    (loss as SessionControlEvent.Failed).message.startsWith("Session: guide connection failed:"),
+                )
+                assertEquals("cycle $cycle", SessionControlEvent.Disconnected, lossEvents[1])
+
+                val stopIndex = guestEvents.size
+                guestDisconnected.set(CountDownLatch(1))
+                guest.stop()
+                assertFalse("cycle $cycle: local stop emitted a disconnect", guestDisconnected.get().await(250, TimeUnit.MILLISECONDS))
+                assertEquals("cycle $cycle: local stop emitted events", stopIndex, guestEvents.size)
+
+                val reconnectIndex = guestEvents.size
+                guestConnected.set(CountDownLatch(1))
+                heartbeat.set(CountDownLatch(1))
+                guest.startGuest()
+                assertTrue("cycle $cycle: guest did not reconnect", guestConnected.get().await(3, TimeUnit.SECONDS))
+                assertTrue("cycle $cycle: guide did not admit the reconnect", guideJoined.get().await(3, TimeUnit.SECONDS))
+
+                guide.send(SessionMessageKind.HEARTBEAT, byteArrayOf(cycle.toByte()))
+                assertTrue("cycle $cycle: heartbeat did not arrive", heartbeat.get().await(3, TimeUnit.SECONDS))
+                assertArrayEquals(byteArrayOf(cycle.toByte()), heartbeatPayload.get())
+                assertTrue(
+                    "cycle $cycle: failure after reconnect",
+                    guestEvents.subList(reconnectIndex, guestEvents.size).none { it is SessionControlEvent.Failed },
+                )
+            }
+            assertEquals(emptyList<String>(), guideFailures)
         } finally {
             guest.stop()
             guide.stop()
