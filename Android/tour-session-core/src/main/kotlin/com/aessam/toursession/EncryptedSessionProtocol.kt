@@ -79,7 +79,7 @@ class SealedSessionEnvelope(
     ) + sealedPayload
 
     companion object {
-        const val MAJOR_VERSION = 3
+        const val MAJOR_VERSION = 4
         const val MINOR_VERSION = 0
         const val HEADER_SIZE = 70
         private val MAGIC = "GOH2".toByteArray(StandardCharsets.US_ASCII)

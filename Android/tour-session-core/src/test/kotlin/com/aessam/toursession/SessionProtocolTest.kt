@@ -32,7 +32,7 @@ class SessionProtocolTest {
         assertEquals(first, second)
         assertArrayEquals(first.encode(), second.encode())
         assertEquals(
-            "474f4832030002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050c7f03f42d9429524530ad6b2fdb72701e968b7d8c8b1f471366936db8c9e278bbea83db185892b7bfa27420165562877df907c7b735db72a8949fc7eb4fa46c3014b980fc13031a2c526ef32871ef1ad",
+            "474f4832040002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050eaa9f8c5e519d5a5fc368f8dbfe6d7e45d70eb96c32dd250490c747f03506c02a397edbef6eb9dfab3c4fd42eca6b528684123fa95a9649bb3e5ad5ee146d2953f14667726159f3dcfd266a5f1d98fa6",
             first.encode().lowercaseHex(),
         )
         assertFalse(String(first.encode(), Charsets.ISO_8859_1).contains("Guest 7"))
@@ -129,14 +129,16 @@ class SessionProtocolTest {
 
     @Test
     fun encryptedProtocolRejectsLegacyMajorExplicitly() {
-        val bytes = TourSessionFixtures.encryptedHelloFixture().encode().also {
-            it[4] = SessionEnvelope.MAJOR_VERSION.toByte()
+        listOf(SessionEnvelope.MAJOR_VERSION, 3).forEach { legacy ->
+            val bytes = TourSessionFixtures.encryptedHelloFixture().encode().also {
+                it[4] = legacy.toByte()
+            }
+            val error = assertThrows(UnsupportedSessionVersionException::class.java) {
+                SealedSessionEnvelope.decode(bytes)
+            }
+            assertEquals(legacy, error.receivedMajorVersion)
+            assertEquals(SealedSessionEnvelope.MAJOR_VERSION, error.supportedMajorVersion)
         }
-        val error = assertThrows(UnsupportedSessionVersionException::class.java) {
-            SealedSessionEnvelope.decode(bytes)
-        }
-        assertEquals(SessionEnvelope.MAJOR_VERSION, error.receivedMajorVersion)
-        assertEquals(SealedSessionEnvelope.MAJOR_VERSION, error.supportedMajorVersion)
     }
 
     @Test
@@ -284,7 +286,7 @@ class SessionProtocolTest {
     fun realtimeAudioFrameSealsDeterministically() {
         val sealed = TourSessionFixtures.encryptedRealtimeFixture()
         assertEquals(
-            "474f4832030001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003a508bbef93ea1dcb0c38c2cefcc62e6537aa1fc783534a87ce9fdca985c7a66991daac779d24f8bb1aa9ca14e7d13e6c0e730f9823579cb08f63c",
+            "474f4832040001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003adb8e5ed09b1fad51b1b2510ba6717d8d7f6542479429e44ea0349ee37b6ca4c834475e6c0e328fd8a8d8a2b6af8e80b05390378434de32c1675e",
             sealed.encode().lowercaseHex(),
         )
         assertArrayEquals(sealed.encode(), TourSessionFixtures.encryptedRealtimeFixture().encode())
@@ -499,10 +501,11 @@ class SessionProtocolTest {
     @Test
     fun authenticationProofsAreStableAndRejectAnotherTourCode() {
         assertEquals(
-            "ae79db230a7910d38a2c941753c3ef29f0e0f74a7879cb5a04d1b450d7a2fb05|f304c62c6966c68cb380753be969776af76fee332070a59a3bf471d159b6b19b",
+            "5f837f1767e9bddd9a65096b1b2f458f1329a4f1c9e9a4d09bb9f15f8225a86d|98950abd4bf6d1e9ef3ea546586c7d027797d5e379aab69f1b99c23067d90a8f",
             TourSessionFixtures.authenticationFixtureHex(),
         )
         val correct = SessionCredential.derive("23456-789 ab", TourSessionFixtures.sessionId)
+        assertArrayEquals(TourSessionFixtures.fixtureCredential().key, correct.key)
         val wrong = SessionCredential.derive("23456789AC", TourSessionFixtures.sessionId)
         val challenge = ByteArray(16) { it.toByte() }
         val client = ByteArray(16) { (0x10 + it).toByte() }
@@ -536,6 +539,23 @@ class SessionProtocolTest {
         assertThrows(SessionSecurityException::class.java) {
             SessionCredential.derive("O1IL", TourSessionFixtures.sessionId)
         }
+    }
+
+    @Test
+    fun credentialStretchIsAPbkdf2WireContract() {
+        assertEquals(4, SealedSessionEnvelope.MAJOR_VERSION)
+        assertEquals(600_000, SessionCredential.STRETCH_ITERATIONS)
+        assertEquals("GetOverHere/GOH4/credential-salt/v1", SessionCredential.STRETCH_SALT_LABEL)
+        assertEquals(32, SessionCredential.STRETCHED_KEY_SIZE)
+        val fixtureSalt = "00112233445566778899aabbccddeeff4765744f766572486572652f474f48342f63726564656e7469616c2d73616c742f7631".hexToByteArray()
+        assertEquals(
+            "92ed1ff17b00d8ed95c29c42930eea012bf535f0375174f8c01b0caa46bef215",
+            SessionCredential.stretch("23456789AB", fixtureSalt).lowercaseHex(),
+        )
+        assertEquals(
+            "21ad5672cb5998d6c28ca6573e170ca605c0d71d22ae25ede7444c124ef4b1cf",
+            TourSessionFixtures.fixtureCredential().key.lowercaseHex(),
+        )
     }
 
     @Test

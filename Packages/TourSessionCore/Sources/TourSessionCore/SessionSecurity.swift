@@ -1,3 +1,4 @@
+import CommonCrypto
 import CryptoKit
 import Foundation
 
@@ -5,6 +6,7 @@ public enum SessionSecurityError: Error, Equatable, CustomStringConvertible {
     case invalidShortCode
     case invalidNonceLength(Int)
     case invalidProofLength(Int)
+    case keyStretchFailed(Int32)
 
     public var description: String {
         switch self {
@@ -14,6 +16,8 @@ public enum SessionSecurityError: Error, Equatable, CustomStringConvertible {
             "authentication nonce is \(count) bytes; expected \(SessionAuthenticator.nonceSize)"
         case let .invalidProofLength(count):
             "authentication proof is \(count) bytes; expected \(SessionAuthenticator.proofSize)"
+        case let .keyStretchFailed(status):
+            "tour code stretch failed with CommonCrypto status \(status)"
         }
     }
 }
@@ -21,6 +25,12 @@ public enum SessionSecurityError: Error, Equatable, CustomStringConvertible {
 public struct SessionCredential: Equatable, Sendable {
     public static let shortCodeLength = 10
     public static let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ".utf8)
+    /// PBKDF2-HMAC-SHA256 iteration count; a wire contract shared with the Kotlin core (ADR-042).
+    public static let stretchIterations: UInt32 = 600_000
+    /// Appended to the session ID wire bytes to form the PBKDF2 salt; a wire contract (ADR-042).
+    public static let stretchSaltLabel = "GetOverHere/GOH4/credential-salt/v1"
+    /// PBKDF2 output length in bytes; a wire contract (ADR-042).
+    public static let stretchedKeySize = 32
 
     let key: Data
 
@@ -31,11 +41,37 @@ public struct SessionCredential: Equatable, Sendable {
             throw SessionSecurityError.invalidShortCode
         }
         let inputKey = Data(normalized.utf8)
-        let salt = sessionID.wireData
-        let pseudoRandomKey = SessionAuthenticator.hmac(key: salt, data: inputKey)
+        let salt = sessionID.wireData + Data(stretchSaltLabel.utf8)
+        let pseudoRandomKey = try stretch(inputKey: inputKey, salt: salt)
         var expansion = Data("GetOverHere/GOH2/session-key/v1".utf8)
         expansion.append(0x01)
         return SessionCredential(key: SessionAuthenticator.hmac(key: pseudoRandomKey, data: expansion))
+    }
+
+    /// PBKDF2-HMAC-SHA256 over the ASCII bytes of an already-normalized tour code.
+    static func stretch(inputKey: Data, salt: Data) throws -> Data {
+        var derived = Data(count: stretchedKeySize)
+        let status = inputKey.withUnsafeBytes { password in
+            salt.withUnsafeBytes { saltBytes in
+                derived.withUnsafeMutableBytes { output in
+                    CCKeyDerivationPBKDF(
+                        CCPBKDFAlgorithm(kCCPBKDF2),
+                        password.baseAddress?.assumingMemoryBound(to: CChar.self),
+                        password.count,
+                        saltBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        saltBytes.count,
+                        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                        stretchIterations,
+                        output.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        output.count
+                    )
+                }
+            }
+        }
+        guard status == Int32(kCCSuccess) else {
+            throw SessionSecurityError.keyStretchFailed(status)
+        }
+        return derived
     }
 
     public static func generateShortCode() -> String {

@@ -21,7 +21,7 @@ struct SessionProtocolTests {
 
         #expect(first == second)
         #expect(first.encode() == second.encode())
-        #expect(first.encode().lowercaseHex == "474f4832030002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050c7f03f42d9429524530ad6b2fdb72701e968b7d8c8b1f471366936db8c9e278bbea83db185892b7bfa27420165562877df907c7b735db72a8949fc7eb4fa46c3014b980fc13031a2c526ef32871ef1ad")
+        #expect(first.encode().lowercaseHex == "474f4832040002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050eaa9f8c5e519d5a5fc368f8dbfe6d7e45d70eb96c32dd250490c747f03506c02a397edbef6eb9dfab3c4fd42eca6b528684123fa95a9649bb3e5ad5ee146d2953f14667726159f3dcfd266a5f1d98fa6")
         #expect(first.encode().range(of: Data("Guest 7".utf8)) == nil)
 
         let opener = SessionFrameOpener(credential: credential)
@@ -146,12 +146,12 @@ struct SessionProtocolTests {
         }
     }
 
-    @Test("Encrypted protocol rejects a legacy major explicitly")
-    func encryptedVersionMismatch() throws {
+    @Test("Encrypted protocol rejects legacy majors explicitly", arguments: [SessionEnvelope.majorVersion, UInt8(3)])
+    func encryptedVersionMismatch(legacyMajor: UInt8) throws {
         var bytes = try TourSessionFixtures.encryptedHelloFixture().encode()
-        bytes[4] = SessionEnvelope.majorVersion
+        bytes[4] = legacyMajor
         #expect(throws: SessionProtocolError.unsupportedMajorVersion(
-            received: SessionEnvelope.majorVersion,
+            received: legacyMajor,
             supported: SealedSessionEnvelope.majorVersion
         )) {
             try SealedSessionEnvelope.decode(bytes)
@@ -315,7 +315,7 @@ struct SessionProtocolTests {
     @Test("Realtime audio frame seals deterministically")
     func realtimeAudioFrameSealsDeterministically() throws {
         let sealed = try TourSessionFixtures.encryptedRealtimeFixture()
-        #expect(sealed.encode().lowercaseHex == "474f4832030001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003a508bbef93ea1dcb0c38c2cefcc62e6537aa1fc783534a87ce9fdca985c7a66991daac779d24f8bb1aa9ca14e7d13e6c0e730f9823579cb08f63c")
+        #expect(sealed.encode().lowercaseHex == "474f4832040001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003adb8e5ed09b1fad51b1b2510ba6717d8d7f6542479429e44ea0349ee37b6ca4c834475e6c0e328fd8a8d8a2b6af8e80b05390378434de32c1675e")
         #expect(try TourSessionFixtures.encryptedRealtimeFixture().encode() == sealed.encode())
         let opener = SessionFrameOpener(credential: try TourSessionFixtures.fixtureCredential())
         let opened = try opener.open(sealed)
@@ -480,12 +480,13 @@ struct SessionProtocolTests {
     @Test("Authentication proofs are stable and reject another tour code")
     func authenticationProofs() throws {
         #expect(try TourSessionFixtures.authenticationFixtureHex() ==
-            "ae79db230a7910d38a2c941753c3ef29f0e0f74a7879cb5a04d1b450d7a2fb05|f304c62c6966c68cb380753be969776af76fee332070a59a3bf471d159b6b19b")
+            "5f837f1767e9bddd9a65096b1b2f458f1329a4f1c9e9a4d09bb9f15f8225a86d|98950abd4bf6d1e9ef3ea546586c7d027797d5e379aab69f1b99c23067d90a8f")
 
         let correct = try SessionCredential.derive(
             shortCode: "23456-789 ab",
             sessionID: TourSessionFixtures.sessionID
         )
+        #expect(correct.key == (try TourSessionFixtures.fixtureCredential()).key)
         let wrong = try SessionCredential.derive(
             shortCode: "23456789AC",
             sessionID: TourSessionFixtures.sessionID
@@ -522,6 +523,19 @@ struct SessionProtocolTests {
         #expect(throws: SessionSecurityError.invalidShortCode) {
             try SessionCredential.derive(shortCode: "O1IL", sessionID: TourSessionFixtures.sessionID)
         }
+    }
+
+    @Test("Credential stretch is a PBKDF2 wire contract")
+    func credentialStretchContract() throws {
+        #expect(SealedSessionEnvelope.majorVersion == 4)
+        #expect(SessionCredential.stretchIterations == 600_000)
+        #expect(SessionCredential.stretchSaltLabel == "GetOverHere/GOH4/credential-salt/v1")
+        #expect(SessionCredential.stretchedKeySize == 32)
+        let fixtureSalt = try Data(hex: "00112233445566778899aabbccddeeff4765744f766572486572652f474f48342f63726564656e7469616c2d73616c742f7631")
+        #expect(try SessionCredential.stretch(inputKey: Data("23456789AB".utf8), salt: fixtureSalt).lowercaseHex
+            == "92ed1ff17b00d8ed95c29c42930eea012bf535f0375174f8c01b0caa46bef215")
+        #expect(try TourSessionFixtures.fixtureCredential().key.lowercaseHex
+            == "21ad5672cb5998d6c28ca6573e170ca605c0d71d22ae25ede7444c124ef4b1cf")
     }
 
     @Test("Authentication challenge and welcome roundtrip")
