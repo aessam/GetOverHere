@@ -88,7 +88,7 @@ struct HybridSessionTransportsTests {
 
     @Test("Guide hosts and sends every lane over LAN and Aware")
     @MainActor
-    func guideRunsBothRoutes() {
+    func guideRunsBothRoutes() throws {
         let routes = HybridSessionRouteController()
         let localAudio = RecordingAudioPlane()
         let awareAudio = RecordingAudioPlane()
@@ -113,9 +113,9 @@ struct HybridSessionTransportsTests {
             routeController: routes
         )
 
-        audio.startBroadcasting(channelID: UUID().uuidString, quality: .standard)
-        control.startGuide()
-        asset.startGuide()
+        try audio.startBroadcasting(channelID: UUID().uuidString, quality: .standard)
+        try control.startGuide()
+        try asset.startGuide()
         audio.sendAudio(Data([1]))
         control.send(kind: .bearingSnapshot, payload: Data([2]))
         asset.send(kind: .assetStatus, payload: Data([3]), to: nil)
@@ -196,6 +196,10 @@ private final class RecordingHybridControlTransport: SessionControlTransport {
 
     func send(kind: SessionMessageKind, payload: Data) {
         sentKinds.append(kind)
+    }
+
+    func sendLeave() async {
+        send(kind: .leave, payload: Data())
     }
 
     func stop() {

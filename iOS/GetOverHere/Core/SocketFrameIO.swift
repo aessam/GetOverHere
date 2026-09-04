@@ -73,6 +73,40 @@ nonisolated final class SocketFrameDelivery: @unchecked Sendable {
     }
 }
 
+/// Bounds the accepted-but-unauthenticated connections one lane holds at once (RSK-1, ADR-047).
+/// A slot is acquired in the accept loop and released the moment the handshake returns or throws.
+nonisolated final class HandshakeSlots: @unchecked Sendable {
+    let limit: Int
+    private let lock = NSLock()
+    private var pending = 0
+
+    init(limit: Int) {
+        precondition(limit > 0)
+        self.limit = limit
+    }
+
+    var pendingCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending
+    }
+
+    func tryAcquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard pending < limit else { return false }
+        pending += 1
+        return true
+    }
+
+    func release() {
+        lock.lock()
+        defer { lock.unlock() }
+        precondition(pending > 0, "handshake slot released without an acquire")
+        pending -= 1
+    }
+}
+
 nonisolated final class BoundedSocketFrameWriter: @unchecked Sendable {
     private struct PendingFrame {
         let data: Data

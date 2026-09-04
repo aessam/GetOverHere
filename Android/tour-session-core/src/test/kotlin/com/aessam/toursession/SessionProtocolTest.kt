@@ -77,6 +77,25 @@ class SessionProtocolTest {
     }
 
     @Test
+    fun anotherTourCredentialFailsAsTheAuthenticationSubtype() {
+        // DSCN-26: transports classify a wrong tour code by this subtype, never by message text.
+        val sealed = TourSessionFixtures.encryptedHelloFixture()
+        val wrongOpener = SessionFrameOpener(SessionCredential.derive("23456789AC", TourSessionFixtures.sessionId))
+        val rejected = assertThrows(SessionFrameAuthenticationException::class.java) { wrongOpener.open(sealed) }
+        assertEquals("session frame authentication failed", rejected.message)
+        assertTrue(rejected is SessionFrameSecurityException)
+
+        // Identity reuse is a security failure of the base type only: not a credential rejection.
+        val sealer = SessionFrameSealer(TourSessionFixtures.fixtureCredential())
+        val logical = TourSessionFixtures.helloEnvelope()
+        sealer.seal(logical, TourSessionFixtures.streamId)
+        val reuse = assertThrows(SessionFrameSecurityException::class.java) {
+            sealer.seal(logical.copy(payload = "different plaintext".toByteArray()), TourSessionFixtures.streamId)
+        }
+        assertFalse(reuse is SessionFrameAuthenticationException)
+    }
+
+    @Test
     fun encryptedFrameAuthenticatesAndPreservesReceivedMinorVersion() {
         val credential = TourSessionFixtures.fixtureCredential()
         val logical = TourSessionFixtures.helloEnvelope()

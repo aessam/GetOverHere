@@ -121,6 +121,8 @@ sealed class SessionControlEvent {
     data class GuestDisconnected(val participantID: UUID) : SessionControlEvent()
     data object Disconnected : SessionControlEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionControlEvent()
+    /** The sealed handshake frame failed AEAD authentication or the guide proof mismatched; never an EOF. */
+    data class CredentialRejected(val message: String) : SessionControlEvent()
     data class Failed(val message: String) : SessionControlEvent()
 }
 
@@ -136,9 +138,15 @@ interface SessionControlTransport {
         credential: SessionCredential,
     )
     fun setEventHandler(handler: ((SessionControlEvent) -> Unit)?)
+    /** Throws `IllegalStateException` when the lane cannot start (unconfigured, bind/listen failure). */
     fun startGuide()
     fun startGuest()
     fun send(kind: SessionMessageKind, payload: ByteArray)
+    /**
+     * Enqueues one authenticated leave frame to every connected peer and suspends until delivery or
+     * the 2 s deadline; never blocks the calling thread.
+     */
+    suspend fun sendLeave()
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
     fun clearSession()
@@ -151,6 +159,7 @@ sealed class SessionAssetEvent {
     data class GuestDisconnected(val participantID: UUID) : SessionAssetEvent()
     data object Disconnected : SessionAssetEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionAssetEvent()
+    data class CredentialRejected(val message: String) : SessionAssetEvent()
     data class Failed(val message: String) : SessionAssetEvent()
 }
 

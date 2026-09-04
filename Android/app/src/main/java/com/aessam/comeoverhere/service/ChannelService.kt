@@ -42,7 +42,12 @@ interface ChannelServiceProtocol {
     val channels: StateFlow<List<Channel>>
     val activeChannelID: StateFlow<String?>
     val listenState: StateFlow<ListenState>
+    /** Guests admitted on the audio lane. */
     val listenerCount: StateFlow<Int>
+    /** Guests admitted on the control lane; independent of audio readiness (FND-13). */
+    val connectedGuestCount: StateFlow<Int>
+    /** Non-null only while listening on the loudspeaker in a non-failed session (FND-13). */
+    val speakerFeedbackWarning: StateFlow<String?>
     val readyParticipantCount: StateFlow<Int>
     val connectedPeers: StateFlow<List<PeerInfo>>
     val listenerOutput: StateFlow<ListenerOutput>
@@ -60,7 +65,7 @@ interface ChannelServiceProtocol {
     val targetSnapshot: StateFlow<TargetSnapshotPayload?>
     val bearingSnapshot: StateFlow<BearingSnapshotPayload?>
     val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?>
-    val localGuidanceService: LocalGuidanceService
+    val localGuidanceService: LocalGuidanceInterface
     val localPeerID: String
     val audioQuality: AudioQuality
 
@@ -90,12 +95,14 @@ data class OfflineMapImport(val styleBytes: ByteArray, val temporaryArchive: Fil
 
 class ChannelService(
     private val coordinator: NetworkCoordinator,
-    private val audioEngine: AudioEngine,
+    private val audioEngine: AudioEngineInterface,
     private val scope: CoroutineScope,
     private val tourControlService: TourControlService,
     private val assetTransferService: TourAssetTransferService,
     private val contentStore: TourContentStore,
-    override val localGuidanceService: LocalGuidanceService,
+    override val localGuidanceService: LocalGuidanceInterface,
+    /** Base of the ADR-034 exponential reconnect backoff; tests shorten it (DSCN-23). */
+    private val reconnectBaseDelayMillis: Long = 1_000L,
 ) : ChannelServiceProtocol {
 
     private val _channels = MutableStateFlow<List<Channel>>(emptyList())
@@ -150,6 +157,21 @@ class ChannelService(
     private val _reconnectAttempt = MutableStateFlow(0)
     override val reconnectAttempt: StateFlow<Int> = _reconnectAttempt.asStateFlow()
 
+    override val connectedGuestCount: StateFlow<Int> = tourControlService.connectedGuestCount
+
+    override val speakerFeedbackWarning: StateFlow<String?> =
+        combine(_listenState, _listenerOutput, _connectionState) { state, output, connection ->
+            if (
+                state == ListenState.LISTENING &&
+                output == ListenerOutput.SPEAKER &&
+                connection != SessionConnectionState.FAILED
+            ) {
+                SPEAKER_FEEDBACK_WARNING
+            } else {
+                null
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, null)
+
     override val connectedPeers: StateFlow<List<PeerInfo>> = coordinator.controlPlane.connectedPeers
     override val localPeerID: String get() = coordinator.controlPlane.localPeer.id
     override var audioQuality: AudioQuality = AudioQuality.STANDARD
@@ -174,6 +196,8 @@ class ChannelService(
 
     companion object {
         private const val TAG = "ChannelService"
+        const val SPEAKER_FEEDBACK_WARNING =
+            "Speaker output can feed back into the guide's microphone. Use the earpiece or headphones near the guide."
 
         /** Single source of the user-facing version-mismatch text for every guest and guide path. */
         fun versionMismatchMessage(remoteMajor: Int, localMajor: Int): String =
@@ -184,6 +208,8 @@ class ChannelService(
         audioEngine.playbackFailureHandler = { code ->
             _tourFeatureError.value = "Tour audio playback failed ($code)"
         }
+        audioEngine.onOutputForcedPrivate = { _listenerOutput.value = ListenerOutput.PRIVATE_AUDIO }
+        audioEngine.onAudioFocusLost = { _tourFeatureError.value = "Another app took over audio" }
         assetTransferService.setEventHandler { event ->
             when (event) {
                 is TourAssetTransferEvent.ManifestReceived -> {
@@ -243,7 +269,10 @@ class ChannelService(
         val attempt = sessionAttempt
         scope.launch {
             val credential = withContext(Dispatchers.Default) { SessionCredential.derive(code, sessionID) }
-            if (attempt != sessionAttempt) return@launch
+            if (attempt != sessionAttempt) {
+                Log.i(TAG, "Discarding a stale guide credential; the session was replaced during the stretch")
+                return@launch
+            }
             startGuideSession(channel, sessionID, participantID, code, credential)
         }
     }
@@ -272,21 +301,10 @@ class ChannelService(
                 ParticipantPlatform.ANDROID,
                 credential,
             )
+            // Every lane start is synchronous and throwing (ADR-046); nothing is committed or
+            // published until control, asset, audio, and microphone capture are all running.
             tourControlService.startGuide(sessionID)
             assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
-            _readySlideFiles.value = emptyMap()
-            _offlineMapConfiguration.value = null
-            _offlineMapStatus.value = OfflineMapStatus.Unavailable
-            _tourFeatureError.value = null
-            _tourCode.value = code
-
-            _channels.value = _channels.value + channel
-            _activeChannelID.value = channel.id
-            _listenState.value = ListenState.BROADCASTING
-            _connectionState.value = SessionConnectionState.CONNECTED
-            guestCredential = null
-
-            broadcastChannelAnnounce(channel)
 
             val plane = coordinator.selectAudioPlane()
             participantRegistry = ParticipantRegistry()
@@ -304,13 +322,49 @@ class ChannelService(
             }
             plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
             startCapturing(plane, channel.id)
+
+            _readySlideFiles.value = emptyMap()
+            _offlineMapConfiguration.value = null
+            _offlineMapStatus.value = OfflineMapStatus.Unavailable
+            _tourFeatureError.value = null
+            _tourCode.value = code
+
+            _channels.value = _channels.value + channel
+            _activeChannelID.value = channel.id
+            _listenState.value = ListenState.BROADCASTING
+            _connectionState.value = SessionConnectionState.CONNECTED
+            guestCredential = null
+
+            broadcastChannelAnnounce(channel)
         } catch (error: Exception) {
+            rollbackFailedGuideSession(channel.id)
             _tourCode.value = null
             _tourFeatureError.value = error.message ?: error.javaClass.simpleName
             Log.e(TAG, "Cannot start tour features (${error.javaClass.simpleName})")
             return
         }
         Log.i(TAG, "Created megaphone (quality: ${audioQuality.label})")
+    }
+
+    /** Mirrors the iOS rollback: every lane is cleared and the NSD record is withdrawn (FND-2). */
+    private fun rollbackFailedGuideSession(channelID: String) {
+        audioEngine.stopCapture()
+        captureJob?.cancel()
+        captureJob = null
+        coordinator.activeAudioPlane?.setSessionEventHandler(null)
+        coordinator.activeAudioPlane?.clearSession()
+        tourControlService.clearSession()
+        assetTransferService.clearSession()
+        localGuidanceService.stop()
+        _channels.value = _channels.value.filter { it.id != channelID }
+        _activeChannelID.value = null
+        _listenState.value = ListenState.IDLE
+        _connectionState.value = SessionConnectionState.FAILED
+        guestCredential = null
+        participantRegistry = ParticipantRegistry()
+        _listenerCount.value = 0
+        _readyParticipantCount.value = 0
+        coordinator.controlPlane.broadcast(BLECommand.ChannelEnded(channelID = channelID))
     }
 
     override fun joinChannel(channel: Channel, tourCode: String) {
@@ -333,10 +387,15 @@ class ChannelService(
             } catch (error: SessionSecurityException) {
                 if (attempt == sessionAttempt) {
                     _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                } else {
+                    Log.i(TAG, "Discarding a stale guest credential failure; the session was replaced during the stretch")
                 }
                 return@launch
             }
-            if (attempt != sessionAttempt) return@launch
+            if (attempt != sessionAttempt) {
+                Log.i(TAG, "Discarding a stale guest credential; the session was replaced during the stretch")
+                return@launch
+            }
             startGuestSession(channel, sessionID, participantID, normalizedCode, credential)
         }
     }
@@ -480,31 +539,61 @@ class ChannelService(
         sessionAttempt += 1
         val ch = activeChannel ?: return
         val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        val attempt = sessionAttempt
         if (isGuide) {
-            runCatching(tourControlService::endGuideSession)
-                .onFailure { Log.e(TAG, "Failed to send authenticated session end") }
-        }
-        stopCurrentActivity()
-        _activeChannelID.value = null
-        _listenState.value = ListenState.IDLE
-        _tourCode.value = null
-        _connectionState.value = SessionConnectionState.IDLE
-        guestCredential = null
-        Log.i(TAG, "Left channel")
-
-        if (isGuide) {
+            // UI state ends now; the authenticated leave is flushed off the main thread and the
+            // lanes are cleared after delivery unless a newer session replaced them (ADR-048, DSCN-27).
+            audioEngine.stopCapture()
+            captureJob?.cancel()
+            captureJob = null
             _channels.value = _channels.value.filter { it.id != ch.id }
+            _activeChannelID.value = null
+            _listenState.value = ListenState.IDLE
+            _tourCode.value = null
+            _connectionState.value = SessionConnectionState.IDLE
+            participantRegistry = ParticipantRegistry()
+            _listenerCount.value = 0
+            _readyParticipantCount.value = 0
             coordinator.controlPlane.broadcast(BLECommand.ChannelEnded(channelID = ch.id))
+            scope.launch {
+                runCatching { tourControlService.endGuideSession() }
+                    .onFailure { Log.e(TAG, "Failed to send authenticated session end (${it.javaClass.simpleName})") }
+                if (sessionAttempt == attempt) {
+                    stopCurrentActivity()
+                } else {
+                    Log.i(TAG, "Skipping the deferred lane teardown; a newer session owns the lanes")
+                }
+            }
+        } else {
+            stopCurrentActivity()
+            _activeChannelID.value = null
+            _listenState.value = ListenState.IDLE
+            _tourCode.value = null
+            _connectionState.value = SessionConnectionState.IDLE
+            guestCredential = null
         }
+        Log.i(TAG, "Left channel")
     }
 
     // MARK: - Private
 
     private fun startCapturing(plane: AudioPlane, channelID: String) {
+        // The microphone preflight throws synchronously here, into startGuideSession's catch (FND-2).
+        val pcm = audioEngine.startCapture()
         captureJob = scope.launch {
-            audioEngine.startCapture().collect { pcmData ->
-                if (!isActive) return@collect
-                plane.sendAudio(pcmData)
+            try {
+                pcm.collect { pcmData ->
+                    if (!isActive) return@collect
+                    plane.sendAudio(pcmData)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Capture stream failed (${error.javaClass.simpleName})")
+                if (_listenState.value == ListenState.BROADCASTING) {
+                    // DSCN-12: control and asset lanes stay up; the guide decides whether to end the tour.
+                    _tourFeatureError.value = "Microphone capture stopped"
+                }
             }
         }
     }
@@ -645,7 +734,8 @@ class ChannelService(
                             if (_activeChannelID.value == updated.id &&
                                 _listenState.value == ListenState.LISTENING &&
                                 existing.audioHostIP != updated.audioHostIP) {
-                                _tourCode.value?.let { joinChannel(updated, it) }
+                                // Discovery may only reconfigure the existing credential (FND-6, ADR-036).
+                                restartGuestTransports(updated)
                             }
                         } else {
                             val channel = Channel(
@@ -685,8 +775,10 @@ class ChannelService(
             is AudioSessionEvent.Joined -> participantRegistry.register(event.participant)
             is AudioSessionEvent.Disconnected -> participantRegistry.disconnect(event.connectionID)
             is AudioSessionEvent.VersionMismatch -> {
-                _connectionState.value = SessionConnectionState.FAILED
+                // DSCN-13: one legacy guest must not end the guide's tour. The transport already
+                // closed that connection; the guide only sees the reason.
                 _tourFeatureError.value = versionMismatchMessage(event.remoteMajor, event.localMajor)
+                Log.e(TAG, "Rejected a legacy guest on the audio lane")
             }
             is AudioSessionEvent.Failed -> {
                 _connectionState.value = SessionConnectionState.FAILED
@@ -820,11 +912,12 @@ class ChannelService(
                 }
             }
             TourControlConnectionEvent.SessionEnded -> endGuestSessionFromGuide()
-            is TourControlConnectionEvent.VersionMismatch -> {
-                reconnectJob?.cancel()
-                reconnectJob = null
-                _connectionState.value = SessionConnectionState.FAILED
-                _tourFeatureError.value = versionMismatchMessage(event.remoteMajor, event.localMajor)
+            is TourControlConnectionEvent.VersionMismatch ->
+                failGuestSession(versionMismatchMessage(event.remoteMajor, event.localMajor))
+            is TourControlConnectionEvent.CredentialRejected -> {
+                // A wrong code cannot succeed on retry (FND-8): terminal, credentials erased.
+                Log.e(TAG, "The guide rejected the tour code; not retrying")
+                failGuestSession("The tour code was rejected. Check it with the guide.")
             }
             is TourControlConnectionEvent.Failed -> {
                 val channel = activeChannel ?: return
@@ -859,32 +952,53 @@ class ChannelService(
     private fun scheduleReconnect(reason: String) {
         if (reconnectJob != null) return
         if (_reconnectAttempt.value >= 5) {
-            _connectionState.value = SessionConnectionState.FAILED
-            _tourFeatureError.value = "Could not reconnect to the guide"
+            failGuestSession("Could not reconnect to the guide")
             return
         }
         val channel = activeChannel ?: return
-        val credential = guestCredential ?: return
-        val sessionID = runCatching { UUID.fromString(channel.id) }.getOrNull() ?: return
-        val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
-            .getOrNull() ?: return
+        if (guestCredential == null) return
         _reconnectAttempt.value += 1
         _connectionState.value = SessionConnectionState.RECONNECTING
         _tourFeatureError.value = reason
         Log.e(TAG, "Session reconnect attempt ${_reconnectAttempt.value}")
-        val delayMilliseconds = (1L shl (_reconnectAttempt.value - 1)) * 1_000L
+        val delayMilliseconds = (1L shl (_reconnectAttempt.value - 1)) * reconnectBaseDelayMillis
         reconnectJob = scope.launch {
             delay(delayMilliseconds)
             reconnectJob = null
             if (_listenState.value != ListenState.LISTENING) return@launch
-            coordinator.activeAudioPlane?.stop()
-            tourControlService.stop()
-            assetTransferService.stop()
-            audioEngine.stopPlayback()
-            attemptedGuestRoutes.clear()
-            routeLease.reset()
-            tryNextGuestRoute(channel, sessionID, participantID, credential)
+            // A fresher discovery address wins over the one captured when the reconnect was scheduled.
+            restartGuestTransports(activeChannel ?: channel)
         }
+    }
+
+    /**
+     * Stop + reconfigure of the guest lanes with the retained credential (FND-6, DSCN-11). Used by
+     * the discovery address change and by the reconnect timer. Never joinChannel, never
+     * clearSession, never a fresh credential stretch.
+     */
+    private fun restartGuestTransports(channel: Channel) {
+        if (_listenState.value != ListenState.LISTENING) return
+        val credential = guestCredential ?: run {
+            Log.e(TAG, "Cannot restart guest transports without an admitted credential")
+            return
+        }
+        val sessionID = runCatching { UUID.fromString(channel.id) }.getOrNull() ?: run {
+            Log.e(TAG, "Cannot restart guest transports with a non-UUID channel identity")
+            return
+        }
+        val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }.getOrNull() ?: run {
+            Log.e(TAG, "Cannot restart guest transports with a non-UUID participant identity")
+            return
+        }
+        reconnectJob?.cancel()
+        reconnectJob = null
+        coordinator.activeAudioPlane?.stop()
+        tourControlService.stop()
+        assetTransferService.stop()
+        audioEngine.stopPlayback()
+        attemptedGuestRoutes.clear()
+        routeLease.reset()
+        tryNextGuestRoute(channel, sessionID, participantID, credential)
     }
 
     private fun handleDiscoveryUnavailable(channelID: String) {

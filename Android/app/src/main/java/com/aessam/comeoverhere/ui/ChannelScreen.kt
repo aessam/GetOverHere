@@ -66,6 +66,8 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     val activeChannelID by vm.activeChannelID.collectAsState()
     val listenState by vm.listenState.collectAsState()
     val listenerCount by vm.listenerCount.collectAsState()
+    val connectedGuestCount by vm.connectedGuestCount.collectAsState()
+    val speakerFeedbackWarning by vm.speakerFeedbackWarning.collectAsState()
     val readyParticipantCount by vm.readyParticipantCount.collectAsState()
     val activeChannel by vm.activeChannel.collectAsState(initial = null)
     val listenerOutput by vm.listenerOutput.collectAsState()
@@ -282,6 +284,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                     CreatorView(
                         channel = activeChannel!!,
                         listenerCount = listenerCount,
+                        connectedGuestCount = connectedGuestCount,
                         readyParticipantCount = readyParticipantCount,
                         tourCode = tourCode,
                         presentation = presentation,
@@ -327,6 +330,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         connectionState = connectionState,
                         reconnectAttempt = reconnectAttempt,
                         tourFeatureError = tourFeatureError,
+                        speakerFeedbackWarning = speakerFeedbackWarning,
                         presentation = presentation,
                         readySlideFiles = readySlideFiles,
                         minimizedSlide = guestMinimizedSlide,
@@ -501,6 +505,7 @@ private fun EmptyState(onCreate: () -> Unit) {
 private fun CreatorView(
     channel: Channel,
     listenerCount: Int,
+    connectedGuestCount: Int,
     readyParticipantCount: Int,
     tourCode: String?,
     presentation: PresentationSnapshotPayload?,
@@ -546,7 +551,7 @@ private fun CreatorView(
             }
             Spacer(Modifier.weight(1f))
             Text(
-                "$listenerCount listeners",
+                "$connectedGuestCount connected · $listenerCount audio",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.outline,
             )
@@ -742,6 +747,7 @@ private fun ListenerView(
     connectionState: SessionConnectionState,
     reconnectAttempt: Int,
     tourFeatureError: String?,
+    speakerFeedbackWarning: String?,
     presentation: PresentationSnapshotPayload?,
     readySlideFiles: Map<String, File>,
     minimizedSlide: Boolean,
@@ -826,6 +832,14 @@ private fun ListenerView(
         }
 
         HorizontalDivider()
+        speakerFeedbackWarning?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,

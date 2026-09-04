@@ -29,6 +29,7 @@ import com.aessam.toursession.VisualFocusSnapshotPayload
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
@@ -411,9 +412,10 @@ class LocalSessionTransportTest {
         val guide = LocalSessionControlTransport(50_031)
         val guest = LocalSessionControlTransport(50_031)
         val sessionID = UUID.randomUUID()
-        val failure = CountDownLatch(1)
+        val rejected = CountDownLatch(1)
         val disconnected = CountDownLatch(1)
         val message = AtomicReference<String>()
+        val failure = AtomicReference<String>()
         try {
             guide.configureSession(
                 sessionID,
@@ -432,16 +434,21 @@ class LocalSessionTransportTest {
                 SessionCredential.derive("23456789AC", sessionID),
             )
             guest.setEventHandler { event ->
-                if (event is SessionControlEvent.Failed) {
-                    message.set(event.message)
-                    failure.countDown()
-                } else if (event == SessionControlEvent.Disconnected) {
-                    disconnected.countDown()
+                when (event) {
+                    is SessionControlEvent.CredentialRejected -> {
+                        message.set(event.message)
+                        rejected.countDown()
+                    }
+                    is SessionControlEvent.Failed -> failure.compareAndSet(null, event.message)
+                    SessionControlEvent.Disconnected -> disconnected.countDown()
+                    else -> Unit
                 }
             }
             guest.startGuest()
-            assertTrue("Wrong code was not rejected", failure.await(3, TimeUnit.SECONDS))
-            assertTrue(message.get().contains("guide connection failed"))
+            // FND-8: a wrong code is a distinct, terminal event, never the retried transport failure.
+            assertTrue("Wrong code was not rejected", rejected.await(3, TimeUnit.SECONDS))
+            assertTrue(message.get().contains("tour code was rejected"))
+            assertEquals("A wrong code must not surface as a transport failure", null, failure.get())
             assertFalse(
                 "A failed authentication must not also emit a stale disconnect",
                 disconnected.await(250, TimeUnit.MILLISECONDS),
@@ -519,9 +526,11 @@ class LocalSessionTransportTest {
             if (event is SessionControlEvent.Failed) failure.set(event.message)
         }
         transport.clearSession()
-        transport.startGuide()
+        // FND-2: a lane that cannot start throws synchronously instead of emitting an asynchronous Failed.
+        val error = assertThrows(IllegalStateException::class.java) { transport.startGuide() }
 
-        assertTrue(failure.get()?.contains("not configured") == true)
+        assertTrue(error.message?.contains("not configured") == true)
+        assertEquals(null, failure.get())
         assertFalse(transport.isActive)
     }
 

@@ -40,7 +40,7 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guide.setSessionEventHandler { event in eventContinuation.yield(event) }
-        guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
+        try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -257,7 +257,7 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guide.setSessionEventHandler { eventContinuation.yield($0) }
-        guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
+        try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -311,7 +311,7 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guide.setEventHandler { guideContinuation.yield($0) }
-        guide.startGuide()
+        try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -423,7 +423,7 @@ struct LocalSessionTransportTests {
             platform: .iOS,
             credential: credential
         )
-        guide.startGuide()
+        try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -493,7 +493,7 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guide.setEventHandler { continuation.yield($0) }
-        guide.startGuide()
+        try guide.startGuide()
         guests.forEach { $0.startGuest() }
 
         let joined = try await withThrowingTaskGroup(of: Set<UUID>.self) { group in
@@ -539,7 +539,7 @@ struct LocalSessionTransportTests {
             platform: .iOS,
             credential: credential
         )
-        guide.startGuide()
+        try guide.startGuide()
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
             sessionID: sessionID,
@@ -594,7 +594,7 @@ struct LocalSessionTransportTests {
             platform: .iOS,
             credential: guideCredential
         )
-        guide.startGuide()
+        try guide.startGuide()
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
             sessionID: sessionID,
@@ -606,14 +606,14 @@ struct LocalSessionTransportTests {
         guest.setEventHandler { continuation.yield($0) }
         guest.startGuest()
 
-        let event = try await nextControlEvent(from: events) {
-            if case .failed = $0 { true } else { false }
-        }
-        guard case let .failed(message) = event else {
-            Issue.record("Expected authentication failure")
+        // FND-8: a wrong code is a distinct, terminal event; it is never the retried `.failed`.
+        let event = try await next(from: events)
+        guard case let .credentialRejected(message) = event else {
+            Issue.record("Expected a credential rejection as the first event, got \(event)")
             return
         }
-        #expect(message.contains("invalid welcome"))
+        #expect(message.contains("tour code was rejected"))
+        try await expectControlSilence(on: events)
     }
 
     @Test("Control lane reports a legacy protocol version explicitly")
@@ -682,17 +682,18 @@ struct LocalSessionTransportTests {
         )
         transport.setEventHandler { continuation.yield($0) }
         transport.clearSession()
-        transport.startGuide()
 
-        let event = try await nextControlEvent(from: events) {
-            if case .failed = $0 { true } else { false }
+        // FND-2: a lane that cannot start throws synchronously instead of emitting an asynchronous .failed.
+        var thrown: (any Error)?
+        do {
+            try transport.startGuide()
+        } catch {
+            thrown = error
         }
-        guard case let .failed(message) = event else {
-            Issue.record("Expected a missing-configuration failure")
-            return
-        }
-        #expect(message.contains("not configured"))
+        let error = try #require(thrown)
+        #expect(error.localizedDescription.contains("not configured"))
         #expect(!transport.isActive)
+        try await expectControlSilence(on: events)
     }
 
     @Test("Independent GOH2 asset lane supports targeted manifests and guest requests")
@@ -724,7 +725,7 @@ struct LocalSessionTransportTests {
             credential: credential
         )
         guide.setEventHandler { guideContinuation.yield($0) }
-        guide.startGuide()
+        try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -808,7 +809,7 @@ struct LocalSessionTransportTests {
             credential: guideCredential
         )
         guide.setSessionEventHandler { guideEvents.yield($0) }
-        guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
+        try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
         guest.configureSession(
@@ -827,6 +828,16 @@ struct LocalSessionTransportTests {
         do {
             let event = try await next(from: stream, timeout: .milliseconds(500))
             Issue.record("Unexpected audio session event: \(event)")
+        } catch TestTimeout.expired {
+            // Silence is the expected outcome.
+        }
+    }
+
+    /// Passes only when no control event arrives within 500 ms; any event is recorded as an issue.
+    private func expectControlSilence(on stream: AsyncStream<SessionControlEvent>) async throws {
+        do {
+            let event = try await next(from: stream, timeout: .milliseconds(500))
+            Issue.record("Unexpected control event: \(event)")
         } catch TestTimeout.expired {
             // Silence is the expected outcome.
         }

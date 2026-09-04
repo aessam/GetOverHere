@@ -672,6 +672,8 @@ final class WiFiAwareSessionControlTransport: SessionControlTransport {
     func startGuide() { lane.startGuide() }
     func startGuest() { lane.startGuest() }
     func send(kind: SessionMessageKind, payload: Data) { lane.send(kind: kind, payload: payload) }
+    /// Lab-only conformance: the Aware lane has no delivery tracking, so the leave is enqueued only.
+    func sendLeave() async { lane.send(kind: .leave, payload: Data()) }
     func stop() { lane.stop() }
     func clearSession() { lane.clearSession() }
     func acceptGuideConnection(_ connection: NetworkConnection<TCP>) { lane.acceptGuideConnection(connection) }

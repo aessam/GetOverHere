@@ -22,7 +22,7 @@ struct PresentationServiceTests {
             platform: .iOS,
             credential: try presentationCredential(sessionID)
         )
-        service.startGuide(deckID: deckID, slides: [second, first])
+        try service.startGuide(deckID: deckID, slides: [second, first])
         try service.showSlide()
         try service.goNext()
         try service.setTarget(
@@ -169,7 +169,7 @@ struct PresentationServiceTests {
             platform: .iOS,
             credential: try presentationCredential(sessionID)
         )
-        service.startGuide(deckID: UUID())
+        try service.startGuide(deckID: UUID())
 
         try service.setTarget(latitude: 37.176_128_4, longitude: -3.588_141_2, label: "Main Gate")
 
@@ -196,7 +196,7 @@ struct PresentationServiceTests {
             platform: .iOS,
             credential: try presentationCredential(sessionID)
         )
-        service.startGuide(deckID: UUID())
+        try service.startGuide(deckID: UUID())
 
         try service.shareBearing(degrees: 271.25)
         try service.clearBearing()
@@ -229,8 +229,9 @@ struct PresentationServiceTests {
             platform: .iOS,
             credential: try presentationCredential(sessionID)
         )
-        guide.startGuide(deckID: UUID())
-        try guide.endGuideSession()
+        try guide.startGuide(deckID: UUID())
+        try await guide.endGuideSession()
+        #expect(guideTransport.leaveFlushCount == 1)
         #expect(guideTransport.sent.last?.kind == .leave)
         #expect(guideTransport.sent.last?.payload.isEmpty == true)
 
@@ -260,6 +261,51 @@ struct PresentationServiceTests {
             }
             await guestTransport.emit(.envelopeReceived(leaveEnvelope))
         }
+    }
+
+    @Test("Connected guest count follows control-lane membership with set semantics")
+    @MainActor
+    func connectedGuestCountFollowsControlLaneMembership() async throws {
+        let transport = RecordingControlTransport()
+        let service = TourControlService(transport: transport)
+        let sessionID = UUID()
+        service.configureSession(
+            sessionID: sessionID,
+            participantID: UUID(),
+            displayName: "Guide",
+            platform: .iOS,
+            credential: try presentationCredential(sessionID)
+        )
+        try service.startGuide(deckID: UUID())
+        let guestA = UUID()
+        let guestB = UUID()
+
+        await transport.emit(.guestJoined(participant(guestA, connectionID: "a-1")))
+        await transport.emit(.guestJoined(participant(guestB, connectionID: "b-1")))
+        #expect(service.connectedGuestCount == 2)
+
+        await transport.emit(.guestDisconnected(participantID: guestA))
+        #expect(service.connectedGuestCount == 1)
+        await transport.emit(.guestDisconnected(participantID: guestA))
+        #expect(service.connectedGuestCount == 1, "disconnect is idempotent")
+
+        // A re-registering guest arrives as disconnect + join and must count once.
+        await transport.emit(.guestDisconnected(participantID: guestB))
+        await transport.emit(.guestJoined(participant(guestB, connectionID: "b-2")))
+        #expect(service.connectedGuestCount == 1)
+
+        service.stop()
+        #expect(service.connectedGuestCount == 0)
+    }
+
+    private func participant(_ id: UUID, connectionID: String) -> ParticipantSession {
+        ParticipantSession(
+            participantID: id,
+            connectionID: connectionID,
+            displayName: "Guest",
+            role: .guest,
+            platform: .android
+        )
     }
 
     @Test("Discovery unavailable command roundtrips separately from session end")
@@ -297,6 +343,7 @@ private final class RecordingControlTransport: SessionControlTransport {
     var hostIP: String?
     private var eventHandler: (@Sendable (SessionControlEvent) -> Void)?
     private(set) var sent: [SentMessage] = []
+    private(set) var leaveFlushCount = 0
 
     func configureSession(
         sessionID: UUID,
@@ -315,6 +362,11 @@ private final class RecordingControlTransport: SessionControlTransport {
 
     func send(kind: SessionMessageKind, payload: Data) {
         sent.append(SentMessage(kind: kind, payload: payload))
+    }
+
+    func sendLeave() async {
+        leaveFlushCount += 1
+        sent.append(SentMessage(kind: .leave, payload: Data()))
     }
 
     func stop() { isActive = false }

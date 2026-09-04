@@ -19,6 +19,8 @@ class AppViewModel(
     val activeChannelID = channelService.activeChannelID
     val listenState = channelService.listenState
     val listenerCount = channelService.listenerCount
+    val connectedGuestCount = channelService.connectedGuestCount
+    val speakerFeedbackWarning = channelService.speakerFeedbackWarning
     val readyParticipantCount = channelService.readyParticipantCount
     val listenerOutput = channelService.listenerOutput
     val presentationSnapshot = channelService.presentationSnapshot

@@ -12,6 +12,8 @@ enum TourControlConnectionEvent: Sendable {
     case disconnected
     case sessionEnded
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
+    /// The guide rejected the tour code; terminal, never retried (FND-8).
+    case credentialRejected(String)
     case failed(String)
 }
 
@@ -44,8 +46,11 @@ final class TourControlService {
     private(set) var visualFocusSnapshot: VisualFocusSnapshotPayload?
     private(set) var slides: [TourAssetDescriptor] = []
     private(set) var lastError: String?
+    /// Guests admitted on the control lane, keyed by participant (FND-13); independent of audio readiness.
+    private(set) var connectedGuestCount = 0
 
     @ObservationIgnored private let transport: SessionControlTransport
+    @ObservationIgnored private var connectedGuestIDs: Set<UUID> = []
     @ObservationIgnored private var role: PresentationServiceRole?
     @ObservationIgnored private var sessionID: UUID?
     @ObservationIgnored private var connectionEventHandler: (@Sendable (TourControlConnectionEvent) -> Void)?
@@ -102,7 +107,8 @@ final class TourControlService {
         )
     }
 
-    func startGuide(deckID: UUID, slides: [TourAssetDescriptor] = []) {
+    /// Synchronous and throwing (FND-2): a lane that cannot listen fails the guide's startup here.
+    func startGuide(deckID: UUID, slides: [TourAssetDescriptor] = []) throws {
         role = .guide
         self.slides = Self.orderedSlides(slides)
         snapshot = PresentationSnapshotPayload(
@@ -113,7 +119,7 @@ final class TourControlService {
             effectiveAtMilliseconds: Self.nowMilliseconds()
         )
         visualFocusSnapshot = VisualFocusSnapshotPayload(stateVersion: 0, mode: .slides)
-        transport.startGuide()
+        try transport.startGuide()
     }
 
     func startGuest(hostIP: String) {
@@ -122,7 +128,15 @@ final class TourControlService {
         transport.startGuest()
     }
 
-    func endGuideSession() throws {
+    /// Flushes the authenticated leave without blocking the main actor (FND-8).
+    func endGuideSession() async throws {
+        try requireGuide()
+        await transport.sendLeave()
+    }
+
+    /// Process-termination variant: the synchronous, bounded flush is the only allowed main-thread
+    /// wait because no Task will run before the process exits.
+    func endGuideSessionBeforeTermination() throws {
         try requireGuide()
         transport.send(kind: .leave, payload: Data())
     }
@@ -244,6 +258,8 @@ final class TourControlService {
         visualFocusSnapshot = nil
         slides = []
         lastError = nil
+        connectedGuestIDs.removeAll()
+        connectedGuestCount = 0
     }
 
     func clearSession() {
@@ -296,8 +312,11 @@ final class TourControlService {
             connectionEventHandler?(.connected)
         case .disconnected:
             connectionEventHandler?(.disconnected)
-        case .guestJoined:
+        case let .guestJoined(participant):
             guard role == .guide else { return }
+            // Set semantics: a re-registering participant arrives as disconnect + join and counts once.
+            connectedGuestIDs.insert(participant.participantID)
+            connectedGuestCount = connectedGuestIDs.count
             do {
                 if let snapshot {
                     transport.send(kind: .presentationSnapshot, payload: try snapshot.encode())
@@ -345,11 +364,15 @@ final class TourControlService {
                 report(error)
             }
         case let .guestDisconnected(participantID):
-            _ = participantID
+            connectedGuestIDs.remove(participantID)
+            connectedGuestCount = connectedGuestIDs.count
         case let .versionMismatch(remoteMajor, localMajor):
             let message = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
             report(message)
             connectionEventHandler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
+        case let .credentialRejected(message):
+            report(message)
+            connectionEventHandler?(.credentialRejected(message))
         case let .failed(message):
             report(message)
             connectionEventHandler?(.failed(message))

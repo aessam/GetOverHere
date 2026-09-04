@@ -5,8 +5,8 @@ import os
 /// Discovery uses Bonjour; audio uses direct TCP between peers on the same Wi-Fi network.
 @Observable
 final class NetworkCoordinator {
-    let controlPlane: LocalControlPlane
-    private let udpAudio = UDPAudioPlane()
+    let controlPlane: any ControlPlane
+    private let udpAudio: any AudioPlane
     private(set) var activeAudioPlane: (any AudioPlane)?
 
     var hasAndroidPeers: Bool {
@@ -25,8 +25,14 @@ final class NetworkCoordinator {
     private var commandTask: Task<Void, Never>?
     private var peerTask: Task<Void, Never>?
 
-    init(displayName: String) {
-        self.controlPlane = LocalControlPlane(displayName: displayName)
+    /// Production passes only `displayName`; tests inject fakes (DSCN-23). No behavior change.
+    init(
+        displayName: String,
+        controlPlane: (any ControlPlane)? = nil,
+        audioPlane: (any AudioPlane)? = nil
+    ) {
+        self.controlPlane = controlPlane ?? LocalControlPlane(displayName: displayName)
+        self.udpAudio = audioPlane ?? UDPAudioPlane()
         (channelCommands, channelCommandsCont) = AsyncStream.makeStream()
         (channelPeerEvents, channelPeerEventsCont) = AsyncStream.makeStream()
     }

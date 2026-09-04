@@ -27,8 +27,28 @@ enum AudioEngineError: LocalizedError {
     }
 }
 
+/// Test seam (DSCN-23): the production engine needs real audio hardware, and simulator capture
+/// throws by design. No behavior change.
+protocol AudioEngineInterface: AnyObject {
+    var listenerOutput: ListenerOutput { get set }
+    var isCapturing: Bool { get }
+    func startCapture() throws -> AsyncStream<Data>
+    func stopCapture()
+    func startPlayback()
+    func enqueuePlayback(_ data: Data)
+    func stopPlayback()
+}
+
+/// What the capture pipeline does in response to an `AVAudioSession` interruption (FND-13).
+nonisolated enum CaptureInterruptionAction: Equatable, Sendable {
+    case pause
+    case resume
+    case stop
+    case ignore
+}
+
 @Observable
-final class AudioEngine {
+final class AudioEngine: AudioEngineInterface {
     private(set) var isCapturing = false
     private(set) var isPlaying = false
 
@@ -52,6 +72,9 @@ final class AudioEngine {
     private let continuationLock = OSAllocatedUnfairLock<AsyncStream<Data>.Continuation?>(initialState: nil)
     private var routeChangeObserver: NSObjectProtocol?
     private var configChangeObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    /// Input format the current converter was built for; a route change that alters it rebuilds the tap.
+    private var captureInputFormat: AVAudioFormat?
 
     // Canonical codec boundary: 16 kHz mono signed PCM16 little-endian.
     // Network transports encode this PCM before sending it.
@@ -78,27 +101,51 @@ final class AudioEngine {
 
         let engine = AVAudioEngine()
         self.engine = engine
+        enableVoiceProcessingIfSupported(on: engine.inputNode)
 
+        let stream = AsyncStream<Data> { [continuationLock] continuation in
+            continuationLock.withLock { $0 = continuation }
+        }
+
+        do {
+            try installCaptureTap(on: engine)
+        } catch {
+            engine.stop()
+            self.engine = nil
+            throw error
+        }
+
+        observeRouteChanges()
+
+        do {
+            try engine.start()
+            isCapturing = true
+            Logger.audio.info("Capture engine started (noiseGate=\(self.noiseGateThreshold))")
+        } catch {
+            cleanupCapturePipeline()
+            Logger.audio.error("Capture engine failed to start")
+            throw AudioEngineError.captureStartFailed(error.localizedDescription)
+        }
+
+        return stream
+#endif
+    }
+
+    /// Builds the hardware-to-wire converter for the current input format and installs the tap.
+    /// Called at capture start and again when a route or configuration change alters the input.
+    private func installCaptureTap(on engine: AVAudioEngine) throws {
         let inputNode = engine.inputNode
-        enableVoiceProcessingIfSupported(on: inputNode)
-
         let hwFormat = inputNode.outputFormat(forBus: 0)
         Logger.audio.info("Hardware input: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch")
 
         // Convert hardware format → wire format
         guard let converter = AVAudioConverter(from: hwFormat, to: Self.wireFormat) else {
             Logger.audio.error("Failed to create converter: \(hwFormat) → \(Self.wireFormat)")
-            engine.stop()
-            self.engine = nil
             throw AudioEngineError.converterUnavailable
         }
         Logger.audio.info("Converter: \(hwFormat.sampleRate)Hz → \(Self.wireFormat.sampleRate)Hz")
         let converterRef = AudioConverterRef(converter: converter)
         let gateThreshold = noiseGateThreshold
-
-        let stream = AsyncStream<Data> { [continuationLock] continuation in
-            continuationLock.withLock { $0 = continuation }
-        }
 
         inputNode.installTap(
             onBus: 0,
@@ -113,24 +160,57 @@ final class AudioEngine {
             let outputBuffer = AudioEngine.convert(buffer, using: converterRef.converter)
             guard let finalBuffer = outputBuffer,
                   let data = AudioEngine.bufferToData(finalBuffer) else { return }
-            continuationLock.withLock { $0?.yield(data) }
+            continuationLock.withLock { _ = $0?.yield(data) }
         }
         hasCaptureTap = true
+        captureInputFormat = hwFormat
+    }
 
-        observeRouteChanges()
-
-        do {
-            try engine.start()
-            isCapturing = true
-            Logger.audio.info("Capture engine started (noiseGate=\(gateThreshold))")
-        } catch {
-            cleanupCapturePipeline()
-            Logger.audio.error("Capture engine failed to start")
-            throw AudioEngineError.captureStartFailed(error.localizedDescription)
+    /// Route or configuration change while capturing (FND-13): tear down the tap built for the
+    /// previous input format and rebuild it. An unrecoverable rebuild finishes the stream, which the
+    /// product surfaces as "Microphone capture stopped" (DSCN-12).
+    private func rebuildCapturePipeline() {
+        guard let engine, isCapturing else { return }
+        engine.stop()
+        if hasCaptureTap {
+            engine.inputNode.removeTap(onBus: 0)
+            hasCaptureTap = false
         }
+        do {
+            try installCaptureTap(on: engine)
+            try engine.start()
+            Logger.audio.info("Capture pipeline rebuilt")
+        } catch {
+            Logger.audio.error("Capture pipeline rebuild failed (\(String(describing: type(of: error))))")
+            cleanupCapturePipeline()
+        }
+    }
 
-        return stream
-#endif
+    /// Pure decision for the interruption observer: `.began` pauses, `.ended` with `.shouldResume`
+    /// resumes, `.ended` without it stops, anything else is ignored.
+    nonisolated static func interruptionAction(for userInfo: [AnyHashable: Any]?) -> CaptureInterruptionAction {
+        guard let rawType = userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
+            return .ignore
+        }
+        switch type {
+        case .began:
+            return .pause
+        case .ended:
+            let rawOptions = userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            return AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume) ? .resume : .stop
+        @unknown default:
+            return .ignore
+        }
+    }
+
+    /// Pure decision for the route-change observer: the converter is rebuilt when the input format
+    /// it was built for differs from the current one, or when no converter exists.
+    nonisolated static func needsConverterRebuild(current: AVAudioFormat, converterInput: AVAudioFormat?) -> Bool {
+        guard let converterInput else { return true }
+        return current.sampleRate != converterInput.sampleRate
+            || current.channelCount != converterInput.channelCount
+            || current.commonFormat != converterInput.commonFormat
     }
 
     func stopCapture() {
@@ -276,6 +356,14 @@ final class AudioEngine {
                 .flatMap { AVAudioSession.RouteChangeReason(rawValue: $0) }
             Logger.audio.info("Route changed: reason=\(reason?.rawValue ?? 999)")
             self.logCurrentRoute("RouteChange")
+            if let engine = self.engine,
+               Self.needsConverterRebuild(
+                   current: engine.inputNode.outputFormat(forBus: 0),
+                   converterInput: self.captureInputFormat
+               ) {
+                Logger.audio.warning("Input format changed with the route; rebuilding the capture converter")
+                self.rebuildCapturePipeline()
+            }
         }
 
         configChangeObserver = NotificationCenter.default.addObserver(
@@ -289,6 +377,34 @@ final class AudioEngine {
                 let newFormat = engine.inputNode.outputFormat(forBus: 0)
                 Logger.audio.info("New input format: \(newFormat.sampleRate)Hz, \(newFormat.channelCount)ch")
             }
+            self.rebuildCapturePipeline()
+        }
+
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            switch Self.interruptionAction(for: notification.userInfo) {
+            case .pause:
+                Logger.audio.warning("Audio session interrupted; pausing capture")
+                self.engine?.pause()
+            case .resume:
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true)
+                    try self.engine?.start()
+                    Logger.audio.info("Capture resumed after interruption")
+                } catch {
+                    Logger.audio.error("Capture could not resume after interruption (\(String(describing: type(of: error))))")
+                    self.cleanupCapturePipeline()
+                }
+            case .stop:
+                Logger.audio.error("Audio session interruption ended without resume; capture stopped")
+                self.cleanupCapturePipeline()
+            case .ignore:
+                break
+            }
         }
     }
 
@@ -300,6 +416,10 @@ final class AudioEngine {
         if let obs = configChangeObserver {
             NotificationCenter.default.removeObserver(obs)
             configChangeObserver = nil
+        }
+        if let obs = interruptionObserver {
+            NotificationCenter.default.removeObserver(obs)
+            interruptionObserver = nil
         }
     }
 

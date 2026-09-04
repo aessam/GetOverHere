@@ -106,10 +106,10 @@ final class HybridAudioPlane: AudioPlane {
         eventHandler = handler
     }
 
-    func startBroadcasting(channelID: String, quality: AudioQuality) {
+    func startBroadcasting(channelID: String, quality: AudioQuality) throws {
         role = .guide
-        local.startBroadcasting(channelID: channelID, quality: quality)
-        aware?.startBroadcasting(channelID: channelID, quality: quality)
+        try local.startBroadcasting(channelID: channelID, quality: quality)
+        try aware?.startBroadcasting(channelID: channelID, quality: quality)
     }
 
     func sendAudio(_ data: Data) {
@@ -241,10 +241,10 @@ final class HybridSessionControlTransport: SessionControlTransport {
         self.handler = handler
     }
 
-    func startGuide() {
+    func startGuide() throws {
         role = .guide
-        local.startGuide()
-        aware?.startGuide()
+        try local.startGuide()
+        try aware?.startGuide()
     }
 
     func startGuest() {
@@ -259,6 +259,18 @@ final class HybridSessionControlTransport: SessionControlTransport {
             aware?.send(kind: kind, payload: payload)
         case .guest:
             selectedTransport?.send(kind: kind, payload: payload)
+        case nil:
+            break
+        }
+    }
+
+    func sendLeave() async {
+        switch role {
+        case .guide:
+            await local.sendLeave()
+            await aware?.sendLeave()
+        case .guest:
+            await selectedTransport?.sendLeave()
         case nil:
             break
         }
@@ -372,10 +384,10 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
         self.handler = handler
     }
 
-    func startGuide() {
+    func startGuide() throws {
         role = .guide
-        local.startGuide()
-        aware?.startGuide()
+        try local.startGuide()
+        try aware?.startGuide()
     }
 
     func startGuest() {

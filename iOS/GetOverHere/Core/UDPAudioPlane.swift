@@ -179,6 +179,8 @@ final class UDPAudioPlane: AudioPlane {
     private let guestQueue = DispatchQueue(label: "audio.tcp.guest", qos: .userInteractive)
     private var runGeneration: UInt64 = 0
     nonisolated private let callbacks = CallbackStore()
+    /// Accepted-but-unauthenticated connections held at once (RSK-1, ADR-047).
+    nonisolated private let handshakeSlots = HandshakeSlots(limit: 32)
     private var broadcastProcessor: BroadcastProcessor?
 
     init(
@@ -211,10 +213,11 @@ final class UDPAudioPlane: AudioPlane {
 
     // MARK: - Guide
 
-    func startBroadcasting(channelID: String, quality: AudioQuality) {
+    /// Synchronous and throwing (FND-2): the guide commits state only after the lane is listening.
+    func startBroadcasting(channelID: String, quality: AudioQuality) throws {
         guard let configuration, configuration.sessionID.uuidString == channelID.uppercased() else {
             Logger.audio.error("TCP: missing or mismatched GOH2 session configuration")
-            return
+            throw AudioPlaneStartError.sessionNotConfigured
         }
         let localCapabilities: SessionCapabilities
         do {
@@ -224,14 +227,15 @@ final class UDPAudioPlane: AudioPlane {
             }
         } catch {
             Logger.audio.error("TCP: no native realtime encoder is available")
-            return
+            throw AudioPlaneStartError.noNativeEncoder
         }
 
         stopSockets()
         serverFD = socket(AF_INET, SOCK_STREAM, 0)
         guard serverFD >= 0 else {
-            Logger.audio.error("TCP: socket failed: \(String(cString: strerror(errno)))")
-            return
+            let message = String(cString: strerror(errno))
+            Logger.audio.error("TCP: socket failed: \(message)")
+            throw AudioPlaneStartError.socketFailed(message)
         }
 
         var yes: Int32 = 1
@@ -249,16 +253,18 @@ final class UDPAudioPlane: AudioPlane {
             }
         }
         guard bindResult == 0 else {
-            Logger.audio.error("TCP: bind failed: \(String(cString: strerror(errno)))")
+            let message = String(cString: strerror(errno))
+            Logger.audio.error("TCP: bind failed: \(message)")
             close(serverFD)
             serverFD = -1
-            return
+            throw AudioPlaneStartError.bindFailed(message)
         }
         guard Darwin.listen(serverFD, 64) == 0 else {
-            Logger.audio.error("TCP: listen failed: \(String(cString: strerror(errno)))")
+            let message = String(cString: strerror(errno))
+            Logger.audio.error("TCP: listen failed: \(message)")
             close(serverFD)
             serverFD = -1
-            return
+            throw AudioPlaneStartError.listenFailed(message)
         }
 
         isActive = true
@@ -272,6 +278,7 @@ final class UDPAudioPlane: AudioPlane {
         Logger.audio.info("TCP: GOH2 server listening on port \(self.port)")
 
         let listeningFD = serverFD
+        let handshakeSlots = self.handshakeSlots
         acceptQueue.async { [weak self] in
             while true {
                 var clientAddress = sockaddr_in()
@@ -282,6 +289,11 @@ final class UDPAudioPlane: AudioPlane {
                     }
                 }
                 guard acceptedFD >= 0 else { break }
+                guard handshakeSlots.tryAcquire() else {
+                    Logger.audio.error("TCP: pending handshake bound reached; closing connection")
+                    close(acceptedFD)
+                    continue
+                }
                 Self.setNoDelay(fd: acceptedFD)
                 let socket = ManagedSocket(fd: acceptedFD, generation: generation)
                 let connectionQueue = DispatchQueue(
@@ -295,20 +307,26 @@ final class UDPAudioPlane: AudioPlane {
                         platform: ParticipantPlatform,
                         codec: SessionAudioCodec
                     )
-                    do {
-                        participant = try Self.authenticateGuest(
+                    // The slot is held only while the handshake is pending: released on return or throw.
+                    let outcome = Result {
+                        try Self.authenticateGuest(
                             fd: acceptedFD,
                             configuration: configuration,
                             guideCapabilities: localCapabilities
                         )
-                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
+                    }
+                    handshakeSlots.release()
+                    switch outcome {
+                    case let .success(value):
+                        participant = value
+                    case .failure(SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor)):
                         self?.callbacks.emitSession(.versionMismatch(
                             remoteMajor: remoteMajor,
                             localMajor: localMajor
                         ))
                         socket.close()
                         return
-                    } catch {
+                    case .failure:
                         Logger.audio.error("TCP: rejected audio guest")
                         socket.close()
                         return

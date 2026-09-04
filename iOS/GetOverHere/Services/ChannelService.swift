@@ -56,7 +56,9 @@ final class ChannelService {
     // MARK: - Dependencies
 
     private let coordinator: NetworkCoordinator
-    private let audioEngine: AudioEngine
+    private let audioEngine: any AudioEngineInterface
+    /// Base of the ADR-034 exponential reconnect backoff; tests shorten it (DSCN-23).
+    private let reconnectBaseDelay: Duration
     let tourControlService: TourControlService
     let assetTransferService: TourAssetTransferService
     let contentStore: TourContentStore
@@ -93,18 +95,35 @@ final class ChannelService {
         coordinator.controlPlane.localPeer
     }
 
+    /// Guests admitted on the control lane; independent of the audio-lane `listenerCount` (FND-13).
+    var connectedGuestCount: Int {
+        tourControlService.connectedGuestCount
+    }
+
+    static let speakerFeedbackWarningText =
+        "Speaker output can feed back into the guide's microphone. Use the earpiece or headphones near the guide."
+
+    /// Non-nil only while listening on the loudspeaker in a non-failed session (FND-13).
+    var speakerFeedbackWarning: String? {
+        listenState == .listening && listenerOutput == .speaker && connectionState != .failed
+            ? Self.speakerFeedbackWarningText
+            : nil
+    }
+
     // MARK: - Init
 
     init(
         coordinator: NetworkCoordinator,
-        audioEngine: AudioEngine,
+        audioEngine: any AudioEngineInterface,
         tourControlService: TourControlService,
         assetTransferService: TourAssetTransferService,
         contentStore: TourContentStore,
-        localGuidanceService: LocalGuidanceService
+        localGuidanceService: LocalGuidanceService,
+        reconnectBaseDelay: Duration = .seconds(1)
     ) {
         self.coordinator = coordinator
         self.audioEngine = audioEngine
+        self.reconnectBaseDelay = reconnectBaseDelay
         self.tourControlService = tourControlService
         self.assetTransferService = assetTransferService
         self.contentStore = contentStore
@@ -160,13 +179,19 @@ final class ChannelService {
             do {
                 credential = try await Self.stretchCredential(shortCode: code, sessionID: sessionID)
             } catch {
-                guard attempt == sessionAttempt else { return }
+                guard attempt == sessionAttempt else {
+                    Logger.channel.info("Discarding a stale guide credential failure; the session was replaced during the stretch")
+                    return
+                }
                 tourCode = nil
                 tourFeatureError = error.localizedDescription
                 Logger.channel.error("Cannot derive the tour credential")
                 return
             }
-            guard attempt == sessionAttempt else { return }
+            guard attempt == sessionAttempt else {
+                Logger.channel.info("Discarding a stale guide credential; the session was replaced during the stretch")
+                return
+            }
             startGuideSession(
                 channel: channel,
                 sessionID: sessionID,
@@ -201,20 +226,10 @@ final class ChannelService {
                 platform: .iOS,
                 credential: credential
             )
-            tourControlService.startGuide(deckID: sessionID)
+            // Every lane start is synchronous and throwing (ADR-046); nothing is committed or
+            // published until control, asset, audio, and microphone capture are all running.
+            try tourControlService.startGuide(deckID: sessionID)
             try assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
-            offlineMapConfiguration = nil
-            offlineMapStatus = .unavailable
-            tourFeatureError = nil
-            tourCode = code
-
-            channels.append(channel)
-            activeChannelID = channel.id
-            listenState = .broadcasting
-            connectionState = .connected
-            guestCredential = nil
-
-            broadcastChannelAnnounce(channel)
 
             let plane = coordinator.selectAudioPlane()
             participantRegistry = ParticipantRegistry()
@@ -230,8 +245,21 @@ final class ChannelService {
                 guard let self else { return }
                 Task { @MainActor [self] in self.handleAudioSessionEvent(event) }
             }
-            plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
+            try plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
             try startCapturing(plane: plane, channelID: channel.id)
+
+            offlineMapConfiguration = nil
+            offlineMapStatus = .unavailable
+            tourFeatureError = nil
+            tourCode = code
+
+            channels.append(channel)
+            activeChannelID = channel.id
+            listenState = .broadcasting
+            connectionState = .connected
+            guestCredential = nil
+
+            broadcastChannelAnnounce(channel)
         } catch {
             rollbackFailedGuideSession(channelID: channel.id)
             tourCode = nil
@@ -263,11 +291,17 @@ final class ChannelService {
             do {
                 credential = try await Self.stretchCredential(shortCode: normalizedCode, sessionID: sessionID)
             } catch {
-                guard attempt == sessionAttempt else { return }
+                guard attempt == sessionAttempt else {
+                    Logger.channel.info("Discarding a stale guest credential failure; the session was replaced during the stretch")
+                    return
+                }
                 tourFeatureError = error.localizedDescription
                 return
             }
-            guard attempt == sessionAttempt else { return }
+            guard attempt == sessionAttempt else {
+                Logger.channel.info("Discarding a stale guest credential; the session was replaced during the stretch")
+                return
+            }
             startGuestSession(
                 channel: channel,
                 hostIP: hostIP,
@@ -456,25 +490,72 @@ final class ChannelService {
         sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        let attempt = sessionAttempt
         if isGuide {
-            do {
-                try tourControlService.endGuideSession()
-            } catch {
-                Logger.channel.error("Failed to send authenticated session end")
+            // UI state ends now; the authenticated leave is flushed off the main actor and the lanes
+            // are cleared after delivery unless a newer session replaced them (ADR-048, DSCN-20).
+            audioEngine.stopCapture()
+            captureTask?.cancel()
+            captureTask = nil
+            channels.removeAll { $0.id == ch.id }
+            activeChannelID = nil
+            listenState = .idle
+            tourCode = nil
+            connectionState = .idle
+            participantRegistry = ParticipantRegistry()
+            listenerCount = 0
+            coordinator.controlPlane.broadcast(.channelEnded(channelID: ch.id))
+            Task { [weak self] in
+                do {
+                    try await self?.tourControlService.endGuideSession()
+                } catch {
+                    Logger.channel.error("Failed to send authenticated session end (\(String(describing: type(of: error))))")
+                }
+                guard let self else { return }
+                guard self.sessionAttempt == attempt else {
+                    Logger.channel.info("Skipping the deferred lane teardown; a newer session owns the lanes")
+                    return
+                }
+                self.stopCurrentActivity()
             }
+        } else {
+            stopCurrentActivity()
+            activeChannelID = nil
+            listenState = .idle
+            tourCode = nil
+            connectionState = .idle
+            guestCredential = nil
         }
-        stopCurrentActivity()
+        Logger.channel.info("Left channel")
+    }
+
+    /// Process-termination path (FND-8): the synchronous, bounded leave flush is the only place the
+    /// main thread may wait, because the process has seconds left and no Task will run.
+    func terminate() {
+        sessionAttempt &+= 1
+        guard let ch = activeChannel else { return }
+        let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        if isGuide {
+            audioEngine.stopCapture()
+            captureTask?.cancel()
+            captureTask = nil
+            do {
+                try tourControlService.endGuideSessionBeforeTermination()
+            } catch {
+                Logger.channel.error("Failed to send authenticated session end at termination (\(String(describing: type(of: error))))")
+            }
+            stopCurrentActivity()
+            channels.removeAll { $0.id == ch.id }
+            coordinator.controlPlane.broadcast(.channelEnded(channelID: ch.id))
+        } else {
+            stopCurrentActivity()
+        }
         activeChannelID = nil
         listenState = .idle
         tourCode = nil
         connectionState = .idle
         guestCredential = nil
-        Logger.channel.info("Left channel")
-
-        if isGuide {
-            channels.removeAll { $0.id == ch.id }
-            coordinator.controlPlane.broadcast(.channelEnded(channelID: ch.id))
-        }
+        Logger.channel.info("Terminated session")
     }
 
     // MARK: - Private
@@ -487,14 +568,21 @@ final class ChannelService {
 
     private func startCapturing(plane: any AudioPlane, channelID: String) throws {
         let stream = try audioEngine.startCapture()
-        captureTask = Task {
+        captureTask = Task { [weak self] in
             for await data in stream {
                 guard !Task.isCancelled else { break }
                 plane.sendAudio(data)
             }
+            // The stream ends on its own only when the engine tore the pipeline down (interruption
+            // or route rebuild failure): keep control/asset lanes up and let the guide decide (DSCN-12).
+            guard let self, !Task.isCancelled, self.listenState == .broadcasting else { return }
+            self.tourFeatureError = "Microphone capture stopped"
+            Logger.channel.error("Capture stream ended while broadcasting")
         }
     }
 
+    /// Every lane is cleared and the Bonjour record is withdrawn (FND-2); `unpublishChannel` is a
+    /// no-op when nothing was published, so this is safe now that publish is the last startup step.
     private func rollbackFailedGuideSession(channelID: String) {
         audioEngine.stopCapture()
         captureTask?.cancel()
@@ -511,6 +599,7 @@ final class ChannelService {
         guestCredential = nil
         participantRegistry = ParticipantRegistry()
         listenerCount = 0
+        coordinator.controlPlane.broadcast(.channelEnded(channelID: channelID))
     }
 
     private func stopCurrentActivity() {
@@ -636,9 +725,8 @@ final class ChannelService {
                            self.listenState == .listening,
                            previousHostIP != announce.audioHostIP,
                            let updatedChannel = self.channels[safe: idx] {
-                            if let tourCode = self.tourCode {
-                                self.joinChannel(updatedChannel, tourCode: tourCode)
-                            }
+                            // Discovery may only reconfigure the existing credential (FND-6, ADR-036).
+                            self.restartGuestTransports(channel: updatedChannel, connectionState: .connecting)
                         }
                     } else {
                         let channel = Channel(
@@ -688,8 +776,10 @@ final class ChannelService {
             listenerCount = participantRegistry.listenerCount
             Logger.channel.info("Session connection left; listeners=\(self.listenerCount)")
         case let .versionMismatch(remoteMajor, localMajor):
-            connectionState = .failed
+            // DSCN-13: one legacy guest must not end the guide's tour. The transport already closed
+            // that connection; the guide only sees the reason.
             tourFeatureError = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
+            Logger.channel.error("Rejected a legacy guest on the audio lane")
         case let .failed(message):
             connectionState = .failed
             tourFeatureError = message
@@ -807,10 +897,11 @@ final class ChannelService {
         case .sessionEnded:
             endGuestSessionFromGuide()
         case let .versionMismatch(remoteMajor, localMajor):
-            reconnectTask?.cancel()
-            reconnectTask = nil
-            connectionState = .failed
-            tourFeatureError = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)
+            failGuestSession(message: Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor))
+        case .credentialRejected:
+            // A wrong code cannot succeed on retry (FND-8): terminal, credentials erased.
+            Logger.channel.error("The guide rejected the tour code; not retrying")
+            failGuestSession(message: "The tour code was rejected. Check it with the guide.")
         case let .failed(message):
             scheduleReconnect(reason: message)
         }
@@ -821,40 +912,62 @@ final class ChannelService {
         guard reconnectTask == nil,
               reconnectAttempt < 5,
               let channel = activeChannel,
-              let credential = guestCredential,
-              let hostIP = channel.audioHostIP,
-              let sessionID = UUID(uuidString: channel.id),
-              let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
+              guestCredential != nil,
+              channel.audioHostIP != nil else {
             if reconnectAttempt >= 5 {
-                connectionState = .failed
-                tourFeatureError = "Could not reconnect to the guide"
+                failGuestSession(message: "Could not reconnect to the guide")
             }
             return
         }
         reconnectAttempt += 1
         connectionState = .reconnecting(attempt: reconnectAttempt)
         Logger.channel.error("Session reconnect attempt \(self.reconnectAttempt)")
-        let delaySeconds = 1 << (reconnectAttempt - 1)
+        let delay = reconnectBaseDelay * (1 << (reconnectAttempt - 1))
         reconnectTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(delaySeconds))
+                try await Task.sleep(for: delay)
             } catch {
                 return
             }
             guard let self, self.listenState == .listening else { return }
             self.reconnectTask = nil
-            self.coordinator.activeAudioPlane?.stop()
-            self.tourControlService.stop()
-            self.assetTransferService.stop()
-            self.audioEngine.stopPlayback()
-            self.startGuestTransports(
-                channel: channel,
-                hostIP: hostIP,
-                sessionID: sessionID,
-                participantID: participantID,
-                credential: credential
-            )
+            // A fresher discovery address wins over the one captured when the reconnect was scheduled.
+            self.restartGuestTransports(channel: self.activeChannel ?? channel)
         }
+    }
+
+    /// Stop + reconfigure of the guest lanes with the retained credential (FND-6, DSCN-11). Used by
+    /// the discovery address change and by the reconnect timer. Never `joinChannel`, never
+    /// `clearSession`, never a fresh credential stretch.
+    private func restartGuestTransports(channel: Channel, connectionState newState: ConnectionState? = nil) {
+        guard listenState == .listening else { return }
+        guard let credential = guestCredential else {
+            Logger.channel.error("Cannot restart guest transports without an admitted credential")
+            return
+        }
+        guard let hostIP = channel.audioHostIP,
+              let sessionID = UUID(uuidString: channel.id),
+              let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
+            Logger.channel.error("Cannot restart guest transports without a guide address and UUID identities")
+            return
+        }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        coordinator.activeAudioPlane?.stop()
+        tourControlService.stop()
+        assetTransferService.stop()
+        audioEngine.stopPlayback()
+        pendingAudioLaneFailure = nil
+        if let newState {
+            connectionState = newState
+        }
+        startGuestTransports(
+            channel: channel,
+            hostIP: hostIP,
+            sessionID: sessionID,
+            participantID: participantID,
+            credential: credential
+        )
     }
 
     private func handleDiscoveryUnavailable(channelID: String) {

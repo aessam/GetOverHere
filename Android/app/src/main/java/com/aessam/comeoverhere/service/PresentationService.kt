@@ -29,6 +29,8 @@ sealed class TourControlConnectionEvent {
     data object Disconnected : TourControlConnectionEvent()
     data object SessionEnded : TourControlConnectionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : TourControlConnectionEvent()
+    /** The guide rejected the tour code; terminal, never retried (FND-8). */
+    data class CredentialRejected(val message: String) : TourControlConnectionEvent()
     data class Failed(val message: String) : TourControlConnectionEvent()
 }
 
@@ -54,6 +56,11 @@ class TourControlService(
 
     private val mutableVisualFocusSnapshot = MutableStateFlow<VisualFocusSnapshotPayload?>(null)
     val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?> = mutableVisualFocusSnapshot.asStateFlow()
+
+    /** Guests admitted on the control lane, keyed by participant (FND-13); independent of audio readiness. */
+    private val mutableConnectedGuestCount = MutableStateFlow(0)
+    val connectedGuestCount: StateFlow<Int> = mutableConnectedGuestCount.asStateFlow()
+    private val connectedGuestIDs = mutableSetOf<UUID>()
 
     private var role: PresentationServiceRole? = null
     private var sessionID: UUID? = null
@@ -110,9 +117,10 @@ class TourControlService(
         transport.startGuest()
     }
 
-    fun endGuideSession() {
+    /** Flushes the authenticated leave without blocking the caller's thread (FND-8). */
+    suspend fun endGuideSession() {
         requireGuide()
-        transport.send(SessionMessageKind.LEAVE, byteArrayOf())
+        transport.sendLeave()
     }
 
     fun setGuestSocketFactory(factory: SocketFactory?) {
@@ -234,6 +242,24 @@ class TourControlService(
         mutableVisualFocusSnapshot.value = null
         mutableSlides.value = emptyList()
         mutableLastError.value = null
+        synchronized(connectedGuestIDs) {
+            connectedGuestIDs.clear()
+            mutableConnectedGuestCount.value = 0
+        }
+    }
+
+    private fun recordGuestJoined(participantID: UUID) {
+        synchronized(connectedGuestIDs) {
+            connectedGuestIDs += participantID
+            mutableConnectedGuestCount.value = connectedGuestIDs.size
+        }
+    }
+
+    private fun recordGuestDisconnected(participantID: UUID) {
+        synchronized(connectedGuestIDs) {
+            connectedGuestIDs -= participantID
+            mutableConnectedGuestCount.value = connectedGuestIDs.size
+        }
     }
 
     fun clearSession() {
@@ -287,6 +313,7 @@ class TourControlService(
             SessionControlEvent.Disconnected -> connectionEventHandler?.invoke(TourControlConnectionEvent.Disconnected)
             is SessionControlEvent.GuestJoined -> {
                 if (role == PresentationServiceRole.GUIDE) {
+                    recordGuestJoined(event.participant.participantId)
                     mutableSnapshot.value?.let { current ->
                         runCatching {
                             transport.send(SessionMessageKind.PRESENTATION_SNAPSHOT, current.encode())
@@ -350,13 +377,17 @@ class TourControlService(
                     }
                 }.onFailure(::report)
             }
-            is SessionControlEvent.GuestDisconnected -> Unit
+            is SessionControlEvent.GuestDisconnected -> recordGuestDisconnected(event.participantID)
             is SessionControlEvent.VersionMismatch -> {
                 val message = versionMismatchMessage(event.remoteMajor, event.localMajor)
                 report(message)
                 connectionEventHandler?.invoke(
                     TourControlConnectionEvent.VersionMismatch(event.remoteMajor, event.localMajor),
                 )
+            }
+            is SessionControlEvent.CredentialRejected -> {
+                report(event.message)
+                connectionEventHandler?.invoke(TourControlConnectionEvent.CredentialRejected(event.message))
             }
             is SessionControlEvent.Failed -> {
                 report(event.message)

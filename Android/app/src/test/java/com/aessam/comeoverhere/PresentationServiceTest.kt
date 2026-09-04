@@ -20,6 +20,7 @@ import com.aessam.toursession.TourAssetKind
 import com.aessam.toursession.TargetSnapshotPayload
 import com.aessam.toursession.TourVisualMode
 import com.aessam.toursession.VisualFocusSnapshotPayload
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -238,7 +239,8 @@ class PresentationServiceTest {
             presentationCredential(sessionID),
         )
         guide.startGuide(UUID.randomUUID())
-        guide.endGuideSession()
+        runBlocking { guide.endGuideSession() }
+        assertEquals(1, guideTransport.leaveFlushCount)
         assertEquals(SessionMessageKind.LEAVE, guideTransport.sent.last().first)
         assertTrue(guideTransport.sent.last().second.isEmpty())
 
@@ -273,6 +275,48 @@ class PresentationServiceTest {
     }
 
     @Test
+    fun connectedGuestCountFollowsControlLaneMembership() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val sessionID = UUID.randomUUID()
+        service.configureSession(
+            sessionID,
+            UUID.randomUUID(),
+            "Guide",
+            ParticipantPlatform.ANDROID,
+            presentationCredential(sessionID),
+        )
+        service.startGuide(UUID.randomUUID())
+        val guestA = UUID.randomUUID()
+        val guestB = UUID.randomUUID()
+
+        transport.emit(SessionControlEvent.GuestJoined(participant(guestA, "a-1")))
+        transport.emit(SessionControlEvent.GuestJoined(participant(guestB, "b-1")))
+        assertEquals(2, service.connectedGuestCount.value)
+
+        transport.emit(SessionControlEvent.GuestDisconnected(guestA))
+        assertEquals(1, service.connectedGuestCount.value)
+        transport.emit(SessionControlEvent.GuestDisconnected(guestA))
+        assertEquals("disconnect is idempotent", 1, service.connectedGuestCount.value)
+
+        // A re-registering guest arrives as disconnect + join and must count once (set semantics).
+        transport.emit(SessionControlEvent.GuestDisconnected(guestB))
+        transport.emit(SessionControlEvent.GuestJoined(participant(guestB, "b-2")))
+        assertEquals(1, service.connectedGuestCount.value)
+
+        service.stop()
+        assertEquals(0, service.connectedGuestCount.value)
+    }
+
+    private fun participant(id: UUID, connectionID: String) = ParticipantSession(
+        id,
+        connectionID,
+        "Guest",
+        SessionRole.GUEST,
+        ParticipantPlatform.IOS,
+    )
+
+    @Test
     fun discoveryUnavailableRoundtripsSeparatelyFromSessionEnd() {
         val channelID = UUID.randomUUID().toString()
         val decoded = parseBLECommand(BLECommand.ChannelUnavailable(channelID).toJson())
@@ -295,6 +339,7 @@ private class RecordingControlTransport : SessionControlTransport {
     override var hostIP: String? = null
     var handler: ((SessionControlEvent) -> Unit)? = null
     val sent = mutableListOf<Pair<SessionMessageKind, ByteArray>>()
+    var leaveFlushCount = 0
 
     override fun configureSession(
         sessionID: UUID,
@@ -313,6 +358,11 @@ private class RecordingControlTransport : SessionControlTransport {
 
     override fun send(kind: SessionMessageKind, payload: ByteArray) {
         sent += kind to payload
+    }
+
+    override suspend fun sendLeave() {
+        leaveFlushCount += 1
+        sent += SessionMessageKind.LEAVE to byteArrayOf()
     }
 
     override fun stop() { isActive = false }

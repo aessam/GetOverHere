@@ -11,11 +11,14 @@ import com.aessam.toursession.SessionLane
 import com.aessam.toursession.SessionMessageKind
 import com.aessam.toursession.SessionRole
 import com.aessam.toursession.SealedSessionEnvelope
+import com.aessam.toursession.SessionFrameAuthenticationException
 import com.aessam.toursession.SessionFrameOpenResult
 import com.aessam.toursession.SessionFrameOpener
 import com.aessam.toursession.SessionFrameSealer
 import com.aessam.toursession.UnsupportedSessionVersionException
 import com.aessam.toursession.WelcomePayload
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
@@ -25,10 +28,17 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
+
+/**
+ * The guide rejected the tour code: the sealed challenge or welcome failed AEAD authentication, or
+ * the guide's proof mismatched. Never raised for an EOF or a malformed frame (DSCN-26).
+ */
+private class CredentialRejectedException(message: String) : IllegalArgumentException(message)
 
 /** Reliable GOH2 control lane carried on a socket independent from live audio. */
 private class LocalAuthenticatedSessionTransport(
@@ -53,6 +63,8 @@ private class LocalAuthenticatedSessionTransport(
     private val sequence = AtomicLong(1)
     private val runEpoch = AtomicLong(0)
     private val clients = CopyOnWriteArrayList<ClientConnection>()
+    /** Accepted-but-unauthenticated connections held at once (RSK-1, ADR-047). */
+    private val handshakeSlots = Semaphore(MAXIMUM_PENDING_HANDSHAKES)
 
     @Volatile private var configuration: Configuration? = null
     @Volatile private var eventHandler: ((SessionControlEvent) -> Unit)? = null
@@ -84,12 +96,10 @@ private class LocalAuthenticatedSessionTransport(
         guestSocketFactory = factory ?: SocketFactory.getDefault()
     }
 
+    /** Synchronous and throwing (FND-2): the guide commits state only after every lane is listening. */
     fun startGuide() {
         val configured = configuration
-        if (configured == null) {
-            emit(SessionControlEvent.Failed("Session: session is not configured"))
-            return
-        }
+            ?: throw IllegalStateException("Session: session is not configured")
 
         active.set(false)
         closeSockets()
@@ -99,8 +109,7 @@ private class LocalAuthenticatedSessionTransport(
                 bind(InetSocketAddress(port), 64)
             }
         } catch (error: Exception) {
-            emit(SessionControlEvent.Failed("Session: bind/listen failed: ${error.message}"))
-            return
+            throw IllegalStateException("Session: bind/listen failed: ${error.message}", error)
         }
         serverSocket = server
         sequence.set(1)
@@ -119,6 +128,11 @@ private class LocalAuthenticatedSessionTransport(
                         emit(SessionControlEvent.Failed("Session: accept failed: ${error.message}"))
                     }
                     break
+                }
+                if (!handshakeSlots.tryAcquire()) {
+                    System.err.println("Session: pending handshake bound reached; closing connection")
+                    socket.closeQuietly()
+                    continue
                 }
                 daemonThread("session-control-guest") {
                     handleGuest(socket, configured, epoch, inboundOpener)
@@ -201,6 +215,10 @@ private class LocalAuthenticatedSessionTransport(
                         ),
                     )
                 }
+            } catch (error: CredentialRejectedException) {
+                if (isRunActive(epoch)) {
+                    emit(SessionControlEvent.CredentialRejected("Session: the tour code was rejected by the guide"))
+                }
             } catch (error: Exception) {
                 if (isRunActive(epoch)) {
                     emit(SessionControlEvent.Failed("Session: guide connection failed: ${error.message}"))
@@ -214,7 +232,44 @@ private class LocalAuthenticatedSessionTransport(
         }
     }
 
+    /**
+     * Synchronous send. A LEAVE blocks the caller for up to the 2 s delivery deadline and is reserved
+     * for the process-termination path; product code ends a tour through [sendLeave].
+     */
     fun send(kind: SessionMessageKind, payload: ByteArray, participantID: UUID?) {
+        val (envelope, destinations) = sealedOutboundFrame(kind, payload, participantID) ?: return
+        if (kind == SessionMessageKind.LEAVE) {
+            val deliveries = destinations.mapNotNull { it.enqueue(envelope, trackDelivery = true) }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            if (deliveries.any { !it.await(deadline) }) {
+                emit(SessionControlEvent.Failed("Session: terminal send did not complete before timeout"))
+            }
+        } else {
+            destinations.forEach { it.enqueue(envelope) }
+        }
+    }
+
+    /**
+     * Enqueues one authenticated leave to every connected peer and suspends on `Dispatchers.IO`
+     * until delivery or the 2 s deadline (FND-8): End Tour no longer blocks the main thread.
+     */
+    suspend fun sendLeave() {
+        val (envelope, destinations) = sealedOutboundFrame(SessionMessageKind.LEAVE, byteArrayOf(), null) ?: return
+        val deliveries = destinations.mapNotNull { it.enqueue(envelope, trackDelivery = true) }
+        if (deliveries.isEmpty()) return
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        val timedOut = withContext(Dispatchers.IO) { deliveries.any { !it.await(deadline) } }
+        if (timedOut) {
+            emit(SessionControlEvent.Failed("Session: terminal send did not complete before timeout"))
+        }
+    }
+
+    /** Seals one outbound frame and selects its writers; emits the failure and returns null otherwise. */
+    private fun sealedOutboundFrame(
+        kind: SessionMessageKind,
+        payload: ByteArray,
+        participantID: UUID?,
+    ): Pair<ByteArray, List<BoundedSocketFrameWriter>>? {
         if (
             kind.requiredLane != applicationLane ||
             kind == SessionMessageKind.HELLO ||
@@ -222,12 +277,12 @@ private class LocalAuthenticatedSessionTransport(
             kind == SessionMessageKind.WELCOME
         ) {
             emit(SessionControlEvent.Failed("Session: ${kind.wireName} is not valid for the ${applicationLane.wireName} lane"))
-            return
+            return null
         }
         val configured = configuration
         if (!active.get() || configured == null) {
             emit(SessionControlEvent.Failed("Session: transport is not active"))
-            return
+            return null
         }
         val logicalEnvelope = SessionEnvelope(
             lane = applicationLane,
@@ -240,31 +295,21 @@ private class LocalAuthenticatedSessionTransport(
         val sealer = outboundSealer
         if (sealer == null) {
             emit(SessionControlEvent.Failed("Session: frame encryption is not configured"))
-            return
+            return null
         }
         val envelope = try {
             sealer.seal(logicalEnvelope, outboundStreamID).encode()
         } catch (error: Exception) {
             emit(SessionControlEvent.Failed("Session: envelope failed: ${error.message}"))
-            return
+            return null
         }
 
         val guideDestinations = clients.filter {
             participantID == null || it.participant.participantId == participantID
         }.map(ClientConnection::writer)
         val guestDestination = if (participantID == null) guestWriter else null
-        if (guideDestinations.isEmpty() && guestDestination == null) return
-
-        val destinations = guideDestinations + listOfNotNull(guestDestination)
-        if (kind == SessionMessageKind.LEAVE) {
-            val deliveries = destinations.mapNotNull { it.enqueue(envelope, trackDelivery = true) }
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-            if (deliveries.any { !it.await(deadline) }) {
-                emit(SessionControlEvent.Failed("Session: terminal send did not complete before timeout"))
-            }
-        } else {
-            destinations.forEach { it.enqueue(envelope) }
-        }
+        if (guideDestinations.isEmpty() && guestDestination == null) return null
+        return envelope to (guideDestinations + listOfNotNull(guestDestination))
     }
 
     fun stop() {
@@ -290,7 +335,12 @@ private class LocalAuthenticatedSessionTransport(
         var client: ClientConnection? = null
         try {
             socket.soTimeout = 5_000
-            val authenticated = authenticateGuest(socket, configured)
+            // The slot is held only while the handshake is pending: released on return or throw.
+            val authenticated = try {
+                authenticateGuest(socket, configured)
+            } finally {
+                handshakeSlots.release()
+            }
             val helloEnvelope = authenticated.first
             val hello = authenticated.second
             socket.soTimeout = 0
@@ -469,7 +519,9 @@ private class LocalAuthenticatedSessionTransport(
         configured: Configuration,
     ): UUID {
         val guideOpener = SessionFrameOpener(configured.credential)
-        val challengeEnvelope = openFrame(
+        // Only the AEAD failure is a credential rejection (DSCN-26); an EOF from readFrame stays a
+        // transport failure and a malformed sealed frame stays a protocol failure.
+        val challengeEnvelope = openHandshakeFrame(
             readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
             guideOpener,
         ) ?: throw IllegalArgumentException("duplicate authentication challenge")
@@ -518,7 +570,7 @@ private class LocalAuthenticatedSessionTransport(
         )
         val guestSealer = SessionFrameSealer(configured.credential)
         writeFrame(output, guestSealer.seal(helloEnvelope, UUID.randomUUID()).encode())
-        val welcomeEnvelope = openFrame(
+        val welcomeEnvelope = openHandshakeFrame(
             readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
             guideOpener,
         ) ?: throw IllegalArgumentException("duplicate welcome envelope")
@@ -545,7 +597,7 @@ private class LocalAuthenticatedSessionTransport(
             welcome.guideNonce,
         )
         if (!SessionAuthenticator.securelyMatches(expectedProof, welcome.credentialProof)) {
-            throw IllegalArgumentException("guide credential proof was rejected")
+            throw CredentialRejectedException("guide credential proof was rejected")
         }
         return challengeEnvelope.senderId
     }
@@ -556,9 +608,18 @@ private class LocalAuthenticatedSessionTransport(
             is SessionFrameOpenResult.Duplicate -> null
         }
 
+    /** Guest-side handshake open: a wrong tour code fails the AEAD tag on the guide's sealed frame. */
+    private fun openHandshakeFrame(frame: ByteArray, opener: SessionFrameOpener): SessionEnvelope? =
+        try {
+            openFrame(frame, opener)
+        } catch (error: SessionFrameAuthenticationException) {
+            throw CredentialRejectedException("tour code was rejected: ${error.message}")
+        }
+
     private companion object {
         const val MAXIMUM_FRAME_SIZE = 1_048_576
         const val HELLO_MAXIMUM_SIZE = 65_536
+        const val MAXIMUM_PENDING_HANDSHAKES = 32
 
         fun daemonThread(name: String, body: () -> Unit) {
             Thread(body, name).apply {
@@ -633,6 +694,7 @@ class LocalSessionControlTransport(
     override fun startGuest() = transport.startGuest()
     override fun send(kind: SessionMessageKind, payload: ByteArray) =
         transport.send(kind, payload, null)
+    override suspend fun sendLeave() = transport.sendLeave()
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun stop() = transport.stop()
@@ -680,5 +742,6 @@ private fun SessionControlEvent.toAssetEvent(): SessionAssetEvent = when (this) 
     is SessionControlEvent.GuestDisconnected -> SessionAssetEvent.GuestDisconnected(participantID)
     SessionControlEvent.Disconnected -> SessionAssetEvent.Disconnected
     is SessionControlEvent.VersionMismatch -> SessionAssetEvent.VersionMismatch(remoteMajor, localMajor)
+    is SessionControlEvent.CredentialRejected -> SessionAssetEvent.CredentialRejected(message)
     is SessionControlEvent.Failed -> SessionAssetEvent.Failed(message)
 }

@@ -8,7 +8,14 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-class SessionFrameSecurityException(message: String) : IllegalArgumentException(message)
+open class SessionFrameSecurityException(message: String) : IllegalArgumentException(message)
+
+/**
+ * The AEAD tag did not verify: the peer sealed with another credential or the bytes were altered.
+ * Transports map only this subtype to credential rejection (DSCN-26); length, identity-reuse, and
+ * replay failures stay [SessionFrameSecurityException] and are transport failures.
+ */
+class SessionFrameAuthenticationException(message: String) : SessionFrameSecurityException(message)
 
 data class SessionFrameIdentity(
     val sessionId: UUID,
@@ -366,7 +373,7 @@ private object SessionFrameCryptography {
         return try {
             cipher.doFinal(sealedPayload)
         } catch (_: AEADBadTagException) {
-            throw SessionFrameSecurityException("session frame authentication failed")
+            throw SessionFrameAuthenticationException("session frame authentication failed")
         }
     }
 

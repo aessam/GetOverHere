@@ -1,7 +1,10 @@
 package com.aessam.comeoverhere.service
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.*
 import android.media.audiofx.AcousticEchoCanceler
@@ -43,22 +46,42 @@ internal object PlaybackWriter {
     }
 }
 
+/** Test seam (DSCN-23): the production engine needs a real AudioManager at construction. */
+interface AudioEngineInterface {
+    val isCapturing: Boolean
+    val isPlaying: Boolean
+    /** Invoked once per playback run with the first negative `AudioTrack.write` code. */
+    var playbackFailureHandler: ((Int) -> Unit)?
+    /** Invoked after ACTION_AUDIO_BECOMING_NOISY forced the listener output back to private audio. */
+    var onOutputForcedPrivate: (() -> Unit)?
+    /** Invoked when another app takes audio focus permanently. */
+    var onAudioFocusLost: (() -> Unit)?
+    /** Throws synchronously when the microphone cannot start; the returned flow only reads. */
+    fun startCapture(): Flow<ByteArray>
+    fun stopCapture()
+    fun startPlayback()
+    fun enqueuePlayback(data: ByteArray)
+    fun stopPlayback()
+    fun setListenerOutput(output: ListenerOutput)
+}
+
 /**
  * Audio capture and playback engine matching the shared codec boundary:
  * 16 kHz mono signed PCM16 little-endian.
  *
  * Android AudioRecord supports 16kHz natively — no converter needed (unlike iOS).
  */
-class AudioEngine(context: Context) {
-    @Volatile var isCapturing = false; private set
-    @Volatile var isPlaying = false; private set
+class AudioEngine(context: Context) : AudioEngineInterface {
+    @Volatile override var isCapturing = false; private set
+    @Volatile override var isPlaying = false; private set
 
     /** Non-blocking writes that filled the track buffer; the drift signal P3 physical must record. */
     @Volatile var playbackShortWriteCount = 0; private set
     @Volatile var playbackWriteErrorCount = 0; private set
-    /** Invoked once per playback run with the first negative `AudioTrack.write` code. */
-    var playbackFailureHandler: ((Int) -> Unit)? = null
+    override var playbackFailureHandler: ((Int) -> Unit)? = null
     private var playbackFailureReported = false
+    override var onOutputForcedPrivate: (() -> Unit)? = null
+    override var onAudioFocusLost: (() -> Unit)? = null
 
     // Android microphone processing is device-dependent; a non-zero default gate
     // was suppressing speech on some devices when broadcasting to iOS.
@@ -73,6 +96,13 @@ class AudioEngine(context: Context) {
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
     private var listenerOutput = ListenerOutput.PRIVATE_AUDIO
     private var previousAudioMode: Int? = null
+    private var focusRequest: AudioFocusRequest? = null
+    private var noisyReceiverRegistered = false
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) handleAudioBecomingNoisy()
+        }
+    }
 
     companion object {
         private const val TAG = "AudioEngine"
@@ -93,8 +123,12 @@ class AudioEngine(context: Context) {
 
     /**
      * Start capturing audio. Returns PCM16 little-endian byte arrays for the codec.
+     *
+     * The microphone preflight (permission, AudioRecord initialization, recording state) runs
+     * synchronously and throws here (FND-2), so the guide's startup can roll back deterministically;
+     * the returned flow only reads.
      */
-    fun startCapture(): Flow<ByteArray> = flow {
+    override fun startCapture(): Flow<ByteArray> {
         if (
             ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
@@ -105,17 +139,27 @@ class AudioEngine(context: Context) {
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, CAPTURE_ENCODING)
         val bufferSize = minBuffer * BUFFER_SIZE_FACTOR
 
-        val record = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(CHANNEL_IN)
-                    .setEncoding(CAPTURE_ENCODING)
-                    .build()
-            )
-            .setBufferSizeInBytes(bufferSize)
-            .build()
+        val record = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(CHANNEL_IN)
+                        .setEncoding(CAPTURE_ENCODING)
+                        .build()
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+        } catch (error: Exception) {
+            leaveCommunicationMode()
+            throw IllegalStateException("AudioRecord could not be created", error)
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            leaveCommunicationMode()
+            throw IllegalStateException("AudioRecord failed to initialize")
+        }
 
         audioRecord = record
 
@@ -134,51 +178,66 @@ class AudioEngine(context: Context) {
             }
         }
 
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (error: IllegalStateException) {
+            releaseCapture(record)
+            throw IllegalStateException("AudioRecord failed to start recording", error)
+        }
+        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            releaseCapture(record)
+            throw IllegalStateException("AudioRecord is not recording")
+        }
         isCapturing = true
         emittedPacketCount = 0
         Log.i(TAG, "Capture started: ${SAMPLE_RATE}Hz mono PCM16")
 
-        val pcmBuffer = ShortArray(160)
-        try {
-            while (isCapturing) {
-                val read = withContext(Dispatchers.IO) {
-                    record.read(pcmBuffer, 0, pcmBuffer.size, AudioRecord.READ_BLOCKING)
-                }
-                if (read > 0) {
-                    val rms = computeRms(pcmBuffer, read)
-                    if (rms < noiseGateThreshold) continue
+        return flow {
+            val pcmBuffer = ShortArray(160)
+            try {
+                while (isCapturing) {
+                    val read = withContext(Dispatchers.IO) {
+                        record.read(pcmBuffer, 0, pcmBuffer.size, AudioRecord.READ_BLOCKING)
+                    }
+                    if (read > 0) {
+                        val rms = computeRms(pcmBuffer, read)
+                        if (rms < noiseGateThreshold) continue
 
-                    val byteBuffer = ByteBuffer.allocate(read * Short.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-                    for (i in 0 until read) {
-                        byteBuffer.putShort(pcmBuffer[i])
+                        val byteBuffer = ByteBuffer.allocate(read * Short.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+                        for (i in 0 until read) {
+                            byteBuffer.putShort(pcmBuffer[i])
+                        }
+                        emittedPacketCount += 1
+                        if (emittedPacketCount == 1) {
+                            Log.i(TAG, "First capture packet emitted: ${byteBuffer.position()} bytes")
+                        }
+                        emit(byteBuffer.array())
                     }
-                    emittedPacketCount += 1
-                    if (emittedPacketCount == 1) {
-                        Log.i(TAG, "First capture packet emitted: ${byteBuffer.position()} bytes")
-                    }
-                    emit(byteBuffer.array())
                 }
+            } finally {
+                releaseCapture(record)
+                Log.i(TAG, "Capture stopped")
             }
-        } finally {
-            record.stop()
-            record.release()
-            aec?.release()
-            ns?.release()
-            audioRecord = null
-            aec = null
-            ns = null
-            isCapturing = false
-            leaveCommunicationMode()
-            Log.i(TAG, "Capture stopped")
-        }
-    }.flowOn(Dispatchers.IO)
+        }.flowOn(Dispatchers.IO)
+    }
 
-    fun stopCapture() {
+    private fun releaseCapture(record: AudioRecord) {
+        if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) record.stop()
+        record.release()
+        aec?.release()
+        ns?.release()
+        audioRecord = null
+        aec = null
+        ns = null
+        isCapturing = false
+        leaveCommunicationMode()
+    }
+
+    override fun stopCapture() {
         isCapturing = false
     }
 
-    fun startPlayback() {
+    override fun startPlayback() {
         enterCommunicationMode()
         val minBuffer = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, PLAYBACK_ENCODING)
         val track = AudioTrack.Builder()
@@ -206,15 +265,49 @@ class AudioEngine(context: Context) {
         playbackShortWriteCount = 0
         playbackWriteErrorCount = 0
         applyListenerOutputRoute()
+        if (!noisyReceiverRegistered) {
+            ContextCompat.registerReceiver(
+                appContext,
+                becomingNoisyReceiver,
+                IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            noisyReceiverRegistered = true
+        }
         Log.i(TAG, "Playback started: ${SAMPLE_RATE}Hz mono PCM16")
     }
 
-    fun setListenerOutput(output: ListenerOutput) {
+    override fun setListenerOutput(output: ListenerOutput) {
         listenerOutput = output
         if (isPlaying) applyListenerOutputRoute()
     }
 
-    fun enqueuePlayback(data: ByteArray) {
+    /** Test accessor: the output the engine currently applies (FND-13). */
+    internal val appliedListenerOutput: ListenerOutput get() = listenerOutput
+
+    /**
+     * A wired or Bluetooth output went away (FND-13): the system would otherwise fall back to the
+     * loudspeaker, which feeds tour audio back into the guide's microphone. Force private output.
+     */
+    internal fun handleAudioBecomingNoisy() {
+        if (!isPlaying) return
+        Log.i(TAG, "Audio output became noisy; forcing private output")
+        listenerOutput = ListenerOutput.PRIVATE_AUDIO
+        applyListenerOutputRoute()
+        onOutputForcedPrivate?.invoke()
+    }
+
+    internal fun handleAudioFocusChange(change: Int) {
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                Log.e(TAG, "Audio focus lost")
+                onAudioFocusLost?.invoke()
+            }
+            else -> Log.i(TAG, "Audio focus change $change ignored for voice communication")
+        }
+    }
+
+    override fun enqueuePlayback(data: ByteArray) {
         val track = audioTrack ?: return
         if (data.isEmpty() || data.size % Short.SIZE_BYTES != 0) {
             Log.e(TAG, "Rejected invalid PCM16 playback packet: ${data.size} bytes")
@@ -246,11 +339,15 @@ class AudioEngine(context: Context) {
         }
     }
 
-    fun stopPlayback() {
+    override fun stopPlayback() {
         audioTrack?.stop()
         audioTrack?.release()
         audioTrack = null
         isPlaying = false
+        if (noisyReceiverRegistered) {
+            appContext.unregisterReceiver(becomingNoisyReceiver)
+            noisyReceiverRegistered = false
+        }
         leaveCommunicationMode()
         Log.i(TAG, "Playback stopped")
     }
@@ -258,9 +355,31 @@ class AudioEngine(context: Context) {
     private fun enterCommunicationMode() {
         if (previousAudioMode == null) previousAudioMode = audioManager.mode
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (focusRequest == null) {
+            // Voice communication holds focus for the whole tour (FND-13); a permanent loss is
+            // surfaced to the product instead of leaving playback or capture silently ducked.
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener(
+                    AudioManager.OnAudioFocusChangeListener { change -> handleAudioFocusChange(change) },
+                )
+                .build()
+            val result = audioManager.requestAudioFocus(request)
+            if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                Log.e(TAG, "Audio focus was not granted (result $result)")
+            }
+            focusRequest = request
+        }
     }
 
     private fun leaveCommunicationMode() {
+        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        focusRequest = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.clearCommunicationDevice()
         } else {

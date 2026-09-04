@@ -12,12 +12,16 @@ import kotlinx.coroutines.launch
  * Discovery uses Android NSD; audio uses direct TCP between peers on the same Wi-Fi network.
  */
 class NetworkCoordinator(
-    context: Context,
-    displayName: String,
-    private val scope: CoroutineScope
+    val controlPlane: ControlPlane,
+    private val udpAudio: AudioPlane,
+    private val scope: CoroutineScope,
 ) {
-    val controlPlane = LocalControlPlane(context, displayName)
-    val udpAudio = UDPAudioPlane()
+    /** Production constructor: NSD discovery plus the local TCP realtime lane. */
+    constructor(context: Context, displayName: String, scope: CoroutineScope) : this(
+        LocalControlPlane(context, displayName),
+        UDPAudioPlane(),
+        scope,
+    )
 
     var activeAudioPlane: AudioPlane? = null; private set
 

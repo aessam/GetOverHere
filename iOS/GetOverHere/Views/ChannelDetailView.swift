@@ -131,7 +131,7 @@ struct ChannelDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             HStack {
-                Label("\(service.listenerCount) listeners", systemImage: "person.2.fill")
+                Label("\(service.connectedGuestCount) connected · \(service.listenerCount) audio", systemImage: "person.2.fill")
                     .foregroundStyle(.secondary)
                 if !presentation.slides.isEmpty {
                     Text("\(service.assetTransferService.readyParticipantIDs.count) ready")
@@ -301,6 +301,14 @@ struct ChannelDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                if let warning = service.speakerFeedbackWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal)
             HStack {
                 Button {
                     service.setListenerOutput(service.listenerOutput.toggled)

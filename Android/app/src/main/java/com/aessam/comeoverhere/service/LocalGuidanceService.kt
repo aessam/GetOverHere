@@ -63,28 +63,40 @@ data class LocalTargetGuidance(
     }
 }
 
-class LocalGuidanceService(context: Context) : LocationListener, SensorEventListener {
+/** Test seam (DSCN-23): the production service needs a real LocationManager and SensorManager. */
+interface LocalGuidanceInterface {
+    val status: StateFlow<LocalGuidanceStatus>
+    val position: StateFlow<LocalDevicePosition?>
+    val headingDegrees: StateFlow<Double?>
+    val magneticHeadingDegrees: StateFlow<Double?>
+    val headingAccuracy: StateFlow<Int?>
+    fun start()
+    fun startHeadingOnly()
+    fun stop()
+}
+
+class LocalGuidanceService(context: Context) : LocalGuidanceInterface, LocationListener, SensorEventListener {
     private val applicationContext = context.applicationContext
     private val locationManager = applicationContext.getSystemService(LocationManager::class.java)
     private val sensorManager = applicationContext.getSystemService(SensorManager::class.java)
     private val rotationVector = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
     private val mutableStatus = MutableStateFlow(LocalGuidanceStatus.IDLE)
-    val status: StateFlow<LocalGuidanceStatus> = mutableStatus.asStateFlow()
+    override val status: StateFlow<LocalGuidanceStatus> = mutableStatus.asStateFlow()
 
     private val mutablePosition = MutableStateFlow<LocalDevicePosition?>(null)
-    val position: StateFlow<LocalDevicePosition?> = mutablePosition.asStateFlow()
+    override val position: StateFlow<LocalDevicePosition?> = mutablePosition.asStateFlow()
 
     private val mutableHeadingDegrees = MutableStateFlow<Double?>(null)
-    val headingDegrees: StateFlow<Double?> = mutableHeadingDegrees.asStateFlow()
+    override val headingDegrees: StateFlow<Double?> = mutableHeadingDegrees.asStateFlow()
 
     private val mutableMagneticHeadingDegrees = MutableStateFlow<Double?>(null)
-    val magneticHeadingDegrees: StateFlow<Double?> = mutableMagneticHeadingDegrees.asStateFlow()
+    override val magneticHeadingDegrees: StateFlow<Double?> = mutableMagneticHeadingDegrees.asStateFlow()
 
     private val mutableHeadingAccuracy = MutableStateFlow<Int?>(null)
-    val headingAccuracy: StateFlow<Int?> = mutableHeadingAccuracy.asStateFlow()
+    override val headingAccuracy: StateFlow<Int?> = mutableHeadingAccuracy.asStateFlow()
 
-    fun start() {
+    override fun start() {
         if (
             ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.ACCESS_FINE_LOCATION) !=
             PackageManager.PERMISSION_GRANTED
@@ -102,7 +114,7 @@ class LocalGuidanceService(context: Context) : LocationListener, SensorEventList
         startHeadingOnly()
     }
 
-    fun startHeadingOnly() {
+    override fun startHeadingOnly() {
         val sensor = rotationVector
         if (sensor == null || !sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)) {
             mutableHeadingDegrees.value = null
@@ -111,7 +123,7 @@ class LocalGuidanceService(context: Context) : LocationListener, SensorEventList
         }
     }
 
-    fun stop() {
+    override fun stop() {
         locationManager.removeUpdates(this)
         sensorManager.unregisterListener(this)
         mutablePosition.value = null

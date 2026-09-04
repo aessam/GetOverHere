@@ -151,8 +151,9 @@ enum PeerEvent: Sendable {
 protocol AudioPlane: AnyObject {
     var isActive: Bool { get }
 
-    /// Start sending audio. Called by the channel creator (speaker).
-    func startBroadcasting(channelID: String, quality: AudioQuality)
+    /// Start sending audio. Called by the channel creator (speaker). Synchronous and throwing
+    /// (FND-2): the guide commits state only after the lane is listening.
+    func startBroadcasting(channelID: String, quality: AudioQuality) throws
     /// Send a chunk of captured audio to all listeners.
     func sendAudio(_ data: Data)
     /// Start receiving audio. Called by listeners.
@@ -179,6 +180,25 @@ enum AudioSessionEvent: Sendable {
     case failed(String)
 }
 
+/// Why the realtime lane could not start listening for guests (FND-2).
+enum AudioPlaneStartError: LocalizedError, Equatable {
+    case sessionNotConfigured
+    case noNativeEncoder
+    case socketFailed(String)
+    case bindFailed(String)
+    case listenFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .sessionNotConfigured: "Audio lane: session is not configured"
+        case .noNativeEncoder: "Audio lane: no native realtime encoder is available"
+        case let .socketFailed(message): "Audio lane: socket failed: \(message)"
+        case let .bindFailed(message): "Audio lane: bind failed: \(message)"
+        case let .listenFailed(message): "Audio lane: listen failed: \(message)"
+        }
+    }
+}
+
 extension AudioPlane {
     func configureSession(
         sessionID: UUID,
@@ -200,6 +220,8 @@ enum SessionControlEvent: Sendable {
     case guestDisconnected(participantID: UUID)
     case disconnected
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
+    /// The sealed handshake frame failed AEAD authentication or the guide proof mismatched; never an EOF.
+    case credentialRejected(String)
     case failed(String)
 }
 
@@ -215,9 +237,13 @@ protocol SessionControlTransport: AnyObject {
         credential: SessionCredential
     )
     func setEventHandler(_ handler: (@Sendable (SessionControlEvent) -> Void)?)
-    func startGuide()
+    /// Synchronous and throwing (FND-2): unconfigured or bind/listen failures surface to the caller.
+    func startGuide() throws
     func startGuest()
     func send(kind: SessionMessageKind, payload: Data)
+    /// Enqueues one authenticated leave frame to every connected peer and waits off the calling
+    /// actor for delivery or the 2 s deadline; never blocks the caller's thread (FND-8).
+    func sendLeave() async
     func stop()
     func clearSession()
 }
@@ -229,6 +255,7 @@ enum SessionAssetEvent: Sendable {
     case guestDisconnected(participantID: UUID)
     case disconnected
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
+    case credentialRejected(String)
     case failed(String)
 }
 
@@ -244,7 +271,8 @@ protocol SessionAssetTransport: AnyObject {
         credential: SessionCredential
     )
     func setEventHandler(_ handler: (@Sendable (SessionAssetEvent) -> Void)?)
-    func startGuide()
+    /// Synchronous and throwing (FND-2): unconfigured or bind/listen failures surface to the caller.
+    func startGuide() throws
     func startGuest()
     func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?)
     func stop()

@@ -120,7 +120,7 @@ final class TourAssetTransferService {
             transport.send(kind: .tourPackManifest, payload: try manifest.encode(), to: nil)
         } else {
             connectedParticipantIDs.removeAll()
-            transport.startGuide()
+            try transport.startGuide()
         }
     }
 
@@ -134,7 +134,7 @@ final class TourAssetTransferService {
         readyHashesByParticipant.removeAll()
         readyParticipantIDs.removeAll()
         connectedParticipantIDs.removeAll()
-        transport.startGuide()
+        try transport.startGuide()
     }
 
     func joinTour(hostIP: String) {
@@ -185,6 +185,8 @@ final class TourAssetTransferService {
             break
         case let .versionMismatch(remoteMajor, localMajor):
             report("Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app.")
+        case let .credentialRejected(message):
+            report(message)
         case let .failed(message):
             report(message)
         }

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 import TourSessionCore
 
 /// Reliable GOH2 control lane carried on a socket independent from live audio.
@@ -22,6 +23,11 @@ private final class LocalAuthenticatedSessionTransport {
     private let maximumFrameSize = 1_048_576
     private let acceptQueue = DispatchQueue(label: "session.data.accept", qos: .userInitiated)
     private let guestQueue = DispatchQueue(label: "session.data.guest", qos: .userInitiated)
+    /// Off-actor wait for the terminal leave flush (FND-8).
+    private let terminalFlushQueue = DispatchQueue(label: "session.data.terminal", qos: .userInitiated)
+    /// Accepted-but-unauthenticated connections held at once (RSK-1, ADR-047).
+    nonisolated private static let maximumPendingHandshakes = 32
+    private let handshakeSlots = HandshakeSlots(limit: LocalAuthenticatedSessionTransport.maximumPendingHandshakes)
     private var configuration: Configuration?
     private var eventHandler: (@Sendable (SessionControlEvent) -> Void)?
     private var serverFD: Int32 = -1
@@ -61,17 +67,16 @@ private final class LocalAuthenticatedSessionTransport {
         eventHandler = handler
     }
 
-    func startGuide() {
+    /// Synchronous and throwing (FND-2): the guide commits state only after every lane is listening.
+    func startGuide() throws {
         guard let configuration else {
-            emit(.failed("Session: session is not configured"))
-            return
+            throw ControlTransportError.notConfigured
         }
 
         stop()
         serverFD = socket(AF_INET, SOCK_STREAM, 0)
         guard serverFD >= 0 else {
-            emit(.failed(Self.socketError("Session: socket failed")))
-            return
+            throw ControlTransportError.socketFailed(Self.socketError("Session: socket failed"))
         }
 
         var yes: Int32 = 1
@@ -89,10 +94,10 @@ private final class LocalAuthenticatedSessionTransport {
             }
         }
         guard bindResult == 0, Darwin.listen(serverFD, 64) == 0 else {
-            emit(.failed(Self.socketError("Session: bind/listen failed")))
+            let message = Self.socketError("Session: bind/listen failed")
             close(serverFD)
             serverFD = -1
-            return
+            throw ControlTransportError.bindFailed(message)
         }
 
         isActive = true
@@ -102,6 +107,7 @@ private final class LocalAuthenticatedSessionTransport {
         let inboundOpener = SessionFrameOpener(credential: configuration.credential)
         let listeningFD = serverFD
         let expectedApplicationLane = applicationLane
+        let handshakeSlots = self.handshakeSlots
         runGeneration &+= 1
         let generation = runGeneration
 
@@ -115,6 +121,11 @@ private final class LocalAuthenticatedSessionTransport {
                     }
                 }
                 guard acceptedFD >= 0 else { break }
+                guard handshakeSlots.tryAcquire() else {
+                    Logger.transport.error("Session: pending handshake bound reached; closing connection")
+                    close(acceptedFD)
+                    continue
+                }
                 Self.setNoDelay(fd: acceptedFD)
                 let socket = ManagedSocket(fd: acceptedFD, generation: generation)
                 let connectionQueue = DispatchQueue(
@@ -123,13 +134,19 @@ private final class LocalAuthenticatedSessionTransport {
                 )
                 connectionQueue.async { [weak self] in
                     let hello: (participantID: UUID, displayName: String, platform: ParticipantPlatform)
-                    do {
-                        hello = try Self.authenticateGuest(
+                    // The slot is held only while the handshake is pending: released on return or throw.
+                    let outcome = Result {
+                        try Self.authenticateGuest(
                             fd: acceptedFD,
                             configuration: configuration,
                             requestedLane: expectedApplicationLane
                         )
-                    } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
+                    }
+                    handshakeSlots.release()
+                    switch outcome {
+                    case let .success(value):
+                        hello = value
+                    case .failure(SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor)):
                         Task { @MainActor [weak self] in
                             self?.emit(.versionMismatch(
                                 remoteMajor: remoteMajor,
@@ -138,7 +155,7 @@ private final class LocalAuthenticatedSessionTransport {
                         }
                         socket.close()
                         return
-                    } catch {
+                    case let .failure(error):
                         fputs("Session: invalid guest hello (\(String(describing: type(of: error))))\n", stderr)
                         socket.close()
                         return
@@ -301,6 +318,14 @@ private final class LocalAuthenticatedSessionTransport {
                     ))
                 }
                 return
+            } catch ControlTransportError.credentialRejected {
+                // A wrong tour code is terminal and never retried (FND-8, DSCN-26).
+                socket.close()
+                Task { @MainActor [weak self] in
+                    self?.clearGuestSocket(socket, generation: generation)
+                    self?.emit(.credentialRejected("Session: the tour code was rejected by the guide"))
+                }
+                return
             } catch {
                 socket.close()
                 Task { @MainActor [weak self] in
@@ -370,17 +395,55 @@ private final class LocalAuthenticatedSessionTransport {
         }
     }
 
+    /// Synchronous send. A `.leave` blocks the caller for up to the 2 s delivery deadline and is
+    /// reserved for the process-termination path; product code ends a tour through `sendLeave()`.
     func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?) {
+        guard let outbound = sealedOutboundFrame(kind: kind, payload: payload, to: participantID) else { return }
+        if kind == .leave {
+            let deliveries = outbound.destinations.compactMap { $0.enqueue(outbound.frame, trackDelivery: true) }
+            let deadline = DispatchTime.now() + .seconds(2)
+            if deliveries.contains(where: { !$0.wait(timeout: deadline) }) {
+                emit(.failed("Session: terminal send did not complete before timeout"))
+            }
+        } else {
+            outbound.destinations.forEach { $0.enqueue(outbound.frame) }
+        }
+    }
+
+    /// Enqueues one authenticated leave to every connected peer and waits off the main actor for
+    /// delivery or the 2 s deadline (FND-8): End Tour no longer blocks the main thread.
+    func sendLeave() async {
+        guard let outbound = sealedOutboundFrame(kind: .leave, payload: Data(), to: nil) else { return }
+        let deliveries = outbound.destinations.compactMap { $0.enqueue(outbound.frame, trackDelivery: true) }
+        guard !deliveries.isEmpty else { return }
+        let deadline = DispatchTime.now() + .seconds(2)
+        let flushQueue = terminalFlushQueue
+        let delivered = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            flushQueue.async {
+                continuation.resume(returning: deliveries.allSatisfy { $0.wait(timeout: deadline) })
+            }
+        }
+        if !delivered {
+            emit(.failed("Session: terminal send did not complete before timeout"))
+        }
+    }
+
+    /// Seals one outbound frame and selects its writers; emits the failure and returns nil otherwise.
+    private func sealedOutboundFrame(
+        kind: SessionMessageKind,
+        payload: Data,
+        to participantID: UUID?
+    ) -> (frame: Data, destinations: [BoundedSocketFrameWriter])? {
         guard kind.requiredLane == applicationLane,
               kind != .hello,
               kind != .authChallenge,
               kind != .welcome else {
             emit(.failed("Session: \(kind) is not valid for the \(applicationLane) lane"))
-            return
+            return nil
         }
         guard isActive, let configuration else {
             emit(.failed("Session: transport is not active"))
-            return
+            return nil
         }
 
         let frame: Data
@@ -395,12 +458,12 @@ private final class LocalAuthenticatedSessionTransport {
             )
             guard let outboundSealer else {
                 emit(.failed("Session: frame encryption is not configured"))
-                return
+                return nil
             }
             frame = try outboundSealer.seal(envelope, streamID: outboundStreamID).encode()
         } catch {
             emit(.failed("Session: envelope failed: \(error.localizedDescription)"))
-            return
+            return nil
         }
         sendSequence &+= 1
 
@@ -414,16 +477,8 @@ private final class LocalAuthenticatedSessionTransport {
         } else {
             destinations = []
         }
-        guard !destinations.isEmpty else { return }
-        if kind == .leave {
-            let deliveries = destinations.compactMap { $0.enqueue(frame, trackDelivery: true) }
-            let deadline = DispatchTime.now() + .seconds(2)
-            if deliveries.contains(where: { !$0.wait(timeout: deadline) }) {
-                emit(.failed("Session: terminal send did not complete before timeout"))
-            }
-        } else {
-            destinations.forEach { $0.enqueue(frame) }
-        }
+        guard !destinations.isEmpty else { return nil }
+        return (frame, destinations)
     }
 
     func stop() {
@@ -519,13 +574,21 @@ private final class LocalAuthenticatedSessionTransport {
     }
 
     private enum ControlTransportError: LocalizedError {
+        case notConfigured
+        case socketFailed(String)
+        case bindFailed(String)
         case handshakeWriteFailed
         case invalidWelcome
+        /// The guide's sealed handshake frame failed AEAD authentication or its proof mismatched (DSCN-26).
+        case credentialRejected
 
         var errorDescription: String? {
             switch self {
+            case .notConfigured: "session is not configured"
+            case let .socketFailed(message), let .bindFailed(message): message
             case .handshakeWriteFailed: "handshake write failed"
             case .invalidWelcome: "unexpected welcome envelope"
+            case .credentialRejected: "the tour code was rejected by the guide"
             }
         }
     }
@@ -627,7 +690,7 @@ private final class LocalAuthenticatedSessionTransport {
             throw ControlTransportError.invalidWelcome
         }
         let guideOpener = SessionFrameOpener(credential: configuration.credential)
-        guard let challengeEnvelope = try openFrame(challengeFrame, using: guideOpener) else {
+        guard let challengeEnvelope = try openHandshakeFrame(challengeFrame, using: guideOpener) else {
             throw ControlTransportError.invalidWelcome
         }
         guard challengeEnvelope.sessionID == configuration.sessionID,
@@ -676,7 +739,7 @@ private final class LocalAuthenticatedSessionTransport {
               let welcomeFrame = readFrame(fd: fd, maximumSize: maximumFrameSize) else {
             throw ControlTransportError.handshakeWriteFailed
         }
-        guard let welcomeEnvelope = try openFrame(welcomeFrame, using: guideOpener) else {
+        guard let welcomeEnvelope = try openHandshakeFrame(welcomeFrame, using: guideOpener) else {
             throw ControlTransportError.invalidWelcome
         }
         guard welcomeEnvelope.sessionID == configuration.sessionID,
@@ -698,7 +761,7 @@ private final class LocalAuthenticatedSessionTransport {
             guideNonce: welcome.guideNonce
         )
         guard SessionAuthenticator.securelyMatches(expectedProof, welcome.credentialProof) else {
-            throw ControlTransportError.invalidWelcome
+            throw ControlTransportError.credentialRejected
         }
         return challengeEnvelope.senderID
     }
@@ -713,6 +776,20 @@ private final class LocalAuthenticatedSessionTransport {
             return envelope
         case .duplicate:
             return nil
+        }
+    }
+
+    /// Guest-side handshake open: a wrong tour code fails the AEAD tag on the guide's sealed frame.
+    /// Only that failure is a credential rejection (DSCN-26); an EOF from `readFrame` stays a
+    /// transport failure and a malformed sealed frame stays a protocol failure.
+    nonisolated private static func openHandshakeFrame(
+        _ frame: Data,
+        using opener: SessionFrameOpener
+    ) throws -> SessionEnvelope? {
+        do {
+            return try openFrame(frame, using: opener)
+        } catch SessionFrameSecurityError.authenticationFailed {
+            throw ControlTransportError.credentialRejected
         }
     }
 
@@ -806,11 +883,12 @@ final class LocalSessionControlTransport: SessionControlTransport {
         transport.setEventHandler(handler)
     }
 
-    func startGuide() { transport.startGuide() }
+    func startGuide() throws { try transport.startGuide() }
     func startGuest() { transport.startGuest() }
     func send(kind: SessionMessageKind, payload: Data) {
         transport.send(kind: kind, payload: payload, to: nil)
     }
+    func sendLeave() async { await transport.sendLeave() }
     func stop() { transport.stop() }
     func clearSession() { transport.clearSession() }
 }
@@ -850,7 +928,7 @@ final class LocalSessionAssetTransport: SessionAssetTransport {
         }
     }
 
-    func startGuide() { transport.startGuide() }
+    func startGuide() throws { try transport.startGuide() }
     func startGuest() { transport.startGuest() }
     func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?) {
         transport.send(kind: kind, payload: payload, to: participantID)
@@ -874,6 +952,8 @@ private extension SessionAssetEvent {
             self = .disconnected
         case let .versionMismatch(remoteMajor, localMajor):
             self = .versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor)
+        case let .credentialRejected(message):
+            self = .credentialRejected(message)
         case let .failed(message):
             self = .failed(message)
         }

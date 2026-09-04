@@ -38,6 +38,7 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -245,6 +246,8 @@ class UDPAudioPlane(
     private val clients = CopyOnWriteArrayList<ClientConnection>()
     private val acceptExecutor = Executors.newSingleThreadExecutor()
     private val clientExecutor = Executors.newCachedThreadPool()
+    /** Accepted-but-unauthenticated connections held at once (RSK-1, ADR-047). */
+    private val handshakeSlots = Semaphore(MAXIMUM_PENDING_HANDSHAKES)
     private var receiveThread: Thread? = null
     @Volatile private var broadcastProcessor: BroadcastProcessor? = null
     private var receivedPacketCount = 0
@@ -258,6 +261,7 @@ class UDPAudioPlane(
     companion object {
         private const val TAG = "UDPAudioPlane"
         private const val FRAME_LIFETIME_NANOSECONDS = 500_000_000L
+        private const val MAXIMUM_PENDING_HANDSHAKES = 32
 
         private fun wallClockNanoseconds(): Long = SystemClock.elapsedRealtimeNanos()
     }
@@ -282,11 +286,12 @@ class UDPAudioPlane(
 
     // MARK: - Guide
 
+    /** Synchronous and throwing (FND-2): the guide commits state only after the lane is listening. */
     override fun startBroadcasting(channelID: String, quality: AudioQuality) {
         val configured = configuration
         if (configured == null || !configured.sessionID.toString().equals(channelID, ignoreCase = true)) {
             Log.e(TAG, "TCP: missing or mismatched GOH2 session configuration")
-            return
+            throw IllegalStateException("TCP: missing or mismatched GOH2 session configuration")
         }
         val localCapabilities = try {
             codecProvider.sessionCapabilities().also { capabilities ->
@@ -299,13 +304,12 @@ class UDPAudioPlane(
             }
         } catch (error: Exception) {
             Log.e(TAG, "TCP: native realtime encoder probe failed (${error.javaClass.simpleName})")
-            return
+            throw IllegalStateException("TCP: no native realtime encoder is available", error)
         }
 
         closeSockets()
         active.set(true)
         val epoch = runEpoch.incrementAndGet()
-        broadcastProcessor = BroadcastProcessor(configured, codecProvider)
         try {
             val ip = findLocalIPv4()
             if (hostIP == null) hostIP = ip
@@ -316,6 +320,8 @@ class UDPAudioPlane(
             server.bind(InetSocketAddress(audioPort), 64)
             serverSocket = server
             Log.i(TAG, "TCP: GOH2 server listening on 0.0.0.0:$audioPort")
+            // Constructed after the bind so a bind failure cannot leak the encode executor (DSCN-28).
+            broadcastProcessor = BroadcastProcessor(configured, codecProvider)
 
             acceptExecutor.execute {
                 while (active.get()) {
@@ -325,6 +331,11 @@ class UDPAudioPlane(
                         if (active.get()) Log.e(TAG, "TCP accept failed (${error.javaClass.simpleName})")
                         break
                     }
+                    if (!handshakeSlots.tryAcquire()) {
+                        Log.e(TAG, "TCP: pending handshake bound reached; closing connection")
+                        closeSocket(socket)
+                        continue
+                    }
                     clientExecutor.execute {
                         authenticateAndMonitor(socket, configured, localCapabilities, epoch)
                     }
@@ -333,6 +344,8 @@ class UDPAudioPlane(
         } catch (error: Exception) {
             Log.e(TAG, "TCP server failed to start (${error.javaClass.simpleName})")
             active.set(false)
+            closeSockets()
+            throw IllegalStateException("TCP: server failed to start: ${error.message}", error)
         }
     }
 
@@ -354,7 +367,12 @@ class UDPAudioPlane(
         try {
             socket.soTimeout = 5_000
             val input = socket.getInputStream()
-            val authenticated = authenticateGuest(socket, configured, localCapabilities)
+            // The slot is held only while the handshake is pending: released on return or throw.
+            val authenticated = try {
+                authenticateGuest(socket, configured, localCapabilities)
+            } finally {
+                handshakeSlots.release()
+            }
             val envelope = authenticated.first
             val hello = authenticated.second.first
             val codec = authenticated.second.second

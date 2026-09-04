@@ -170,6 +170,7 @@ class TourAssetTransferService(
                 publishReadiness()
             }
             is SessionAssetEvent.Failed -> report(event.message)
+            is SessionAssetEvent.CredentialRejected -> report(event.message)
             is SessionAssetEvent.VersionMismatch -> report(
                 "Tour protocol version mismatch (remote ${event.remoteMajor}, local ${event.localMajor}). " +
                     "Update the older app.",

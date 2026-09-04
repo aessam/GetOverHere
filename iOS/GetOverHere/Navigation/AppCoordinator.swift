@@ -55,7 +55,9 @@ final class AppCoordinator {
         channelService.startListening()
     }
 
+    /// Termination path (FND-8): the session ends all three lanes before discovery and audio stop.
     func stop() {
+        channelService.terminate()
         coordinator.stop()
     }
 
