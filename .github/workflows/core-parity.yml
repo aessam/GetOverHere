@@ -4,7 +4,6 @@ name: core-parity
 # every push. No app build, no simulator, no emulator; the full gate stays local and physical.
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
