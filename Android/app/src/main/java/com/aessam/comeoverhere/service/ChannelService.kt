@@ -181,6 +181,12 @@ class ChannelService(
     private var guestCredential: SessionCredential? = null
     /** Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20). */
     private var sessionAttempt = 0L
+    /**
+     * Lane-ownership generation: bumped only where the lanes change hands (a session start,
+     * [stopCurrentActivity], or an End Tour). The deferred End Tour teardown compares it, never
+     * [sessionAttempt], so a no-op leave or an invalid join cannot skip it (ADR-048).
+     */
+    private var sessionGeneration = 0L
     /** Audio-lane losses since the last delivered PCM buffer; terminal at 5 (DSCN-19). */
     private val consecutiveAudioLaneFailures = AtomicInteger(0)
     private var participantRegistry = ParticipantRegistry()
@@ -287,6 +293,7 @@ class ChannelService(
         try {
             contentStore.beginPack(sessionID, channel.name)
             val emptyManifest = contentStore.manifestPayload()
+            sessionGeneration += 1
             tourControlService.configureSession(
                 sessionID,
                 participantID,
@@ -423,6 +430,7 @@ class ChannelService(
         attemptedGuestRoutes.clear()
         routeLease.reset()
         activeGuestRoute = null
+        sessionGeneration += 1
         tryNextGuestRoute(channel, sessionID, participantID, credential)
         Log.i(TAG, "Joined megaphone")
     }
@@ -539,7 +547,8 @@ class ChannelService(
         sessionAttempt += 1
         val ch = activeChannel ?: return
         val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
-        val attempt = sessionAttempt
+        sessionGeneration += 1
+        val generation = sessionGeneration
         if (isGuide) {
             // UI state ends now; the authenticated leave is flushed off the main thread and the
             // lanes are cleared after delivery unless a newer session replaced them (ADR-048, DSCN-27).
@@ -556,10 +565,17 @@ class ChannelService(
             _readyParticipantCount.value = 0
             coordinator.controlPlane.broadcast(BLECommand.ChannelEnded(channelID = ch.id))
             scope.launch {
-                runCatching { tourControlService.endGuideSession() }
-                    .onFailure { Log.e(TAG, "Failed to send authenticated session end (${it.javaClass.simpleName})") }
-                if (sessionAttempt == attempt) {
-                    stopCurrentActivity()
+                try {
+                    tourControlService.endGuideSession()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.e(TAG, "Failed to send authenticated session end (${error.javaClass.simpleName})")
+                }
+                if (sessionGeneration == generation) {
+                    // This leave already invalidated older stretches; a create/join started inside
+                    // the flush window is the user's newest action and must survive the teardown.
+                    stopCurrentActivity(discardingPendingStretch = false)
                 } else {
                     Log.i(TAG, "Skipping the deferred lane teardown; a newer session owns the lanes")
                 }
@@ -598,8 +614,14 @@ class ChannelService(
         }
     }
 
-    private fun stopCurrentActivity() {
-        sessionAttempt += 1
+    /**
+     * [discardingPendingStretch] is false only from the deferred End Tour teardown: that leave
+     * already bumped [sessionAttempt], and a create/join started inside the flush window must
+     * survive it (ADR-048).
+     */
+    private fun stopCurrentActivity(discardingPendingStretch: Boolean = true) {
+        if (discardingPendingStretch) sessionAttempt += 1
+        sessionGeneration += 1
         reconnectJob?.cancel()
         reconnectJob = null
         _reconnectAttempt.value = 0

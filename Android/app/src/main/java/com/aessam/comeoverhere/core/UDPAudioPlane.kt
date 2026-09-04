@@ -365,10 +365,10 @@ class UDPAudioPlane(
         epoch: Long,
     ) {
         try {
-            socket.soTimeout = 5_000
-            val input = socket.getInputStream()
-            // The slot is held only while the handshake is pending: released on return or throw.
+            // The slot is held only while the handshake is pending: released exactly once on every
+            // exit after the accept loop's tryAcquire, including a socket already closed here.
             val authenticated = try {
+                socket.soTimeout = 5_000
                 authenticateGuest(socket, configured, localCapabilities)
             } finally {
                 handshakeSlots.release()
@@ -377,6 +377,7 @@ class UDPAudioPlane(
             val hello = authenticated.second.first
             val codec = authenticated.second.second
             socket.soTimeout = 0
+            val input = socket.getInputStream()
             val connectionID = UUID.randomUUID().toString()
             val writer = BoundedSocketFrameWriter(
                 socket = socket,

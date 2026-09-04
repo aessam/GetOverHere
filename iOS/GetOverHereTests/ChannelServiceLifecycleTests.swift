@@ -166,6 +166,61 @@ struct ChannelServiceLifecycleTests {
         #expect(h.audioPlane.clearSessionCalls == 1)
     }
 
+    /// A second End Tour tap or a termination with no active channel inside the flush window must
+    /// not disown the pending teardown: the lanes still hold the ended tour's credential (ADR-048).
+    @Test("End Tour teardown survives a no-op leave inside the flush window")
+    @MainActor
+    func endTourTeardownSurvivesANoOpLeave() async throws {
+        let h = try Harness()
+        defer { h.close() }
+        _ = try await createGuide(h)
+        h.control.holdLeave = true
+
+        h.service.leaveChannel()
+        try await waitUntil("leave flush started") { h.control.leaveFlushCount == 1 }
+        #expect(h.service.activeChannelID == nil)
+
+        h.service.leaveChannel()
+        h.service.terminate()
+
+        #expect(h.control.leaveFlushCount == 1, "no-op leaves must not flush again")
+        #expect(h.control.clearSessionCalls == 0, "lanes stay until the leave is delivered")
+
+        h.control.resumeLeave()
+
+        try await waitUntil("lanes cleared after delivery despite the no-op leave") {
+            h.control.clearSessionCalls == 1
+        }
+        #expect(h.asset.clearSessionCalls == 1)
+        #expect(h.audioPlane.clearSessionCalls == 1)
+    }
+
+    /// A Create started inside the flush window whose credential stretch outlives the flush must
+    /// survive the deferred teardown: the teardown belongs to the leave that already invalidated
+    /// older stretches and must not discard the user's newest action (ADR-048).
+    @Test("End Tour teardown does not discard a Create started inside the flush window")
+    @MainActor
+    func endTourTeardownDoesNotDiscardAFollowingCreate() async throws {
+        let h = try Harness()
+        defer { h.close() }
+        _ = try await createGuide(h)
+        h.control.holdLeave = true
+
+        h.service.leaveChannel()
+        try await waitUntil("leave flush started") { h.control.leaveFlushCount == 1 }
+
+        h.service.createChannel(name: "Tour 2")
+        h.control.resumeLeave()
+
+        try await waitUntil("second tour broadcasting after the deferred teardown") {
+            h.service.listenState == .broadcasting
+        }
+        #expect(h.service.activeChannel?.name == "Tour 2")
+        #expect(h.control.clearSessionCalls == 1, "the ended tour's lanes were still cleared")
+        #expect(h.asset.clearSessionCalls == 1)
+        #expect(h.audioPlane.clearSessionCalls == 1)
+    }
+
     @Test("Version mismatch erases the transport credentials")
     @MainActor
     func versionMismatchErasesTransportCredentials() async throws {

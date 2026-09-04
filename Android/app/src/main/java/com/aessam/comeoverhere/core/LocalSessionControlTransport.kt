@@ -334,9 +334,10 @@ private class LocalAuthenticatedSessionTransport(
     ) {
         var client: ClientConnection? = null
         try {
-            socket.soTimeout = 5_000
-            // The slot is held only while the handshake is pending: released on return or throw.
+            // The slot is held only while the handshake is pending: released exactly once on every
+            // exit after the accept loop's tryAcquire, including a socket already closed here.
             val authenticated = try {
+                socket.soTimeout = 5_000
                 authenticateGuest(socket, configured)
             } finally {
                 handshakeSlots.release()

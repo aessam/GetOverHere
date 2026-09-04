@@ -198,6 +198,68 @@ class ChannelServiceLifecycleTest {
         }
     }
 
+    /**
+     * A second End Tour with no active channel inside the flush window must not disown the pending
+     * teardown: the lanes still hold the ended tour's credential (ADR-048).
+     */
+    @Test
+    fun endTourTeardownSurvivesANoOpLeave() {
+        val h = Harness()
+        try {
+            h.createGuide()
+            h.control.leaveGate = CompletableDeferred()
+
+            h.service.leaveChannel()
+            assertEquals(1, h.control.leaveFlushCount)
+            assertNull(h.service.activeChannelID.value)
+
+            h.service.leaveChannel()
+
+            assertEquals("no-op leaves must not flush again", 1, h.control.leaveFlushCount)
+            assertEquals("lanes stay until the leave is delivered", 0, h.control.clearSessionCalls)
+
+            h.control.leaveGate!!.complete(Unit)
+
+            assertEquals("lanes cleared after delivery despite the no-op leave", 1, h.control.clearSessionCalls)
+            assertEquals(1, h.asset.clearSessionCalls)
+            assertEquals(1, h.audioPlane.clearSessionCalls)
+            assertTrue(h.uncaught.isEmpty())
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * A Create started inside the flush window whose credential stretch outlives the flush must
+     * survive the deferred teardown: the teardown belongs to the leave that already invalidated
+     * older stretches and must not discard the user's newest action (ADR-048).
+     */
+    @Test
+    fun endTourTeardownDoesNotDiscardAFollowingCreate() {
+        val h = Harness()
+        try {
+            h.createGuide()
+            h.control.leaveGate = CompletableDeferred()
+
+            h.service.leaveChannel()
+            assertEquals(1, h.control.leaveFlushCount)
+
+            h.service.createChannel("Tour 2")
+            h.control.leaveGate!!.complete(Unit)
+
+            awaitCondition("second tour broadcasting after the deferred teardown") {
+                h.service.listenState.value == ListenState.BROADCASTING
+            }
+            assertEquals("Tour 2", h.service.activeChannel?.name)
+            assertEquals("the ended tour's lanes were still cleared", 1, h.control.clearSessionCalls)
+            assertEquals(1, h.asset.clearSessionCalls)
+            assertEquals(1, h.audioPlane.clearSessionCalls)
+            assertTrue(h.uncaught.isEmpty())
+        } finally {
+            h.close()
+        }
+    }
+
     @Test
     fun versionMismatchErasesTransportCredentials() {
         val h = Harness()

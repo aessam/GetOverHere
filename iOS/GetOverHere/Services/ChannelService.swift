@@ -71,6 +71,10 @@ final class ChannelService {
     private var reconnectTask: Task<Void, Never>?
     /// Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20).
     private var sessionAttempt: UInt64 = 0
+    /// Lane-ownership generation: bumped only where the lanes change hands (a session start,
+    /// `stopCurrentActivity`, an End Tour, or termination). The deferred End Tour teardown compares
+    /// it, never `sessionAttempt`, so a no-op leave, terminate, or invalid join cannot skip it (ADR-048).
+    private var sessionGeneration: UInt64 = 0
     /// An audio-lane loss observed before the control lane connected; consumed on `.connected` (ADR-044).
     private var pendingAudioLaneFailure: String?
     /// Audio-lane losses since the last delivered PCM buffer; terminal at 5 (DSCN-19).
@@ -212,6 +216,7 @@ final class ChannelService {
         do {
             try contentStore.beginPack(packID: sessionID, displayName: channel.name)
             let emptyManifest = try contentStore.manifestPayload()
+            sessionGeneration &+= 1
             tourControlService.configureSession(
                 sessionID: sessionID,
                 participantID: participantID,
@@ -332,6 +337,7 @@ final class ChannelService {
         listenState = .listening
         connectionState = .connecting
         setListenerOutput(.privateAudio)
+        sessionGeneration &+= 1
         startGuestTransports(
             channel: channel,
             hostIP: hostIP,
@@ -490,10 +496,11 @@ final class ChannelService {
         sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
-        let attempt = sessionAttempt
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
         if isGuide {
             // UI state ends now; the authenticated leave is flushed off the main actor and the lanes
-            // are cleared after delivery unless a newer session replaced them (ADR-048, DSCN-20).
+            // are cleared after delivery unless a newer session took over the lanes (ADR-048).
             audioEngine.stopCapture()
             captureTask?.cancel()
             captureTask = nil
@@ -512,11 +519,13 @@ final class ChannelService {
                     Logger.channel.error("Failed to send authenticated session end (\(String(describing: type(of: error))))")
                 }
                 guard let self else { return }
-                guard self.sessionAttempt == attempt else {
+                guard self.sessionGeneration == generation else {
                     Logger.channel.info("Skipping the deferred lane teardown; a newer session owns the lanes")
                     return
                 }
-                self.stopCurrentActivity()
+                // This leave already invalidated older stretches; a create/join started inside the
+                // flush window is the user's newest action and must survive the teardown.
+                self.stopCurrentActivity(discardingPendingStretch: false)
             }
         } else {
             stopCurrentActivity()
@@ -535,6 +544,7 @@ final class ChannelService {
         sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
+        sessionGeneration &+= 1
         if isGuide {
             audioEngine.stopCapture()
             captureTask?.cancel()
@@ -602,8 +612,12 @@ final class ChannelService {
         coordinator.controlPlane.broadcast(.channelEnded(channelID: channelID))
     }
 
-    private func stopCurrentActivity() {
-        sessionAttempt &+= 1
+    /// `discardingPendingStretch` is false only from the deferred End Tour teardown: that leave
+    /// already bumped `sessionAttempt`, and a create/join started inside the flush window must
+    /// survive it (ADR-048).
+    private func stopCurrentActivity(discardingPendingStretch: Bool = true) {
+        if discardingPendingStretch { sessionAttempt &+= 1 }
+        sessionGeneration &+= 1
         reconnectTask?.cancel()
         reconnectTask = nil
         reconnectAttempt = 0
