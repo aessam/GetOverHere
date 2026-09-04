@@ -17,6 +17,9 @@ DerivedData/
 Android/.gradle/
 Android/local.properties
 
+# The wrapper is required by clean checkouts, even when a global rule ignores JARs.
+!Android/gradle/wrapper/gradle-wrapper.jar
+
 # This repository owns its cross-platform Swift package. Override the global
 # macOS Packages/ ignore so protocol sources and tests stay tracked.
 !Packages/
