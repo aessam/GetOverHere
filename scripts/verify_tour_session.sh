@@ -5,17 +5,21 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT_PACKAGE="$PROJECT_ROOT/Packages/TourSessionCore"
 ANDROID_ROOT="$PROJECT_ROOT/Android"
-ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}}"
 SWIFT_SCRATCH="${GOH_SWIFT_SCRATCH:-/tmp/GetOverHereTourSessionSwift}"
 SWIFT_MODULE_CACHE="${GOH_SWIFT_MODULE_CACHE:-/tmp/GetOverHereTourSessionSwiftModuleCache}"
 KOTLIN_CLI="$ANDROID_ROOT/tour-session-cli/build/install/tour-session-cli/bin/tour-session-cli"
-XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer}"
+XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo /Users/aessam/Downloads/Xcode-beta.app/Contents/Developer)}"
 IOS_DERIVED_DATA="${GOH_IOS_DERIVED_DATA:-/tmp/GetOverHereTourSessionDerived}"
 IOS_MODULE_CACHE="${GOH_IOS_MODULE_CACHE:-/tmp/GetOverHereTourSessionModuleCache}"
 
 mkdir -p "$SWIFT_MODULE_CACHE"
 export CLANG_MODULE_CACHE_PATH="$SWIFT_MODULE_CACHE"
 export SWIFT_MODULE_CACHE_PATH="$SWIFT_MODULE_CACHE"
+
+# The toolchain is resolved from the environment (FND-14); print it so a run is attributable.
+echo "ANDROID_JAVA_HOME=$ANDROID_JAVA_HOME"
+echo "XCODE_DEVELOPER_DIR=$XCODE_DEVELOPER_DIR"
 
 if ! command -v swift >/dev/null 2>&1; then
     echo "error: swift is not available" >&2

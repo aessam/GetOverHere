@@ -3,7 +3,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer}"
+XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo /Users/aessam/Downloads/Xcode-beta.app/Contents/Developer)}"
 XCRUN="${GOH_XCRUN:-/usr/bin/xcrun}"
 ADB="${GOH_ADB:-/Users/aessam/Library/Android/sdk/platform-tools/adb}"
 IOS_BUNDLE_ID="${GOH_IOS_BUNDLE_ID:-com.aens.GetOverHere}"
