@@ -6,6 +6,7 @@ import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.ParticipantRegistry
 import com.aessam.toursession.PresentationSnapshotPayload
 import com.aessam.toursession.SessionCredential
+import com.aessam.toursession.SessionSecurityException
 import com.aessam.toursession.TourAssetDescriptor
 import com.aessam.toursession.TargetSnapshotPayload
 import com.aessam.toursession.BearingSnapshotPayload
@@ -154,6 +155,8 @@ class ChannelService(
     private var captureJob: Job? = null
     private var reconnectJob: Job? = null
     private var guestCredential: SessionCredential? = null
+    /** Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20). */
+    private var sessionAttempt = 0L
     private var participantRegistry = ParticipantRegistry()
     private var activeGuestRoute: SessionTransportRoute? = null
     private var attemptedGuestRoutes = mutableSetOf<SessionTransportRoute>()
@@ -215,6 +218,7 @@ class ChannelService(
     // MARK: - Channel Management
 
     override fun createChannel(name: String, quality: AudioQuality) {
+        sessionAttempt += 1
         audioQuality = quality
         val channel = Channel(
             id = UUID.randomUUID().toString(),
@@ -228,10 +232,24 @@ class ChannelService(
                 Log.e(TAG, "Cannot create session with non-UUID participant identity", it)
                 return
             }
+        val code = SessionCredential.generateShortCode()
+        val attempt = sessionAttempt
+        scope.launch {
+            val credential = withContext(Dispatchers.Default) { SessionCredential.derive(code, sessionID) }
+            if (attempt != sessionAttempt) return@launch
+            startGuideSession(channel, sessionID, participantID, code, credential)
+        }
+    }
+
+    private fun startGuideSession(
+        channel: Channel,
+        sessionID: UUID,
+        participantID: UUID,
+        code: String,
+        credential: SessionCredential,
+    ) {
         try {
-            val code = SessionCredential.generateShortCode()
-            val credential = SessionCredential.derive(code, sessionID)
-            contentStore.beginPack(sessionID, name)
+            contentStore.beginPack(sessionID, channel.name)
             val emptyManifest = contentStore.manifestPayload()
             tourControlService.configureSession(
                 sessionID,
@@ -289,22 +307,40 @@ class ChannelService(
     }
 
     override fun joinChannel(channel: Channel, tourCode: String) {
+        sessionAttempt += 1
         val sessionID = runCatching { UUID.fromString(channel.id) }
             .getOrElse {
                 Log.e(TAG, "Cannot join session with non-UUID channel identity", it)
                 return
             }
         val normalizedCode = SessionCredential.normalize(tourCode)
-        val credential = runCatching { SessionCredential.derive(normalizedCode, sessionID) }
-            .getOrElse {
-                _tourFeatureError.value = it.message ?: it.javaClass.simpleName
-                return
-            }
         val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
             .getOrElse {
                 Log.e(TAG, "Cannot join session with non-UUID participant identity", it)
                 return
             }
+        val attempt = sessionAttempt
+        scope.launch {
+            val credential = try {
+                withContext(Dispatchers.Default) { SessionCredential.derive(normalizedCode, sessionID) }
+            } catch (error: SessionSecurityException) {
+                if (attempt == sessionAttempt) {
+                    _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                }
+                return@launch
+            }
+            if (attempt != sessionAttempt) return@launch
+            startGuestSession(channel, sessionID, participantID, normalizedCode, credential)
+        }
+    }
+
+    private fun startGuestSession(
+        channel: Channel,
+        sessionID: UUID,
+        participantID: UUID,
+        normalizedCode: String,
+        credential: SessionCredential,
+    ) {
         stopCurrentActivity()
         _readySlideFiles.value = emptyMap()
         _readyParticipantCount.value = 0
@@ -434,6 +470,7 @@ class ChannelService(
     }
 
     override fun leaveChannel() {
+        sessionAttempt += 1
         val ch = activeChannel ?: return
         val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
         if (isGuide) {
@@ -466,6 +503,7 @@ class ChannelService(
     }
 
     private fun stopCurrentActivity() {
+        sessionAttempt += 1
         reconnectJob?.cancel()
         reconnectJob = null
         _reconnectAttempt.value = 0

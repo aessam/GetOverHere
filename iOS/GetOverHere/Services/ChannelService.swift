@@ -67,6 +67,8 @@ final class ChannelService {
     private var guestCredential: SessionCredential?
     private var reconnectAttempt = 0
     private var reconnectTask: Task<Void, Never>?
+    /// Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20).
+    private var sessionAttempt: UInt64 = 0
 
     // MARK: - Computed
 
@@ -133,6 +135,7 @@ final class ChannelService {
     // MARK: - Channel Management
 
     func createChannel(name: String) {
+        sessionAttempt &+= 1
         let channel = Channel(
             id: UUID().uuidString,
             name: name,
@@ -145,10 +148,40 @@ final class ChannelService {
             return
         }
 
+        let code = SessionCredential.generateShortCode()
+        let attempt = sessionAttempt
+        Task { [weak self] in
+            guard let self else { return }
+            let credential: SessionCredential
+            do {
+                credential = try await Self.stretchCredential(shortCode: code, sessionID: sessionID)
+            } catch {
+                guard attempt == sessionAttempt else { return }
+                tourCode = nil
+                tourFeatureError = error.localizedDescription
+                Logger.channel.error("Cannot derive the tour credential")
+                return
+            }
+            guard attempt == sessionAttempt else { return }
+            startGuideSession(
+                channel: channel,
+                sessionID: sessionID,
+                participantID: participantID,
+                code: code,
+                credential: credential
+            )
+        }
+    }
+
+    private func startGuideSession(
+        channel: Channel,
+        sessionID: UUID,
+        participantID: UUID,
+        code: String,
+        credential: SessionCredential
+    ) {
         do {
-            let code = SessionCredential.generateShortCode()
-            let credential = try SessionCredential.derive(shortCode: code, sessionID: sessionID)
-            try contentStore.beginPack(packID: sessionID, displayName: name)
+            try contentStore.beginPack(packID: sessionID, displayName: channel.name)
             let emptyManifest = try contentStore.manifestPayload()
             tourControlService.configureSession(
                 sessionID: sessionID,
@@ -207,24 +240,49 @@ final class ChannelService {
     }
 
     func joinChannel(_ channel: Channel, tourCode rawTourCode: String) {
+        sessionAttempt &+= 1
         guard let sessionID = UUID(uuidString: channel.id),
               let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
             Logger.channel.error("Cannot join session with non-UUID channel or participant identity")
             return
         }
         let normalizedCode = SessionCredential.normalize(rawTourCode)
-        let credential: SessionCredential
-        do {
-            credential = try SessionCredential.derive(shortCode: normalizedCode, sessionID: sessionID)
-        } catch {
-            tourFeatureError = error.localizedDescription
-            return
-        }
         guard let hostIP = channel.audioHostIP else {
             tourFeatureError = "Guide network address is unavailable"
             Logger.channel.error("Cannot join session without a guide network address")
             return
         }
+        let attempt = sessionAttempt
+        Task { [weak self] in
+            guard let self else { return }
+            let credential: SessionCredential
+            do {
+                credential = try await Self.stretchCredential(shortCode: normalizedCode, sessionID: sessionID)
+            } catch {
+                guard attempt == sessionAttempt else { return }
+                tourFeatureError = error.localizedDescription
+                return
+            }
+            guard attempt == sessionAttempt else { return }
+            startGuestSession(
+                channel: channel,
+                hostIP: hostIP,
+                sessionID: sessionID,
+                participantID: participantID,
+                normalizedCode: normalizedCode,
+                credential: credential
+            )
+        }
+    }
+
+    private func startGuestSession(
+        channel: Channel,
+        hostIP: String,
+        sessionID: UUID,
+        participantID: UUID,
+        normalizedCode: String,
+        credential: SessionCredential
+    ) {
         stopCurrentActivity()
         offlineMapConfiguration = nil
         offlineMapStatus = .transferring
@@ -391,6 +449,7 @@ final class ChannelService {
     }
 
     func leaveChannel() {
+        sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
         if isGuide {
@@ -415,6 +474,12 @@ final class ChannelService {
     }
 
     // MARK: - Private
+
+    /// PBKDF2 stretch of the tour code (ADR-042) runs off the main actor; the core API stays synchronous.
+    @concurrent
+    private static func stretchCredential(shortCode: String, sessionID: UUID) async throws -> SessionCredential {
+        try SessionCredential.derive(shortCode: shortCode, sessionID: sessionID)
+    }
 
     private func startCapturing(plane: any AudioPlane, channelID: String) throws {
         let stream = try audioEngine.startCapture()
@@ -445,6 +510,7 @@ final class ChannelService {
     }
 
     private func stopCurrentActivity() {
+        sessionAttempt &+= 1
         reconnectTask?.cancel()
         reconnectTask = nil
         reconnectAttempt = 0
