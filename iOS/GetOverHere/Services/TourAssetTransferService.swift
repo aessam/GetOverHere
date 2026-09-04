@@ -55,6 +55,16 @@ final class TourAssetTransferService {
     }
 
     static let chunkSize = 65_536
+    /// The asset lane's per-peer writer holds 8 frames and disconnects on overflow
+    /// (`LocalSessionControlTransport`, ADR-039); two in-flight assets keep at most two 64 KiB chunks
+    /// queued per guest.
+    nonisolated static let maxInFlightRequests = 2
+    /// A checksum-mismatched asset is re-requested once from offset 0, then reported FAILED.
+    nonisolated static let maxTransferAttempts = 2
+    /// An in-flight request with no chunk for this long is reported FAILED and releases its slot
+    /// (DSCN-16); the guide has no failure frame for an unanswerable request. Nonisolated so the
+    /// `init` default argument can read it.
+    nonisolated static let inFlightDeadline: Duration = .seconds(15)
 
     private(set) var manifest: TourPackManifestPayload?
     private(set) var readyURLsByAssetID: [String: URL] = [:]
@@ -68,10 +78,22 @@ final class TourAssetTransferService {
     @ObservationIgnored private var sourcesByHash: [String: GuideSource] = [:]
     @ObservationIgnored private var readyHashesByParticipant: [UUID: Set<String>] = [:]
     @ObservationIgnored private var eventHandler: (@Sendable (TourAssetTransferEvent) -> Void)?
+    @ObservationIgnored private let requestDeadline: Duration
+    /// Guest request scheduler (FND-9): ordered unique hashes waiting for a slot, hashes with an
+    /// outstanding request, failed full-transfer counts, and the per-hash inactivity deadline.
+    @ObservationIgnored private var pendingHashes: [String] = []
+    @ObservationIgnored private var inFlightHashes: Set<String> = []
+    @ObservationIgnored private var transferAttempts: [String: Int] = [:]
+    @ObservationIgnored private var inFlightDeadlines: [String: Task<Void, Never>] = [:]
 
-    init(transport: SessionAssetTransport, cache: TourAssetCache) {
+    init(
+        transport: SessionAssetTransport,
+        cache: TourAssetCache,
+        inFlightDeadline: Duration = TourAssetTransferService.inFlightDeadline
+    ) {
         self.transport = transport
         self.cache = cache
+        requestDeadline = inFlightDeadline
         transport.setEventHandler { [weak self] event in
             Task { @MainActor [weak self] in
                 await self?.handle(event)
@@ -147,6 +169,7 @@ final class TourAssetTransferService {
         transport.stop()
         role = nil
         connectedParticipantIDs.removeAll()
+        resetGuestTransferQueue()
     }
 
     func clearSession() {
@@ -181,8 +204,11 @@ final class TourAssetTransferService {
             connectedParticipantIDs.remove(participantID)
             readyHashesByParticipant.removeValue(forKey: participantID)
             readyParticipantIDs.remove(participantID)
-        case .connected, .disconnected:
+        case .connected:
             break
+        case .disconnected:
+            // The guide re-sends the manifest on rejoin; the guest must re-request from a clean queue.
+            resetGuestTransferQueue()
         case let .versionMismatch(remoteMajor, localMajor):
             report("Tour protocol version mismatch (remote \(remoteMajor), local \(localMajor)). Update the older app.")
         case let .credentialRejected(message):
@@ -216,6 +242,7 @@ final class TourAssetTransferService {
             report(error)
             if role == .guest, let hash = hashIfAvailable(in: envelope) {
                 sendStatus(hash: hash, status: .failed, byteLength: 0, detail: error.localizedDescription)
+                await finishTransfer(hash)
             }
         }
     }
@@ -285,29 +312,114 @@ final class TourAssetTransferService {
         self.manifest = manifest
         eventHandler?(.manifestReceived(manifest))
 
-        var requestedHashes = Set<String>()
+        // Hashes still in flight from the previous manifest keep their slot and are not re-requested,
+        // which avoids a duplicate-chunk offsetMismatch; everything else is rebuilt from this manifest.
+        let wanted = Set(manifest.assets.map(\.sha256))
+        pendingHashes.removeAll()
+        for hash in inFlightHashes where !wanted.contains(hash) {
+            inFlightDeadlines.removeValue(forKey: hash)?.cancel()
+        }
+        inFlightHashes.formIntersection(wanted)
+        transferAttempts = transferAttempts.filter { wanted.contains($0.key) }
+
+        var seen = Set<String>()
         for descriptor in manifest.assets {
-            if let ready = try await cache.readyURL(
-                sha256: descriptor.sha256,
-                expectedLength: descriptor.byteLength
-            ) {
-                markReady(hash: descriptor.sha256, url: ready)
-                if requestedHashes.insert(descriptor.sha256).inserted {
+            guard seen.insert(descriptor.sha256).inserted, !inFlightHashes.contains(descriptor.sha256) else {
+                continue
+            }
+            // Every asset is isolated: one cache failure reports FAILED for that asset and the loop goes on.
+            do {
+                if let ready = try await cache.readyURL(
+                    sha256: descriptor.sha256,
+                    expectedLength: descriptor.byteLength
+                ) {
+                    markReady(hash: descriptor.sha256, url: ready)
                     sendStatus(
                         hash: descriptor.sha256,
                         status: .ready,
                         byteLength: descriptor.byteLength,
                         detail: ""
                     )
+                } else {
+                    pendingHashes.append(descriptor.sha256)
                 }
-            } else if requestedHashes.insert(descriptor.sha256).inserted {
-                let offset = try await cache.resumeOffset(
-                    sha256: descriptor.sha256,
-                    expectedLength: descriptor.byteLength
-                )
-                try sendRequest(hash: descriptor.sha256, offset: offset)
+            } catch {
+                report(error)
+                sendStatus(hash: descriptor.sha256, status: .failed, byteLength: 0, detail: error.localizedDescription)
             }
         }
+        await pumpRequests()
+    }
+
+    /// Starts requests until `maxInFlightRequests` are outstanding. The slot is reserved before the
+    /// cache await so a reentrant pump can never exceed the cap.
+    private func pumpRequests() async {
+        while inFlightHashes.count < Self.maxInFlightRequests, !pendingHashes.isEmpty {
+            let hash = pendingHashes.removeFirst()
+            guard let descriptor = manifest?.assets.first(where: { $0.sha256 == hash }) else {
+                fputs("Asset transfer: dropping pending hash \(hash) that is no longer in the manifest\n", stderr)
+                continue
+            }
+            inFlightHashes.insert(hash)
+            do {
+                let offset = try await cache.resumeOffset(sha256: hash, expectedLength: descriptor.byteLength)
+                try sendRequest(hash: hash, offset: offset)
+            } catch {
+                inFlightHashes.remove(hash)
+                inFlightDeadlines.removeValue(forKey: hash)?.cancel()
+                report(error)
+                sendStatus(hash: hash, status: .failed, byteLength: 0, detail: error.localizedDescription)
+            }
+        }
+    }
+
+    private func finishTransfer(_ hash: String) async {
+        inFlightHashes.remove(hash)
+        transferAttempts.removeValue(forKey: hash)
+        inFlightDeadlines.removeValue(forKey: hash)?.cancel()
+        await pumpRequests()
+    }
+
+    private func resetGuestTransferQueue() {
+        pendingHashes.removeAll()
+        inFlightHashes.removeAll()
+        transferAttempts.removeAll()
+        for task in inFlightDeadlines.values { task.cancel() }
+        inFlightDeadlines.removeAll()
+    }
+
+    /// Re-armed on every request for `hash`; cancelled when the transfer finishes or the queue resets.
+    private func armInFlightDeadline(hash: String) {
+        inFlightDeadlines[hash]?.cancel()
+        let deadline = requestDeadline
+        inFlightDeadlines[hash] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: deadline)
+            } catch is CancellationError {
+                return // the transfer finished, was re-armed, or the queue was reset
+            } catch {
+                fputs("Asset transfer: deadline sleep failed (\(String(describing: type(of: error))))\n", stderr)
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.expireInFlightRequest(hash: hash)
+        }
+    }
+
+    private func expireInFlightRequest(hash: String) async {
+        guard inFlightHashes.contains(hash) else { return }
+        inFlightDeadlines.removeValue(forKey: hash)
+        let detail = "no chunk received within \(Self.describe(requestDeadline))"
+        let assetID = manifest?.assets.first(where: { $0.sha256 == hash })?.assetID ?? hash
+        report("Asset \(assetID): \(detail)")
+        sendStatus(hash: hash, status: .failed, byteLength: 0, detail: detail)
+        await finishTransfer(hash)
+    }
+
+    private static func describe(_ duration: Duration) -> String {
+        let seconds = Double(duration.components.seconds)
+            + Double(duration.components.attoseconds) / 1e18
+        return String(format: "%g s", seconds)
     }
 
     private func handleGuestChunk(_ chunk: AssetChunkPayload) async throws {
@@ -322,8 +434,29 @@ final class TourAssetTransferService {
                 actual: chunk.totalLength
             )
         }
+        // Every chunk follows a request and every request reserves a slot, so the only chunk that
+        // arrives without one is a late answer after the inactivity deadline already reported FAILED.
+        guard inFlightHashes.contains(chunk.sha256) else {
+            fputs("Asset transfer: ignoring chunk for \(chunk.sha256) that is no longer in flight\n", stderr)
+            return
+        }
 
-        switch try await cache.ingest(chunk) {
+        let result: AssetCacheIngestResult
+        do {
+            result = try await cache.ingest(chunk)
+        } catch AssetCacheError.checksumMismatch(let expected, let actual) {
+            // The cache already deleted the partial, so a retry restarts at offset 0.
+            let failed = (transferAttempts[chunk.sha256] ?? 0) + 1
+            transferAttempts[chunk.sha256] = failed
+            guard failed < Self.maxTransferAttempts else {
+                throw AssetCacheError.checksumMismatch(expected: expected, actual: actual)
+            }
+            fputs("Asset transfer: checksum mismatch for \(chunk.sha256) (attempt \(failed) of \(Self.maxTransferAttempts)); re-requesting from offset 0\n", stderr)
+            try sendRequest(hash: chunk.sha256, offset: 0)
+            return
+        }
+
+        switch result {
         case let .partial(nextOffset):
             try sendRequest(hash: chunk.sha256, offset: nextOffset)
         case let .ready(url):
@@ -334,12 +467,14 @@ final class TourAssetTransferService {
                 byteLength: chunk.totalLength,
                 detail: ""
             )
+            await finishTransfer(chunk.sha256)
         }
     }
 
     private func sendRequest(hash: String, offset: UInt64) throws {
         let request = try AssetRequestPayload(sha256: hash, offset: offset)
         transport.send(kind: .assetRequest, payload: try request.encode(), to: nil)
+        armInFlightDeadline(hash: hash)
     }
 
     private func sendStatus(

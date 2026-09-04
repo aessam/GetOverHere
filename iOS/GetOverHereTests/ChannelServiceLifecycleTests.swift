@@ -427,6 +427,25 @@ struct ChannelServiceLifecycleTests {
         #expect(h.control.clearSessionCalls == 0)
     }
 
+    // MARK: - G5 FND-9
+
+    /// Inits are side-effect free: `NetworkCoordinator`/`LocalControlPlane` store fields,
+    /// `TourControlService(transport:)` only wraps the transport, `LocalGuidanceService()` creates
+    /// no manager until `start()`, and the fake engine never touches AVAudioEngine.
+    @Test("Asset transfer failure surfaces in tourFeatureError")
+    @MainActor
+    func assetTransferFailureSurfacesInTourFeatureError() async throws {
+        let h = try Harness()
+        defer { h.close() }
+        #expect(h.service.tourFeatureError == nil)
+
+        h.asset.emit(.failed("Asset lane failed"))
+
+        try await waitUntil("asset failure surfaced", timeout: .seconds(2)) {
+            h.service.tourFeatureError == "Asset lane failed"
+        }
+    }
+
     // MARK: - Helpers
 
     @MainActor

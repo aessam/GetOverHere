@@ -840,6 +840,17 @@ private fun ListenerView(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
+        // FAILED already renders the reason in the header status line (ADR-041).
+        if (connectionState != SessionConnectionState.FAILED) {
+            tourFeatureError?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,

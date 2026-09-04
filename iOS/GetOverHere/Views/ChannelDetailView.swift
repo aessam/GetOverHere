@@ -307,6 +307,12 @@ struct ChannelDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                // FAILED already renders the reason in the header status line (ADR-041).
+                if service.connectionState != .failed, let error = service.tourFeatureError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
             .padding(.horizontal)
             HStack {

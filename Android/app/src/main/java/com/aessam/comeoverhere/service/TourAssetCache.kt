@@ -12,7 +12,10 @@ sealed class AssetCacheIngestResult {
     data class Ready(val file: File) : AssetCacheIngestResult()
 }
 
-class AssetCacheException(message: String) : IllegalArgumentException(message)
+open class AssetCacheException(message: String) : IllegalArgumentException(message)
+
+/** A complete transfer whose bytes do not hash to the requested SHA-256; the partial was deleted. */
+class AssetChecksumMismatchException(message: String) : AssetCacheException(message)
 
 interface TourAssetCache {
     fun readyFile(sha256: String, expectedLength: Long): File?
@@ -40,10 +43,16 @@ class FileTourAssetCache(
     override fun readyFile(sha256: String, expectedLength: Long): File? {
         val file = completeFile(sha256)
         if (!file.exists()) return null
-        if (file.length() != expectedLength) {
-            throw AssetCacheException(
-                "Asset length mismatch: expected $expectedLength, got ${file.length()}",
+        val actual = file.length()
+        if (actual != expectedLength) {
+            // Repair locally and report missing; a failed delete still throws (loud).
+            if (!file.delete()) {
+                throw AssetCacheException("Could not delete length-mismatched complete ${file.path}")
+            }
+            System.err.println(
+                "Asset cache: removed length-mismatched complete entry $sha256 (expected $expectedLength, got $actual)",
             )
+            return null
         }
         return file
     }
@@ -58,7 +67,8 @@ class FileTourAssetCache(
             if (!partial.delete()) {
                 throw AssetCacheException("Could not delete oversized partial ${partial.path}")
             }
-            throw AssetCacheException("Asset length mismatch: expected $expectedLength, got $actual")
+            System.err.println("Asset cache: removed oversized partial $sha256 (expected $expectedLength, got $actual)")
+            return 0
         }
         return actual
     }
@@ -89,7 +99,7 @@ class FileTourAssetCache(
                     "Asset checksum mismatch and partial could not be deleted: expected ${chunk.sha256}, got $actualHash",
                 )
             }
-            throw AssetCacheException("Asset checksum mismatch: expected ${chunk.sha256}, got $actualHash")
+            throw AssetChecksumMismatchException("Asset checksum mismatch: expected ${chunk.sha256}, got $actualHash")
         }
 
         val complete = completeFile(chunk.sha256)

@@ -142,7 +142,8 @@ final class ChannelService {
                     self?.refreshOfflineMap()
                 case .participantReady:
                     break
-                case .failed:
+                case let .failed(message):
+                    self?.tourFeatureError = message
                     Logger.channel.error("Tour asset transfer failed")
                 }
             }

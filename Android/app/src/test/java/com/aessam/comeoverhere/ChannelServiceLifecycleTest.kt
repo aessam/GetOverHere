@@ -6,6 +6,7 @@ import com.aessam.comeoverhere.core.BLECommand
 import com.aessam.comeoverhere.core.Channel
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.core.NetworkCoordinator
+import com.aessam.comeoverhere.core.SessionAssetEvent
 import com.aessam.comeoverhere.core.SessionControlEvent
 import com.aessam.comeoverhere.service.ChannelService
 import com.aessam.comeoverhere.service.FileTourAssetCache
@@ -433,6 +434,26 @@ class ChannelServiceLifecycleTest {
                 h.service.tourFeatureError.value == "Microphone capture stopped"
             }
             assertEquals("control and asset lanes stay up (DSCN-12)", ListenState.BROADCASTING, h.service.listenState.value)
+            assertTrue(h.uncaught.isEmpty())
+        } finally {
+            h.close()
+        }
+    }
+
+    // MARK: - G5 FND-9
+
+    /** Passes before G5 on Android (ChannelService.kt already stored `event.message`); pins parity with iOS. */
+    @Test
+    fun assetTransferFailureSurfacesInTourFeatureError() {
+        val h = Harness()
+        try {
+            assertNull(h.service.tourFeatureError.value)
+
+            h.asset.emit(SessionAssetEvent.Failed("Asset lane failed"))
+
+            awaitCondition("asset failure surfaced", timeoutMillis = 2_000) {
+                h.service.tourFeatureError.value == "Asset lane failed"
+            }
             assertTrue(h.uncaught.isEmpty())
         } finally {
             h.close()
