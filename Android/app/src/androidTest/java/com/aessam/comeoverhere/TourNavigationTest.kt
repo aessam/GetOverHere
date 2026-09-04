@@ -14,6 +14,8 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import com.aessam.toursession.TourVisualMode
+import com.aessam.comeoverhere.service.SessionConnectionState
+import java.net.ServerSocket
 
 class TourNavigationTest {
     @get:Rule(order = 0)
@@ -25,6 +27,25 @@ class TourNavigationTest {
 
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
+
+    @Test
+    fun failedStartupShowsReasonOnChannelList() {
+        // Force the production control listener to fail before publishing a tour.
+        ServerSocket(50_001).use {
+            composeRule.onNodeWithContentDescription("Create Channel").performClick()
+            composeRule.onNodeWithText("Channel name").performTextInput("Startup failure")
+            composeRule.onNodeWithText("Create").performClick()
+            composeRule.waitUntil(10_000) {
+                channelService().connectionState.value == SessionConnectionState.FAILED
+            }
+            composeRule.onNodeWithText("Could not start tour").assertIsDisplayed()
+            val reason = requireNotNull(channelService().tourFeatureError.value)
+            assertTrue(reason.contains("bind/listen failed"))
+            composeRule.onNodeWithText(reason).assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Create Channel").assertIsDisplayed()
+            assertEquals(null, channelService().activeChannelID.value)
+        }
+    }
 
     @Test
     fun guideCanReachSlidesMapAndPointerWithoutLegacyConfiguration() {

@@ -358,6 +358,14 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                     )
                 }
             } else {
+                if (connectionState == SessionConnectionState.FAILED) {
+                    tourFeatureError?.let { error ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                            Text("Could not start tour", style = MaterialTheme.typography.titleSmall)
+                            Text(error, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
                 ChannelListView(channels, vm.localPeerID) { channel ->
                     pendingJoinChannel = channel
                     joinCode = ""

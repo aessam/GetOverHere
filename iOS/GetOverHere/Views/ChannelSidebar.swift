@@ -10,6 +10,14 @@ struct ChannelSidebar: View {
 
     var body: some View {
         List {
+            if service.activeChannelID == nil, service.connectionState == .failed,
+               let error = service.tourFeatureError {
+                Section("Could not start tour") {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("tourStartupError")
+                }
+            }
             // Available megaphones
             if service.channels.isEmpty {
                 emptyState

@@ -1,7 +1,7 @@
 # GetOverHere Execution Plan
 
 **Date:** 2026-08-22
-**Status:** Approved with the 2026-08-22 review amendments. P0 remains the first execution checkpoint.
+**Status:** P0 complete. P3 LAN software hardening through G6 is implemented; the P3 physical acceptance gate remains next, before P1. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).
 
 ## Intent
 
@@ -103,7 +103,7 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 
 ### P3 — Harden transport-neutral payloads and replace raw PCM/TCP audio
 
-**Progress:** The software integration is complete on the LAN floor as of 2026-08-27. Realtime, control, and asset lanes use encrypted GOH2 v3; audio negotiates native Opus then AAC-LC, accumulates PCM16 into codec frames, applies sequence/expiry metadata, compensates for cross-device clock offset, and decodes through a bounded jitter buffer. Swift/Kotlin wire fixtures, LAN loopbacks, the source audit, the full iOS Simulator suite, and three native Android emulator tests pass. Physical codec, RF, latency, background, thermal, and battery gates remain pending. Actual byte-identical delivery of one sealed frame across concurrent LAN/Aware/BLE routes remains a P6 integration gate; unqualified Aware/Multipeer audio fails closed meanwhile.
+**Progress:** LAN software integration landed August 27 and G1–G6 hardening landed September 3–4. Realtime, control, and asset lanes now use encrypted GOH2 v4 with PBKDF2-stretched tour credentials; audio negotiates native Opus then AAC-LC, accumulates PCM16 into codec frames, applies sequence/expiry metadata, compensates for cross-device clock offset, and decodes through a bounded, clock-driven jitter buffer. The latest recorded G6 gate passed Swift/Kotlin wire fixtures, LAN loopbacks, the source audit, 74 Android JVM tests, and 82 iOS tests. The first hosted core-parity CI run remains unverified. Physical codec, RF, latency, background, thermal, and battery gates remain pending. Actual byte-identical delivery of one sealed frame across concurrent LAN/Aware/BLE routes remains a P6 integration gate; unqualified Aware audio fails closed and retired Multipeer code has been deleted.
 
 - Lock the frame rules before fixtures: one logical frame is encrypted exactly once at creation, then the byte-identical sealed frame is routed one or many times. Socket writers never encrypt or choose nonces.
 - Make the encrypted protocol a hard version break. A legacy or unsupported major produces an explicit version-mismatch event and user state rather than a generic connection/radio failure.

@@ -5,13 +5,13 @@ Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product c
 ## Current implemented architecture
 
 - Discovery: Bonjour (`LocalControlPlane.swift`) and Android NSD (`LocalControlPlane.kt`) on a shared local Wi-Fi LAN. Internet is not required.
-- Realtime lane: TCP port 50000, guide Float32 PCM audio to authenticated guests.
+- Realtime lane: TCP port 50000, encrypted GOH2 v4 encoded audio (native Opus or AAC-LC); the local capture/playback boundary is PCM16.
 - Control lane: TCP port 50001, authoritative presentation, target, bearing, membership, and recovery state.
 - Asset lane: TCP port 50002, request-driven 64 KiB chunks with resume, length checks, and SHA-256 verification.
 - Admission: a random per-tour short code derives nonce-based mutual proofs independently for every lane.
 - State: `TourSessionCore` Swift package and `:tour-session-core` Kotlin module must emit identical GOH2 bytes.
 
-`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. The handshake authenticates admission but does not encrypt application payloads. Do not claim otherwise.
+`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. Admission uses mutual proofs derived from a PBKDF2-stretched tour code. Application payloads on all three LAN lanes are separately authenticated and encrypted as GOH2 v4 sealed frames.
 
 BLE control-plane files remain compiled experimental code but are not selected by `NetworkCoordinator`; LocalOnlyHotspot, RAFT leader election, Multipeer, and the chat/file/walkie-talkie stubs were deleted (ADR-050). Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
 

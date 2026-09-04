@@ -54,6 +54,31 @@ final class GetOverHereUITests: XCTestCase {
     }
 
     @MainActor
+    func testFailedStartupShowsReasonOnChannelList() throws {
+#if targetEnvironment(simulator)
+        // Exercise the real startup rollback: simulator microphone capture is unsupported.
+        let app = XCUIApplication()
+        app.launch()
+        let addButton = app.buttons["Add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.tap()
+        let channelName = app.textFields["e.g., Tour Group, Lecture Hall"]
+        XCTAssertTrue(channelName.waitForExistence(timeout: 3))
+        channelName.tap()
+        channelName.typeText("Startup failure")
+        app.buttons["Create"].tap()
+
+        let error = app.staticTexts["tourStartupError"]
+        XCTAssertTrue(error.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(error.label.isEmpty)
+        XCTAssertFalse(app.segmentedControls.firstMatch.exists, "Failed startup must not show a live tour")
+        XCTAssertTrue(addButton.exists, "The user must be able to retry")
+#else
+        throw XCTSkip("Uses the simulator's real unsupported-capture failure")
+#endif
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
