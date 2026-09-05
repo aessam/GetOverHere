@@ -449,7 +449,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
 }
 
 @Composable
-private fun ChannelListView(
+internal fun ChannelListView(
     channels: List<Channel>,
     localPeerID: String,
     onJoin: (Channel) -> Unit
@@ -469,6 +469,7 @@ private fun ChannelListView(
                 headlineContent = { Text(channel.name) },
                 supportingContent = {
                     Text(if (channel.createdBy == localPeerID) "Your megaphone"
+                        else if (channel.audioHostIP == null) "Nearby via Bluetooth · Audio unavailable"
                         else if (channel.isRoomLocked) "Locked room" else "Open room")
                 },
                 leadingContent = {
@@ -481,12 +482,12 @@ private fun ChannelListView(
                 trailingContent = {
                     Icon(
                         Icons.Default.Circle,
-                        contentDescription = "Live",
+                        contentDescription = if (channel.audioHostIP == null && channel.createdBy != localPeerID) "Discovery only" else "Live",
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(8.dp)
                     )
                 },
-                modifier = Modifier.clickable { onJoin(channel) }
+                modifier = Modifier.clickable(enabled = channel.audioHostIP != null || channel.createdBy == localPeerID) { onJoin(channel) }
             )
         }
     }
@@ -505,7 +506,8 @@ private fun EmptyState(onCreate: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text("No megaphones nearby", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
-            Text("Create one to start broadcasting", color = MaterialTheme.colorScheme.outline)
+            Text("Keep Bluetooth on and allow Nearby devices permission to discover rooms.",
+                modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline)
             Spacer(Modifier.height(24.dp))
             Button(onClick = onCreate) { Text("Create Megaphone") }
         }

@@ -1,8 +1,9 @@
 import Foundation
 import os
+import TourSessionCore
 
-/// Serverless local-LAN discovery using Bonjour.
-/// Each live channel is advertised as a `_goh-audio._tcp` service on the local network.
+/// Bonjour plus read-only Bluetooth room discovery. Only Bonjour supplies a join address.
+/// Each live channel is advertised as a `_goh-audio._tcp` service and Bluetooth GOR1 metadata.
 @Observable
 final class LocalControlPlane: NSObject, ControlPlane {
     let localPeer: PeerInfo
@@ -18,6 +19,8 @@ final class LocalControlPlane: NSObject, ControlPlane {
     private var publishedServices: [String: NetService] = [:]
     private var discoveredServices: [String: NetService] = [:]
     private var peerByChannelID: [String: PeerInfo] = [:]
+    private let bluetooth: any BluetoothRoomDiscoveryInterface
+    private var discoveryIndex = RoomDiscoveryIndex()
 
     private static let serviceType = "_goh-audio._tcp."
     private static let audioPort = 50000
@@ -29,12 +32,26 @@ final class LocalControlPlane: NSObject, ControlPlane {
         static let platform = "platform"
     }
 
-    init(displayName: String) {
+    init(displayName: String, bluetooth: (any BluetoothRoomDiscoveryInterface)? = nil) {
         self.localPeer = PeerInfo(displayName: displayName, platform: .ios)
+        self.bluetooth = bluetooth ?? BluetoothRoomDiscovery()
         (commands, commandCont) = AsyncStream.makeStream()
         (peerEvents, peerCont) = AsyncStream.makeStream()
         super.init()
         browser.delegate = self
+        self.bluetooth.onRoom = { [weak self] record in
+            guard let self, record.guideID != UUID(uuidString: self.localPeer.id) else { return }
+            let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
+                                platform: record.isAndroid ? .android : .ios)
+            let value = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
+                channelName: record.name, createdBy: peer.id, audioQuality: .standard,
+                wifiSSID: nil, audioHostIP: nil, roomAdmissionVersion: 1, isRoomLocked: record.isLocked)
+            self.emit(self.discoveryIndex.update(value, peer: peer, source: .bluetooth))
+        }
+        self.bluetooth.onLost = { [weak self] id in
+            guard let self else { return }
+            self.emit(self.discoveryIndex.remove(id.uuidString, source: .bluetooth))
+        }
     }
 
     deinit {
@@ -44,11 +61,14 @@ final class LocalControlPlane: NSObject, ControlPlane {
     }
 
     func start() {
+        bluetooth.start()
         browser.searchForServices(ofType: Self.serviceType, inDomain: "local.")
         Logger.transport.info("Local control plane started")
     }
 
     func stop() {
+        bluetooth.stop()
+        discoveryIndex = RoomDiscoveryIndex()
         browser.stop()
         for service in publishedServices.values {
             service.stop()
@@ -77,6 +97,10 @@ final class LocalControlPlane: NSObject, ControlPlane {
     }
 
     private func publishChannel(_ announce: BLECommand.ChannelAnnounce) {
+        if let roomID = UUID(uuidString: announce.channelID), let guideID = UUID(uuidString: announce.createdBy) {
+            bluetooth.publish(BluetoothRoomRecord(roomID: roomID, guideID: guideID, name: announce.channelName,
+                isAndroid: false, isLocked: announce.isRoomLocked ?? true))
+        }
         let txtData = NetService.data(fromTXTRecord: [
             TXTKey.channelName: Data(announce.channelName.utf8),
             TXTKey.createdBy: Data(announce.createdBy.utf8),
@@ -101,6 +125,7 @@ final class LocalControlPlane: NSObject, ControlPlane {
     }
 
     private func unpublishChannel(channelID: String) {
+        bluetooth.publish(nil)
         publishedServices.removeValue(forKey: channelID)?.stop()
         Logger.transport.info("Unpublished local channel")
     }
@@ -136,7 +161,13 @@ final class LocalControlPlane: NSObject, ControlPlane {
             roomAdmissionVersion: txt["admission"].flatMap { String(data: $0, encoding: .utf8) }.flatMap(Int.init),
             isRoomLocked: txt["locked"] != Data("0".utf8)
         )
-        commandCont.yield((.channelAnnounce(announce: announce), peer))
+        emit(discoveryIndex.update(announce, peer: peer, source: .lan))
+    }
+
+    private func emit(_ observation: (BLECommand, PeerInfo)?) {
+        guard let observation else { return }
+        connectedPeers = discoveryIndex.peers
+        commandCont.yield(observation)
     }
 
     private func ipv4Address(for service: NetService) -> String? {
@@ -170,9 +201,8 @@ extension LocalControlPlane: NetServiceBrowserDelegate {
     func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
         discoveredServices.removeValue(forKey: service.name)?.stopMonitoring()
         if let peer = peerByChannelID.removeValue(forKey: service.name) {
-            connectedPeers.removeAll { $0.id == peer.id }
-            peerCont.yield(.disconnected(peer))
-            commandCont.yield((.channelUnavailable(channelID: service.name), peer))
+            emit(discoveryIndex.remove(service.name, source: .lan))
+            if !connectedPeers.contains(where: { $0.id == peer.id }) { peerCont.yield(.disconnected(peer)) }
         }
     }
 }

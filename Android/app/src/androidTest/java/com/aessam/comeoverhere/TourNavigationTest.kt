@@ -16,6 +16,7 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import com.aessam.toursession.TourVisualMode
+import com.aessam.comeoverhere.core.BluetoothRoomDiscovery
 import com.aessam.comeoverhere.service.SessionConnectionState
 import java.net.ServerSocket
 
@@ -25,6 +26,7 @@ class TourNavigationTest {
         GrantPermissionRule.grant(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION,
+            *BluetoothRoomDiscovery.requiredPermissions(),
         )
 
     @get:Rule(order = 1)

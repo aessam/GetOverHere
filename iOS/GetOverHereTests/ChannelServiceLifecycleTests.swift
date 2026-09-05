@@ -166,6 +166,23 @@ struct ChannelServiceLifecycleTests {
 
     // MARK: - FND-8
 
+    @Test("Bluetooth-only discovery cannot restart an authenticated LAN session")
+    @MainActor
+    func bluetoothObservationPreservesActiveSession() async throws {
+        let h = try Harness()
+        defer { h.close() }
+        let channel = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        h.resetClearSessionBaselines()
+        h.controlPlane.emit(.channelAnnounce(announce: BLECommand.ChannelAnnounce(
+            channelID: channel.id, channelName: "Bluetooth room", createdBy: channel.createdBy,
+            audioQuality: .standard, wifiSSID: nil, audioHostIP: nil)))
+        try await waitUntil("Bluetooth metadata applied") { h.service.channels.first?.name == "Bluetooth room" }
+        #expect(h.control.startGuestCalls == 1)
+        #expect(h.control.clearSessionCalls == 0)
+        #expect(h.service.connectionState == .connected)
+    }
+
     @Test("End Tour flushes the leave off the main actor and clears lanes after delivery")
     @MainActor
     func endTourFlushesLeaveOffMainAndClearsAfterDelivery() async throws {

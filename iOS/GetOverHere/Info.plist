@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth discovers nearby tour rooms even when Wi-Fi is off. Discovery does not share your location.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

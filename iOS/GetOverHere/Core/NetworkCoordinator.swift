@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// Serverless local-LAN coordinator.
-/// Discovery uses Bonjour; audio uses direct TCP between peers on the same Wi-Fi network.
+/// Discovery uses Bonjour and Bluetooth; audio still uses direct TCP over a shared LAN.
 @Observable
 final class NetworkCoordinator {
     let controlPlane: any ControlPlane

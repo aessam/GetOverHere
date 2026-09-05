@@ -14,15 +14,17 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.NetworkInterface
 import java.util.UUID
+import com.aessam.toursession.BluetoothRoomRecord
 
 /**
- * Serverless local-LAN discovery using Android NSD.
- * Each live channel is advertised as a `_goh-audio._tcp` service on the local network.
+ * NSD plus read-only Bluetooth room discovery. Only NSD supplies a join address.
+ * Live channels publish `_goh-audio._tcp` and public Bluetooth GOR1 metadata.
  */
 @SuppressLint("NewApi")
 class LocalControlPlane(
     context: Context,
-    displayName: String
+    displayName: String,
+    private val bluetooth: BluetoothRoomDiscoveryInterface = BluetoothRoomDiscovery(context),
 ) : ControlPlane {
 
     override val localPeer = PeerInfo(
@@ -65,6 +67,28 @@ class LocalControlPlane(
 
     private val publishedServices = mutableMapOf<String, Pair<NsdServiceInfo, NsdManager.RegistrationListener>>()
     private val peerByChannelID = mutableMapOf<String, PeerInfo>()
+    private var discoveryIndex = RoomDiscoveryIndex()
+
+    init {
+        bluetooth.onRoom = { record ->
+            if (record.guideID != UUID.fromString(localPeer.id)) {
+                val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
+                    if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
+                emit(discoveryIndex.update(BLECommand.ChannelAnnounce(
+                    channelID = record.roomID.toString(), channelName = record.name, createdBy = peer.id,
+                    audioQuality = AudioQuality.STANDARD, wifiSSID = null, audioHostIP = null,
+                    roomAdmissionVersion = 1, isRoomLocked = record.isLocked,
+                ), peer, RoomDiscoveryIndex.Source.BLUETOOTH))
+            }
+        }
+        bluetooth.onLost = { emit(discoveryIndex.remove(it.toString(), RoomDiscoveryIndex.Source.BLUETOOTH)) }
+    }
+
+    private fun emit(observation: Pair<BLECommand, PeerInfo>?) {
+        if (observation == null) return
+        _connectedPeers.value = discoveryIndex.peers
+        if (!_commands.tryEmit(observation)) Log.e(TAG, "Room discovery event queue is full")
+    }
 
     companion object {
         private const val TAG = "LocalControlPlane"
@@ -95,6 +119,9 @@ class LocalControlPlane(
         }
 
         override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+            if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+                legacyHandler.post { onServiceFound(serviceInfo) }; return
+            }
             if (normalizeServiceType(serviceInfo.serviceType) != normalizeServiceType(SERVICE_TYPE)) return
             if (publishedServices.containsKey(serviceInfo.serviceName)) return
             Log.i(TAG, "Found local service")
@@ -119,23 +146,28 @@ class LocalControlPlane(
         }
 
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+            if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+                legacyHandler.post { onServiceLost(serviceInfo) }; return
+            }
             legacyServices.remove(serviceInfo.serviceName)
             if (Build.VERSION.SDK_INT >= 34) {
                 serviceCallbacks.remove(serviceInfo.serviceName)?.let(nsdManager::unregisterServiceInfoCallback)
             }
             val peer = peerByChannelID.remove(serviceInfo.serviceName) ?: return
-            _connectedPeers.value = _connectedPeers.value.filter { it.id != peer.id }
-            _peerEvents.tryEmit(PeerEvent.Disconnected(peer))
-            _commands.tryEmit(BLECommand.ChannelUnavailable(channelID = serviceInfo.serviceName) to peer)
+            emit(discoveryIndex.remove(serviceInfo.serviceName, RoomDiscoveryIndex.Source.LAN))
+            if (_connectedPeers.value.none { it.id == peer.id }) _peerEvents.tryEmit(PeerEvent.Disconnected(peer))
         }
     }
 
     override fun start() {
+        bluetooth.start()
         nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
         if (Build.VERSION.SDK_INT < 34) legacyHandler.post(legacyRefresh)
     }
 
     override fun stop() {
+        bluetooth.stop()
+        discoveryIndex = RoomDiscoveryIndex()
         legacyHandler.removeCallbacks(legacyRefresh)
         legacyServices.clear()
         legacyResolveInFlight = false
@@ -173,6 +205,8 @@ class LocalControlPlane(
     }
 
     private fun publishChannel(announce: BLECommand.ChannelAnnounce) {
+        bluetooth.publish(BluetoothRoomRecord(UUID.fromString(announce.channelID), UUID.fromString(announce.createdBy),
+            announce.channelName, true, announce.isRoomLocked ?: true))
         desiredAnnouncements[announce.channelID] = announce
         if (updatingRegistrations.contains(announce.channelID)) return
         publishedServices[announce.channelID]?.let { (info, listener) ->
@@ -229,6 +263,7 @@ class LocalControlPlane(
     }
 
     private fun unpublishChannel(channelID: String) {
+        bluetooth.publish(null)
         desiredAnnouncements.remove(channelID)
         if (updatingRegistrations.contains(channelID)) return
         val (_, listener) = publishedServices.remove(channelID) ?: return
@@ -246,6 +281,9 @@ class LocalControlPlane(
         }
 
         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+            if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+                legacyHandler.post { onServiceResolved(serviceInfo) }; return
+            }
             legacyResolveInFlight = false
             val createdBy = serviceInfo.attributes[TXT_CREATED_BY]?.decodeToString() ?: return
             if (createdBy == localPeer.id) return
@@ -265,7 +303,7 @@ class LocalControlPlane(
                 _peerEvents.tryEmit(PeerEvent.Connected(peer))
             }
 
-            _commands.tryEmit(
+            emit(discoveryIndex.update(
                 BLECommand.ChannelAnnounce(
                     channelID = serviceInfo.serviceName,
                     channelName = channelName,
@@ -275,8 +313,8 @@ class LocalControlPlane(
                     audioHostIP = hostIP,
                     roomAdmissionVersion = serviceInfo.attributes["admission"]?.decodeToString()?.toIntOrNull(),
                     isRoomLocked = serviceInfo.attributes["locked"]?.decodeToString() != "0",
-                ) to peer
-            )
+                ), peer, RoomDiscoveryIndex.Source.LAN
+            ))
         }
     }
 

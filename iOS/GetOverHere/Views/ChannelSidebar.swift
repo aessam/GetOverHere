@@ -36,6 +36,7 @@ struct ChannelSidebar: View {
                             channelRow(channel)
                         }
                         .buttonStyle(.plain)
+                        .disabled(channel.audioHostIP == nil && channel.createdBy != service.localPeer.id)
                     }
                 }
             }
@@ -99,7 +100,8 @@ struct ChannelSidebar: View {
                 Text(channel.name)
                     .font(.body.bold())
                     .lineLimit(1)
-                Text(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "Your megaphone" : "Live")
+                Text(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "Your megaphone"
+                     : channel.audioHostIP == nil ? "Nearby via Bluetooth · Audio unavailable" : "Live")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -109,7 +111,7 @@ struct ChannelSidebar: View {
             if channel.isRoomLocked { Image(systemName: "lock.fill").accessibilityLabel("Locked room") }
 
             Circle()
-                .fill(.red)
+                .fill(channel.audioHostIP == nil && channel.createdBy != service.localPeer.id ? .orange : .red)
                 .frame(width: 8, height: 8)
         }
     }
@@ -121,7 +123,7 @@ struct ChannelSidebar: View {
                 .foregroundStyle(.secondary)
             Text("No megaphones nearby")
                 .font(.headline)
-            Text("Create one to start broadcasting")
+            Text("Keep Bluetooth on and allow Bluetooth access to find nearby rooms. Create one to start broadcasting.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

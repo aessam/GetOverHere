@@ -7,6 +7,8 @@ Rooms now start open. Both apps have `Lock Room with Code`, a guide-editable cod
 The Android native-audio crash is fixed (ADR-053): Android builds documented codec initialization instead of consuming Apple's opaque cookie, converts actual 48 kHz Opus output to the 16 kHz playback contract, and safely releases failed decoders. Regression fixtures use real production Apple-encoded Opus/AAC packets; direct decoding checks duration, tone frequency, and non-silence, and encrypted-transport replay passes on the Pixel and emulator. The full virtual-device gate passes. This is not a sustained live two-phone listening result: physical endurance and Aware/BLE gates below remain pending.
 
 **Date:** 2026-08-22
+**Bluetooth discovery checkpoint (September 4):** The LAN baseline is tagged `stable-local-network` at `59b0402` (annotation: `Stable Local Network`). The first Bluetooth slice now adds read-only room metadata to production discovery on both apps (ADR-054). Bluetooth-only rooms show `Audio unavailable` and cannot join; Bluetooth admission/control/audio are not implemented. Software gates pass, but the required Wi-Fi-off two-phone discovery test is pending: reconnect Pixel `66180DLKX006ND` and unlock Dark knight. Verify both guide directions, lock/unlock metadata, end/expiry, Bluetooth power recovery, and LAN/BLE dedup before advancing to encrypted BLE admission/control. Do not move the stable LAN tag to this unqualified radio checkpoint.
+
 **Status:** P0 complete. P3 LAN software hardening through G6 is implemented; the P3 physical acceptance gate remains next, before P1. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).
 
 ## Intent

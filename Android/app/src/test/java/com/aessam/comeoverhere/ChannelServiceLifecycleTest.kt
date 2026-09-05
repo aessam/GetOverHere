@@ -171,6 +171,20 @@ class ChannelServiceLifecycleTest {
 
     // MARK: - FND-8
 
+    @Test fun bluetoothObservationPreservesActiveSession() {
+        val h = Harness()
+        try {
+            val channel = h.discoverAndJoin()
+            h.connectGuest()
+            h.resetClearSessionBaselines()
+            h.controlPlane.emit(announce(channel, "10.0.0.1").copy(channelName = "Bluetooth room", audioHostIP = null))
+            awaitCondition("Bluetooth metadata applied") { h.service.channels.value.first().name == "Bluetooth room" }
+            assertEquals(1, h.control.startGuestCalls)
+            assertEquals(0, h.control.clearSessionCalls)
+            assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+        } finally { h.close() }
+    }
+
     @Test
     fun endTourFlushesLeaveOffMainAndClearsAfterDelivery() {
         val h = Harness()

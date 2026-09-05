@@ -826,6 +826,7 @@ class ChannelService(
 
                             if (_activeChannelID.value == updated.id &&
                                 _listenState.value == ListenState.LISTENING &&
+                                updated.audioHostIP != null &&
                                 existing.audioHostIP != updated.audioHostIP) {
                                 // Discovery may only reconfigure the existing credential (FND-6, ADR-036).
                                 restartGuestTransports(updated)

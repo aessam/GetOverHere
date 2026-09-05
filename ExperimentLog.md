@@ -1012,3 +1012,38 @@ JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/
 - `bash -n scripts/generate_native_codec_fixture.sh scripts/verify_native_codec_interop.sh` and `git diff --check` passed.
 
 The reproduced initialization/cleanup crash is fixed. These results do not establish audible quality, sustained two-phone endurance, reverse-direction acceptance, or Aware/BLE readiness. No raw microphone recording or physical-device log is committed.
+
+## 2026-09-04 — Stable LAN tag and Bluetooth discovery slice (ADR-054)
+
+The user approved the first discovery slice and requested a stable checkpoint. The tree was clean at `59b0402c91cfabb3eb839800b2b8521be90854e0`; no empty commit was created. `git tag -a stable-local-network 59b0402c91cfabb3eb839800b2b8521be90854e0 -m 'Stable Local Network'` created the requested annotated local tag. It remains on the LAN/audio-fix baseline and was not pushed or moved to the Bluetooth work.
+
+Affected ownership: new `BluetoothRoomRecord` in each shared core; new `BluetoothRoomDiscovery` and `RoomDiscoveryIndex` in each app's Core; `LocalControlPlane` owns both discovery sources; `ChannelService` protects existing sessions against address-less observations; both room-list UIs distinguish discovery-only rooms; platform permission declarations and Android's permission prompt enable the radio. `NetworkCoordinator` still constructs `LocalControlPlane`; no other discovery call site selects the legacy BLE command channel. No admission/audio transport contract changed.
+
+Software commands:
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios scripts/verify_bluetooth_discovery.sh
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'generic/platform=iOS' -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates build
+```
+
+- Focused discovery gate passed (`/tmp/GetOverHere-bluetooth-gate.log`). Early compilation failures corrected: Kotlin `isEmpty` needed a call; Swift Testing's `#require` cannot capture a mutating struct receiver, so mutations are evaluated before assertions. These were compile failures, not physical-radio failures.
+- Full virtual gate passed twice (`/tmp/GetOverHere-bluetooth-full-virtual.log`, `/tmp/GetOverHere-bluetooth-final-virtual.log`), including host core/wire/source/privacy checks, Android lint/APK, full iOS unit/integration and UI suites, and emulator instrumentation.
+- Final full-run counts: 39 Swift core tests; 85 Android app JVM tests, zero failures/errors from JUnit XML; iOS unit/integration result `Test-GetOverHere-2026.09.04_20-49-28--0700.xcresult` reports 90 passing methods (92 parameterized runs), zero failures/skips. UI result `Test-GetOverHere-2026.09.04_20-50-36--0700.xcresult` reports three passing methods (six runs), one physical-guide skip, zero failures. Android emulator XML has 20 cases, 18 pass, two hardware-earpiece skips, zero failures/errors; Gradle's console double-counts skipped callbacks and prints 22.
+- New coverage: identical Swift/Kotlin GOR1 hex fixture, 100 Unicode roundtrips per platform and maximum-length input, malformed/truncated records, LAN preference, source-loss fallback/deduplication, unresolved-LAN filtering, production Bluetooth observation forwarding, active-session preservation, and an actual Compose UI assertion that a Bluetooth-only room is visible but cannot invoke Join until a LAN address resolves.
+- Signed iPhone build passed (`/tmp/GetOverHere-bluetooth-physical-build.log`, later `/tmp/GetOverHere-bluetooth-final-signed-build.log`). Xcode printed existing dependency-scan/actor warnings despite exit 0; no physical installation or radio success is inferred from the build.
+- Final review added explicit removal of cached advertised metadata in both radios' `stop()`, preventing an ended room from reappearing on a later start. The focused software gate passed again after this two-line lifecycle correction; artifact `/tmp/GetOverHere-bluetooth-final-focused.log`.
+- `bash -n scripts/verify_bluetooth_discovery.sh` and `git diff --check` passed.
+- Installed the final APK on `emulator-5554`, observed and accepted the actual Nearby devices permission prompt, and visually inspected the room-list screenshot `/tmp/GetOverHere-bluetooth-emulator-ready.png`. The Bluetooth/access explanation wraps without clipping; the Create action remains visible. Logcat reports `Bluetooth room discovery scanning`. This is emulator startup/UI evidence, not radio interoperability.
+
+Physical attempt and blockers:
+
+```bash
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates test -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration
+xcrun devicectl --timeout 10 device info lockState --device F043EBB9-780F-5483-B0D1-BC0BD9955D9C
+/Users/aessam/Library/Android/sdk/platform-tools/adb devices -l
+```
+
+The Pixel is absent from adb; only `emulator-5554` remains. Xcode reports `Unlock Dark knight to Continue`; the documented lock-state command confirms `passcodeRequired: true`. The waiting device test (`/tmp/GetOverHere-bluetooth-iphone-ui.log`, this session's PID 89881) was cancelled with SIGTERM after confirming its exact command, so it cannot unexpectedly take over the phone later. The user was asked to reconnect the Pixel and unlock the iPhone. No lock bypass or radio-setting change was attempted.
+
+Physical gate still required: with Wi-Fi off and Bluetooth on, create a real guide room and verify the other phone displays its name/lock status as discovery-only; change lock status, end/recreate the room, test expiration and Bluetooth off/on, and reverse guide/guest roles. Then restore LAN and verify one merged room with joining enabled. Foreground discovery is the current slice; Bluetooth admission, control, voice, background endurance, and group scale are not delivered by this checkpoint.

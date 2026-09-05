@@ -813,6 +813,7 @@ final class ChannelService {
 
                         if self.activeChannelID == announce.channelID,
                            self.listenState == .listening,
+                           announce.audioHostIP != nil,
                            previousHostIP != announce.audioHostIP,
                            let updatedChannel = self.channels[safe: idx] {
                             // Discovery may only reconfigure the existing credential (FND-6, ADR-036).

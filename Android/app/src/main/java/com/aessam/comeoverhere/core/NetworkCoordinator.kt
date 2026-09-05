@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Serverless local-LAN coordinator.
- * Discovery uses Android NSD; audio uses direct TCP between peers on the same Wi-Fi network.
+ * Discovery uses NSD and Bluetooth; audio still uses direct TCP over a shared LAN.
  */
 class NetworkCoordinator(
     val controlPlane: ControlPlane,
