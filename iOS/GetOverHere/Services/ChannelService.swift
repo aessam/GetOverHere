@@ -45,6 +45,11 @@ final class ChannelService {
     private(set) var offlineMapStatus: OfflineMapStatus = .unavailable
     private(set) var tourFeatureError: String?
     private(set) var tourCode: String?
+    private(set) var isRoomLocked = false
+    private(set) var isUpdatingRoomAccess = false
+    private(set) var roomAccessError: String?
+    private let roomAdmission: any RoomAdmissionInterface
+    private var roomAccessAttempt: UInt64 = 0
     private(set) var connectionState: ConnectionState = .idle
     var audioQuality: AudioQuality = .standard
 
@@ -123,11 +128,13 @@ final class ChannelService {
         assetTransferService: TourAssetTransferService,
         contentStore: TourContentStore,
         localGuidanceService: LocalGuidanceService,
-        reconnectBaseDelay: Duration = .seconds(1)
+        reconnectBaseDelay: Duration = .seconds(1),
+        roomAdmission: any RoomAdmissionInterface = RoomAdmissionTransport()
     ) {
         self.coordinator = coordinator
         self.audioEngine = audioEngine
         self.reconnectBaseDelay = reconnectBaseDelay
+        self.roomAdmission = roomAdmission
         self.tourControlService = tourControlService
         self.assetTransferService = assetTransferService
         self.contentStore = contentStore
@@ -168,7 +175,9 @@ final class ChannelService {
             id: UUID().uuidString,
             name: name,
             createdAt: Date(),
-            createdBy: coordinator.controlPlane.localPeer.id
+            createdBy: coordinator.controlPlane.localPeer.id,
+            roomAdmissionVersion: 1,
+            isRoomLocked: false
         )
         guard let sessionID = UUID(uuidString: channel.id),
               let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
@@ -253,11 +262,14 @@ final class ChannelService {
             }
             try plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
             try startCapturing(plane: plane, channelID: channel.id)
+            try roomAdmission.start(sessionID: sessionID, sessionCode: code)
 
             offlineMapConfiguration = nil
             offlineMapStatus = .unavailable
             tourFeatureError = nil
-            tourCode = code
+            tourCode = ""
+            isRoomLocked = false
+            roomAccessError = nil
 
             channels.append(channel)
             activeChannelID = channel.id
@@ -278,6 +290,7 @@ final class ChannelService {
     }
 
     func joinChannel(_ channel: Channel, tourCode rawTourCode: String) {
+        guard activeChannelID != nil || connectionState != .connecting else { return }
         sessionAttempt &+= 1
         guard let sessionID = UUID(uuidString: channel.id),
               let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
@@ -295,13 +308,25 @@ final class ChannelService {
             guard let self else { return }
             let credential: SessionCredential
             do {
-                credential = try await Self.stretchCredential(shortCode: normalizedCode, sessionID: sessionID)
+                if let version = channel.roomAdmissionVersion, version != 0 {
+                    if activeChannelID == nil { connectionState = .connecting }
+                    guard version == 1 else { throw RoomAdmissionError.invalidMessage }
+                    credential = try await Self.admit(roomAdmission, host: hostIP, sessionID: sessionID,
+                        code: rawTourCode.isEmpty ? nil : rawTourCode)
+                } else {
+                    credential = try await Self.stretchCredential(shortCode: normalizedCode, sessionID: sessionID)
+                }
             } catch {
                 guard attempt == sessionAttempt else {
                     Logger.channel.info("Discarding a stale guest credential failure; the session was replaced during the stretch")
                     return
                 }
                 tourFeatureError = error.localizedDescription
+                if activeChannelID == nil { connectionState = .failed }
+                if case RoomAdmissionError.locked = error,
+                   let index = channels.firstIndex(where: { $0.id == channel.id }) {
+                    channels[index].isRoomLocked = true
+                }
                 return
             }
             guard attempt == sessionAttempt else {
@@ -494,6 +519,9 @@ final class ChannelService {
     }
 
     func leaveChannel() {
+        roomAdmission.stop()
+        roomAccessAttempt &+= 1
+        isUpdatingRoomAccess = false
         sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
@@ -595,6 +623,7 @@ final class ChannelService {
     /// Every lane is cleared and the Bonjour record is withdrawn (FND-2); `unpublishChannel` is a
     /// no-op when nothing was published, so this is safe now that publish is the last startup step.
     private func rollbackFailedGuideSession(channelID: String) {
+        roomAdmission.stop()
         audioEngine.stopCapture()
         captureTask?.cancel()
         captureTask = nil
@@ -613,10 +642,52 @@ final class ChannelService {
         coordinator.controlPlane.broadcast(.channelEnded(channelID: channelID))
     }
 
+    func updateRoomAccess(locked: Bool, code: String) {
+        guard isCreator, let channel = activeChannel, let id = UUID(uuidString: channel.id) else { return }
+        roomAccessAttempt &+= 1
+        let attempt = roomAccessAttempt
+        let generation = sessionGeneration
+        isUpdatingRoomAccess = true
+        roomAccessError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let policy = try await Self.roomPolicy(sessionID: id, code: locked ? code : nil)
+                guard attempt == roomAccessAttempt, generation == sessionGeneration, isCreator else { return }
+                try roomAdmission.update(policy: policy)
+                isRoomLocked = locked
+                tourCode = code
+                if let index = channels.firstIndex(where: { $0.id == channel.id }) {
+                    channels[index].isRoomLocked = locked
+                    broadcastChannelAnnounce(channels[index])
+                }
+            } catch {
+                guard attempt == roomAccessAttempt, generation == sessionGeneration else { return }
+                roomAccessError = error.localizedDescription
+                Logger.channel.error("Room access update failed")
+            }
+            isUpdatingRoomAccess = false
+        }
+    }
+
+    @concurrent
+    private static func roomPolicy(sessionID: UUID, code: String?) async throws -> RoomAccessPolicy {
+        try RoomAccessPolicy(sessionID: sessionID, code: code)
+    }
+
+    @concurrent
+    private static func admit(_ transport: any RoomAdmissionInterface, host: String, sessionID: UUID, code: String?) async throws -> SessionCredential {
+        let secret = try transport.join(host: host, sessionID: sessionID, code: code)
+        return try SessionCredential.derive(shortCode: secret, sessionID: sessionID)
+    }
+
     /// `discardingPendingStretch` is false only from the deferred End Tour teardown: that leave
     /// already bumped `sessionAttempt`, and a create/join started inside the flush window must
     /// survive it (ADR-048).
     private func stopCurrentActivity(discardingPendingStretch: Bool = true) {
+        roomAdmission.stop()
+        roomAccessAttempt &+= 1
+        isUpdatingRoomAccess = false
         if discardingPendingStretch { sessionAttempt &+= 1 }
         sessionGeneration &+= 1
         reconnectTask?.cancel()
@@ -699,7 +770,9 @@ final class ChannelService {
             createdBy: channel.createdBy,
             audioQuality: audioQuality,
             wifiSSID: nil,
-            audioHostIP: channel.audioHostIP
+            audioHostIP: channel.audioHostIP,
+            roomAdmissionVersion: channel.roomAdmissionVersion,
+            isRoomLocked: channel.isRoomLocked
         )
         coordinator.controlPlane.broadcast(.channelAnnounce(announce: announce))
     }
@@ -734,6 +807,8 @@ final class ChannelService {
                         let previousHostIP = self.channels[idx].audioHostIP
                         self.channels[idx].name = announce.channelName
                         self.channels[idx].audioHostIP = announce.audioHostIP
+                        self.channels[idx].roomAdmissionVersion = announce.roomAdmissionVersion
+                        self.channels[idx].isRoomLocked = announce.isRoomLocked ?? true
                         Logger.channel.info("Updated discovered megaphone")
 
                         if self.activeChannelID == announce.channelID,
@@ -749,7 +824,9 @@ final class ChannelService {
                             name: announce.channelName,
                             createdAt: Date(),
                             createdBy: announce.createdBy,
-                            audioHostIP: announce.audioHostIP
+                            audioHostIP: announce.audioHostIP,
+                            roomAdmissionVersion: announce.roomAdmissionVersion,
+                            isRoomLocked: announce.isRoomLocked ?? true
                         )
                         self.channels.append(channel)
                         Logger.channel.info("Discovered megaphone")

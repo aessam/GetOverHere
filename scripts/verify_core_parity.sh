@@ -69,4 +69,5 @@ for command in fixture encrypted-fixture audio-fixture handshake realtime-fixtur
     echo "ok $command bytes=${#SWIFT_OUT}"
 done
 
+JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 echo "Core parity passed"

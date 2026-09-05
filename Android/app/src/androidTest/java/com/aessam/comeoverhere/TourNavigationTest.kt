@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.isToggleable
 import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
@@ -58,6 +60,17 @@ class TourNavigationTest {
             channelService().connectionState.value == SessionConnectionState.CONNECTED
         }
 
+        assertEquals(false, channelService().isRoomLocked.value)
+        composeRule.onNodeWithText("Room code (4–64 characters)").performTextInput("1234")
+        composeRule.onNode(isToggleable()).performClick()
+        composeRule.waitUntil(10_000) { channelService().isRoomLocked.value }
+        assertEquals("1234", channelService().tourCode.value)
+        composeRule.onNodeWithText("Room code (4–64 characters)").performTextReplacement("Edited!")
+        composeRule.onNodeWithText("Save Code").performClick()
+        composeRule.waitUntil(10_000) { channelService().tourCode.value == "Edited!" }
+        composeRule.onNode(isToggleable()).performClick()
+        composeRule.waitUntil(10_000) { !channelService().isRoomLocked.value }
+
         composeRule.onNodeWithText("Slides").assertIsDisplayed()
         composeRule.onNodeWithText("Map").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("No offline map").assertIsDisplayed()
@@ -77,7 +90,8 @@ class TourNavigationTest {
         assertTrue(composeRule.onAllNodesWithText("Audio Quality").fetchSemanticsNodes().isEmpty())
 
         composeRule.onNodeWithText("End Tour").performClick()
-        composeRule.onNodeWithText("No megaphones nearby").assertIsDisplayed()
+        composeRule.waitUntil(5_000) { channelService().activeChannelID.value == null }
+        composeRule.onNodeWithContentDescription("Create Channel").assertIsDisplayed()
     }
 
     private fun channelService() =

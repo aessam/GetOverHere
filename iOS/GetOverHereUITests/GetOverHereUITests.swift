@@ -45,6 +45,28 @@ final class GetOverHereUITests: XCTestCase {
         XCTAssertTrue(featurePicker.buttons["Map"].exists, app.debugDescription)
         XCTAssertTrue(featurePicker.buttons["Pointer"].exists, app.debugDescription)
 
+        let lockToggle = app.switches["roomLockToggle"]
+        XCTAssertTrue(lockToggle.exists)
+        XCTAssertEqual(lockToggle.value as? String, "0")
+        let roomCode = app.textFields["roomCodeField"]
+        roomCode.tap()
+        roomCode.typeText("1234")
+        app.keyboards.buttons["Done"].tap()
+        lockToggle.switches.firstMatch.tap()
+        XCTAssertTrue(NSPredicate(format: "value == '1'").evaluate(with: lockToggle)
+            || XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: lockToggle)], timeout: 10) == .completed, app.debugDescription)
+        let lockedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        lockedScreenshot.name = "Room locked with editable code"
+        lockedScreenshot.lifetime = .keepAlways
+        add(lockedScreenshot)
+        roomCode.tap()
+        roomCode.typeText("5")
+        app.keyboards.buttons["Done"].tap()
+        app.buttons["Save Code"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: lockToggle)], timeout: 10), .completed)
+        lockToggle.switches.firstMatch.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: lockToggle)], timeout: 10), .completed)
+
         featurePicker.buttons["Map"].tap()
         XCTAssertTrue(app.staticTexts["No Offline Map"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["Import Offline Map"].exists)
@@ -54,6 +76,7 @@ final class GetOverHereUITests: XCTestCase {
             app.staticTexts["Only the selected bearing angle is shared. Device location and guest compass readings stay local."]
                 .waitForExistence(timeout: 2)
         )
+        app.buttons["End Tour"].tap()
 #endif
     }
 

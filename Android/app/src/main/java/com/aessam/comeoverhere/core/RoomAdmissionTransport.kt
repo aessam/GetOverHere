@@ -1,0 +1,117 @@
+package com.aessam.comeoverhere.core
+
+import android.util.Log
+import com.aessam.toursession.RoomAccessPolicy
+import com.aessam.toursession.RoomAdmission
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.UUID
+import java.util.concurrent.Semaphore
+import kotlin.concurrent.thread
+
+interface RoomAdmissionInterface {
+    fun start(sessionID: UUID, sessionCode: String)
+    fun update(policy: RoomAccessPolicy)
+    fun stop()
+    fun join(host: String, sessionID: UUID, code: String?): String
+}
+
+class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomAdmissionInterface {
+    private val lock = Any()
+    private val slots = Semaphore(8)
+    private var listener: ServerSocket? = null
+    private val pending = mutableSetOf<Socket>()
+    private var policy: RoomAccessPolicy? = null
+    private var revision = 0L
+
+    override fun start(sessionID: UUID, sessionCode: String) {
+        stop()
+        val open = RoomAccessPolicy(sessionID, null)
+        val server = ServerSocket()
+        try {
+            server.reuseAddress = true
+            server.bind(InetSocketAddress(port), 8)
+        } catch (error: Exception) {
+            server.close()
+            throw IllegalStateException("Cannot open room admission port $port.", error)
+        }
+        synchronized(lock) { listener = server; policy = open; revision++ }
+        thread(name = "room-admission-accept", isDaemon = true) {
+            while (!server.isClosed) {
+                val client = try { server.accept() } catch (error: Exception) {
+                    if (!server.isClosed) Log.e("RoomAdmission", "Accept failed (${error.javaClass.simpleName})")
+                    break
+                }
+                if (!slots.tryAcquire()) { client.close(); continue }
+                client.soTimeout = 5_000
+                val snapshot = synchronized(lock) {
+                    if (listener !== server) null else {
+                        pending.add(client)
+                        requireNotNull(policy) to revision
+                    }
+                }
+                if (snapshot == null) { client.close(); slots.release(); continue }
+                thread(name = "room-admission-handshake", isDaemon = true) {
+                    try {
+                        client.use {
+                            val guide = RoomAdmission.Guide(sessionID, snapshot.first)
+                            client.getOutputStream().write(guide.challenge)
+                            val request = read(client, RoomAdmission.REQUEST_SIZE)
+                            val reply = guide.reply(request, sessionCode)
+                            synchronized(lock) {
+                                check(listener === server && revision == snapshot.second) { "Room access changed." }
+                                client.getOutputStream().write(reply)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        Log.i("RoomAdmission", "Admission rejected or disconnected (${error.javaClass.simpleName})")
+                    } finally {
+                        synchronized(lock) { pending.remove(client) }
+                        slots.release()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun update(policy: RoomAccessPolicy) = synchronized(lock) {
+        check(listener != null) { "Room access changed." }
+        this.policy = policy
+        revision++
+        pending.forEach { it.close() }
+    }
+
+    override fun stop() = synchronized(lock) {
+        listener?.close()
+        listener = null
+        policy = null
+        revision++
+        pending.forEach { it.close() }
+    }
+
+    override fun join(host: String, sessionID: UUID, code: String?): String = Socket().use { socket ->
+        socket.soTimeout = 5_000
+        socket.connect(InetSocketAddress(host, port), 5_000)
+        val challenge = read(socket, RoomAdmission.CHALLENGE_SIZE)
+        val guest = RoomAdmission.Guest(challenge, sessionID, code)
+        socket.getOutputStream().write(guest.request)
+        guest.open(read(socket, RoomAdmission.REPLY_SIZE))
+    }
+
+    private fun read(socket: Socket, count: Int): ByteArray {
+        val bytes = ByteArray(count)
+        val input = socket.getInputStream()
+        val deadline = System.nanoTime() + 5_000_000_000L
+        var offset = 0
+        while (offset < count) {
+            val remaining = deadline - System.nanoTime()
+            check(remaining > 0) { "Room admission timed out." }
+            socket.soTimeout = (remaining / 1_000_000L).coerceAtLeast(1).toInt()
+            val received = input.read(bytes, offset, count - offset)
+            check(received > 0) { "Room admission failed. Check the code and try again." }
+            offset += received
+        }
+        return bytes
+    }
+}

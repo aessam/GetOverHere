@@ -14,6 +14,7 @@ struct ChannelDetailView: View {
     @State private var isMapImporterPresented = false
     @State private var pendingTargetCoordinate: CLLocationCoordinate2D?
     @State private var targetLabelDraft = ""
+    @State private var roomCodeDraft = ""
 
     private var service: ChannelService { coordinator.channelService }
     private var presentation: TourControlService { service.tourControlService }
@@ -101,22 +102,7 @@ struct ChannelDetailView: View {
     private func guideView(_ channel: Channel) -> some View {
         VStack(spacing: 0) {
             sessionHeader(channel, accent: .red, status: "LIVE")
-            if let tourCode = service.tourCode {
-                HStack {
-                    Text("TOUR CODE")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Text(tourCode)
-                        .font(.title3.monospaced().bold())
-                        .textSelection(.enabled)
-                    Spacer()
-                    Text("Share with guests")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 10)
-            }
+            roomAccessControls
             Divider()
             featurePicker
                 .padding(.horizontal)
@@ -244,6 +230,40 @@ struct ChannelDetailView: View {
         }
         .padding(.vertical)
     }
+
+    private var roomAccessControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Lock Room with Code", isOn: Binding(
+                get: { service.isRoomLocked },
+                set: { service.updateRoomAccess(locked: $0, code: roomCodeDraft) }
+            ))
+            .accessibilityIdentifier("roomLockToggle")
+            .disabled(service.isUpdatingRoomAccess)
+            HStack {
+                TextField("Room code (4–64 characters)", text: $roomCodeDraft)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .fontDesign(.monospaced)
+                    .accessibilityIdentifier("roomCodeField")
+                if service.isRoomLocked {
+                    Button("Save Code") { service.updateRoomAccess(locked: true, code: roomCodeDraft) }
+                        .disabled(service.isUpdatingRoomAccess || !RoomAccessPolicy.isValidCode(roomCodeDraft)
+                            || roomCodeDraft == service.tourCode)
+                }
+            }
+            Text(service.roomAccessError ?? (service.isRoomLocked
+                ? "New guests need this code. Connected guests stay connected."
+                : "Room is open. Set a code, then turn on the lock."))
+                .font(.caption)
+                .foregroundStyle(service.roomAccessError == nil ? Color.secondary : Color.red)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 10)
+        .onChange(of: channelIdentity, initial: true) { _, _ in roomCodeDraft = service.tourCode ?? "" }
+    }
+
+    private var channelIdentity: String? { service.activeChannelID }
 
     private var photoPicker: some View {
         PhotosPicker(

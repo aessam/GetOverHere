@@ -49,7 +49,9 @@ sealed class BLECommand {
         val createdBy: String,
         val audioQuality: AudioQuality,
         val wifiSSID: String?,
-        val audioHostIP: String? = null
+        val audioHostIP: String? = null,
+        val roomAdmissionVersion: Int? = null,
+        val isRoomLocked: Boolean? = null,
     ) : BLECommand()
 
     data class ChannelUnavailable(val channelID: String) : BLECommand()
@@ -197,6 +199,8 @@ fun BLECommand.toJson(): ByteArray {
                 put("audioQuality", audioQuality.rawValue)
                 if (wifiSSID != null) put("wifiSSID", wifiSSID) else put("wifiSSID", JsonNull)
                 if (audioHostIP != null) put("audioHostIP", audioHostIP) else put("audioHostIP", JsonNull)
+                roomAdmissionVersion?.let { put("roomAdmissionVersion", it) }
+                isRoomLocked?.let { put("isRoomLocked", it) }
             }
         }
         is BLECommand.ChannelEnded -> buildJsonObject {
@@ -250,7 +254,9 @@ fun parseBLECommand(data: ByteArray): BLECommand? {
                     createdBy = inner["createdBy"]!!.jsonPrimitive.content,
                     audioQuality = AudioQuality.fromRaw(inner["audioQuality"]!!.jsonPrimitive.content),
                     wifiSSID = inner["wifiSSID"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content },
-                    audioHostIP = inner["audioHostIP"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content }
+                    audioHostIP = inner["audioHostIP"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content },
+                    roomAdmissionVersion = inner["roomAdmissionVersion"]?.jsonPrimitive?.content?.toIntOrNull(),
+                    isRoomLocked = inner["isRoomLocked"]?.jsonPrimitive?.content?.toBooleanStrictOrNull(),
                 )
             }
             "channelEnded" in obj -> {

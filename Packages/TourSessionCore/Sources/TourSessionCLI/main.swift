@@ -10,6 +10,24 @@ enum TourSessionCLI {
         }
 
         switch command {
+        case "room-guide", "room-guest":
+            guard arguments.count == 3 else { fail("room-guide/room-guest requires UUID CODE (use - for open)") }
+            guard let id = UUID(uuidString: arguments[1]) else { fail("invalid session UUID") }
+            let code: String? = arguments[2] == "-" ? nil : arguments[2]
+            func emit(_ text: String) { FileHandle.standardOutput.write(Data((text + "\n").utf8)) }
+            func receive() throws -> Data {
+                guard let line = readLine() else { fail("admission input closed") }
+                return try Data(hex: line)
+            }
+            if command == "room-guide" {
+                let guide = RoomAdmission.Guide(sessionID: id, policy: try RoomAccessPolicy(sessionID: id, code: code))
+                emit(guide.challenge.lowercaseHex)
+                emit(try guide.reply(to: receive(), sessionCode: "23456789AB").lowercaseHex)
+            } else {
+                let guest = try RoomAdmission.Guest(challenge: receive(), sessionID: id, code: code)
+                emit(guest.request.lowercaseHex)
+                emit(try guest.open(receive()))
+            }
         case "fixture":
             print(try TourSessionFixtures.helloEnvelope().encode().lowercaseHex)
         case "encrypted-fixture":

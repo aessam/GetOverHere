@@ -1,5 +1,11 @@
 # GetOverHere Execution Plan
 
+## September 4 room-admission checkpoint
+
+Rooms now start open. Both apps have `Lock Room with Code`, a guide-editable code, discovery lock status, and independent encrypted admission (ADR-052). Existing guests keep their media sessions when the guide locks, edits, or unlocks. Host, simulator/emulator, and individual physical-device room-control checks passed; commands and artifacts are in ExperimentLog.md.
+
+The next live blocker is Android native audio: physical iPhone→Pixel joining authenticated and received an audio frame, then native decoding failed and cleanup threw from `MediaCodec.stop()`. Reproduce cross-platform codec configuration and make failure cleanup safe before claiming usable two-phone audio. Do not confuse same-platform codec loopbacks or admission parity with sustained cross-platform playback. Physical endurance and Aware/BLE gates below remain pending.
+
 **Date:** 2026-08-22
 **Status:** P0 complete. P3 LAN software hardening through G6 is implemented; the P3 physical acceptance gate remains next, before P1. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).
 

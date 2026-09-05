@@ -42,6 +42,8 @@ enum BLECommand: Sendable {
         var audioQuality: AudioQuality
         var wifiSSID: String?
         var audioHostIP: String?
+        var roomAdmissionVersion: Int? = nil
+        var isRoomLocked: Bool? = nil
     }
 }
 

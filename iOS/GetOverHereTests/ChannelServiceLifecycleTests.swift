@@ -47,7 +47,8 @@ struct ChannelServiceLifecycleTests {
                 ),
                 contentStore: try TourContentStore(rootDirectory: root.appending(path: "packs")),
                 localGuidanceService: LocalGuidanceService(),
-                reconnectBaseDelay: reconnectBaseDelay
+                reconnectBaseDelay: reconnectBaseDelay,
+                roomAdmission: LifecycleRoomAdmission()
             )
         }
 
@@ -67,6 +68,31 @@ struct ChannelServiceLifecycleTests {
     }
 
     // MARK: - FND-2
+
+    @Test("room settings never reconfigure existing media lanes")
+    @MainActor
+    func roomSettingsPreserveExistingConnections() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        h.service.createChannel(name: "Open room")
+        try await waitUntil("guide startup") { h.service.connectionState == .connected }
+        #expect(!h.service.isRoomLocked)
+        #expect(h.service.tourCode == "")
+        let controlConfigurations = h.control.configureCalls
+        let audioConfigurations = h.audioPlane.configureCalls
+        let assetConfigurations = h.asset.configureCalls
+        for (locked, code) in [(true, "1234"), (true, "Edited!"), (false, "Edited!")] {
+            h.service.updateRoomAccess(locked: locked, code: code)
+            try await waitUntil("room update") { !h.service.isUpdatingRoomAccess }
+            #expect(h.service.roomAccessError == nil)
+            #expect(h.service.isRoomLocked == locked)
+            #expect(h.service.tourCode == code)
+            #expect(h.service.connectionState == .connected)
+            #expect(h.control.configureCalls == controlConfigurations)
+            #expect(h.audioPlane.configureCalls == audioConfigurations)
+            #expect(h.asset.configureCalls == assetConfigurations)
+        }
+    }
 
     @Test("createChannel publishes only after every lane and capture started")
     @MainActor

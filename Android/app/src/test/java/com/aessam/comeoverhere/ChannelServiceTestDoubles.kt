@@ -1,6 +1,8 @@
 package com.aessam.comeoverhere
 
 import com.aessam.comeoverhere.core.AudioPlane
+import com.aessam.comeoverhere.core.RoomAdmissionInterface
+import com.aessam.toursession.RoomAccessPolicy
 import com.aessam.comeoverhere.core.AudioQuality
 import com.aessam.comeoverhere.core.AudioSessionEvent
 import com.aessam.comeoverhere.core.BLECommand
@@ -31,6 +33,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+
+class LifecycleRoomAdmission : RoomAdmissionInterface {
+    override fun start(sessionID: UUID, sessionCode: String) = Unit
+    override fun update(policy: RoomAccessPolicy) = Unit
+    override fun stop() = Unit
+    override fun join(host: String, sessionID: UUID, code: String?): String = error("Unexpected room admission")
+}
 
 /**
  * Shared ChannelService-level doubles (G4, DSCN-23). They record every lane call and expose `emit`
@@ -125,6 +134,7 @@ internal class LifecycleAudioPlane : AudioPlane {
 }
 
 internal class LifecycleControlTransport : SessionControlTransport {
+    var configureCalls = 0
     override var isActive = false
     override var hostIP: String? = null
     var startGuideCalls = 0
@@ -147,7 +157,7 @@ internal class LifecycleControlTransport : SessionControlTransport {
         displayName: String,
         platform: ParticipantPlatform,
         credential: SessionCredential,
-    ) = Unit
+    ) { configureCalls += 1 }
 
     override fun setEventHandler(handler: ((SessionControlEvent) -> Unit)?) {
         this.handler = handler
@@ -192,6 +202,7 @@ internal class LifecycleControlTransport : SessionControlTransport {
 }
 
 internal class LifecycleAssetTransport : SessionAssetTransport {
+    var configureCalls = 0
     data class Sent(val kind: SessionMessageKind, val payload: ByteArray, val to: UUID?)
 
     override var isActive = false
@@ -210,7 +221,7 @@ internal class LifecycleAssetTransport : SessionAssetTransport {
         displayName: String,
         platform: ParticipantPlatform,
         credential: SessionCredential,
-    ) = Unit
+    ) { configureCalls += 1 }
 
     override fun setEventHandler(handler: ((SessionAssetEvent) -> Unit)?) {
         this.handler = handler

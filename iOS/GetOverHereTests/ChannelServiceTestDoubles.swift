@@ -17,6 +17,15 @@ enum LifecycleLaneError: LocalizedError {
     }
 }
 
+nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, Sendable {
+    func start(sessionID: UUID, sessionCode: String) throws {}
+    func update(policy: RoomAccessPolicy) throws {}
+    func stop() {}
+    func join(host: String, sessionID: UUID, code: String?) throws -> String {
+        throw RoomAdmissionError.invalidMessage
+    }
+}
+
 @MainActor
 final class LifecycleControlPlane: ControlPlane {
     let localPeer: PeerInfo
@@ -118,6 +127,7 @@ final class LifecycleAudioPlane: AudioPlane {
 
 @MainActor
 final class LifecycleControlTransport: SessionControlTransport {
+    var configureCalls = 0
     var isActive = false
     var hostIP: String?
     private(set) var startGuideCalls = 0
@@ -143,7 +153,7 @@ final class LifecycleControlTransport: SessionControlTransport {
         displayName: String,
         platform: ParticipantPlatform,
         credential: SessionCredential
-    ) {}
+    ) { configureCalls += 1 }
 
     func setEventHandler(_ handler: (@Sendable (SessionControlEvent) -> Void)?) {
         self.handler = handler
@@ -202,6 +212,7 @@ final class LifecycleControlTransport: SessionControlTransport {
 
 @MainActor
 final class LifecycleAssetTransport: SessionAssetTransport {
+    var configureCalls = 0
     struct Sent {
         let kind: SessionMessageKind
         let payload: Data
@@ -224,7 +235,7 @@ final class LifecycleAssetTransport: SessionAssetTransport {
         displayName: String,
         platform: ParticipantPlatform,
         credential: SessionCredential
-    ) {}
+    ) { configureCalls += 1 }
 
     func setEventHandler(_ handler: (@Sendable (SessionAssetEvent) -> Void)?) {
         self.handler = handler

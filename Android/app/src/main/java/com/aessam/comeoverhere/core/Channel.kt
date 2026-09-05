@@ -7,6 +7,8 @@ data class Channel(
     val createdBy: String,
     val audioHostIP: String? = null,
     val hasWiFiAware: Boolean = false,
+    val roomAdmissionVersion: Int? = null,
+    val isRoomLocked: Boolean = true,
 ) {
     companion object {
         val TOWNSQUARE = Channel(

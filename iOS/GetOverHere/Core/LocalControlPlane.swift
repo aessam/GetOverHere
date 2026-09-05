@@ -53,6 +53,7 @@ final class LocalControlPlane: NSObject, ControlPlane {
         for service in publishedServices.values {
             service.stop()
         }
+        for service in discoveredServices.values { service.stopMonitoring(); service.stop() }
         publishedServices.removeAll()
         discoveredServices.removeAll()
         peerByChannelID.removeAll()
@@ -81,7 +82,9 @@ final class LocalControlPlane: NSObject, ControlPlane {
             TXTKey.createdBy: Data(announce.createdBy.utf8),
             TXTKey.creatorName: Data(localPeer.displayName.utf8),
             TXTKey.audioQuality: Data(announce.audioQuality.rawValue.utf8),
-            TXTKey.platform: Data(localPeer.platform.rawValue.utf8)
+            TXTKey.platform: Data(localPeer.platform.rawValue.utf8),
+            "admission": Data(String(announce.roomAdmissionVersion ?? 0).utf8),
+            "locked": Data((announce.isRoomLocked == false ? "0" : "1").utf8)
         ])
 
         if let existing = publishedServices[announce.channelID] {
@@ -129,7 +132,9 @@ final class LocalControlPlane: NSObject, ControlPlane {
             createdBy: createdBy,
             audioQuality: AudioQuality(rawValue: qualityRaw) ?? .standard,
             wifiSSID: nil,
-            audioHostIP: ipv4Address(for: service)
+            audioHostIP: ipv4Address(for: service),
+            roomAdmissionVersion: txt["admission"].flatMap { String(data: $0, encoding: .utf8) }.flatMap(Int.init),
+            isRoomLocked: txt["locked"] != Data("0".utf8)
         )
         commandCont.yield((.channelAnnounce(announce: announce), peer))
     }
@@ -163,7 +168,7 @@ extension LocalControlPlane: NetServiceBrowserDelegate {
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
-        discoveredServices.removeValue(forKey: service.name)
+        discoveredServices.removeValue(forKey: service.name)?.stopMonitoring()
         if let peer = peerByChannelID.removeValue(forKey: service.name) {
             connectedPeers.removeAll { $0.id == peer.id }
             peerCont.yield(.disconnected(peer))
@@ -174,6 +179,11 @@ extension LocalControlPlane: NetServiceBrowserDelegate {
 
 extension LocalControlPlane: NetServiceDelegate {
     func netServiceDidResolveAddress(_ sender: NetService) {
+        handleResolvedService(sender)
+        sender.startMonitoring()
+    }
+
+    func netService(_ sender: NetService, didUpdateTXTRecord data: Data) {
         handleResolvedService(sender)
     }
 

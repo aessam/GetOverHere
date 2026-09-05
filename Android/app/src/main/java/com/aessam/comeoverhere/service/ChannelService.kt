@@ -6,7 +6,7 @@ import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.ParticipantRegistry
 import com.aessam.toursession.PresentationSnapshotPayload
 import com.aessam.toursession.SessionCredential
-import com.aessam.toursession.SessionSecurityException
+import com.aessam.toursession.RoomAccessPolicy
 import com.aessam.toursession.TourAssetDescriptor
 import com.aessam.toursession.TargetSnapshotPayload
 import com.aessam.toursession.BearingSnapshotPayload
@@ -60,6 +60,10 @@ interface ChannelServiceProtocol {
     val offlineMapStatus: StateFlow<OfflineMapStatus>
     val tourFeatureError: StateFlow<String?>
     val tourCode: StateFlow<String?>
+    val isRoomLocked: StateFlow<Boolean>
+    val isUpdatingRoomAccess: StateFlow<Boolean>
+    val roomAccessError: StateFlow<String?>
+    fun updateRoomAccess(locked: Boolean, code: String)
     val connectionState: StateFlow<SessionConnectionState>
     val reconnectAttempt: StateFlow<Int>
     val targetSnapshot: StateFlow<TargetSnapshotPayload?>
@@ -103,6 +107,7 @@ class ChannelService(
     override val localGuidanceService: LocalGuidanceInterface,
     /** Base of the ADR-034 exponential reconnect backoff; tests shorten it (DSCN-23). */
     private val reconnectBaseDelayMillis: Long = 1_000L,
+    private val roomAdmission: RoomAdmissionInterface = RoomAdmissionTransport(),
 ) : ChannelServiceProtocol {
 
     private val _channels = MutableStateFlow<List<Channel>>(emptyList())
@@ -150,6 +155,13 @@ class ChannelService(
 
     private val _tourCode = MutableStateFlow<String?>(null)
     override val tourCode: StateFlow<String?> = _tourCode.asStateFlow()
+    private val _isRoomLocked = MutableStateFlow(false)
+    override val isRoomLocked = _isRoomLocked.asStateFlow()
+    private val _isUpdatingRoomAccess = MutableStateFlow(false)
+    override val isUpdatingRoomAccess = _isUpdatingRoomAccess.asStateFlow()
+    private val _roomAccessError = MutableStateFlow<String?>(null)
+    override val roomAccessError = _roomAccessError.asStateFlow()
+    private var roomAccessAttempt = 0L
 
     private val _connectionState = MutableStateFlow(SessionConnectionState.IDLE)
     override val connectionState: StateFlow<SessionConnectionState> = _connectionState.asStateFlow()
@@ -264,6 +276,8 @@ class ChannelService(
             name = name,
             createdAt = nowAsSwiftRef(),
             createdBy = coordinator.controlPlane.localPeer.id,
+            roomAdmissionVersion = 1,
+            isRoomLocked = false,
         )
         val sessionID = UUID.fromString(channel.id)
         val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
@@ -329,12 +343,15 @@ class ChannelService(
             }
             plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
             startCapturing(plane, channel.id)
+            roomAdmission.start(sessionID, code)
 
             _readySlideFiles.value = emptyMap()
             _offlineMapConfiguration.value = null
             _offlineMapStatus.value = OfflineMapStatus.Unavailable
             _tourFeatureError.value = null
-            _tourCode.value = code
+            _tourCode.value = ""
+            _isRoomLocked.value = false
+            _roomAccessError.value = null
 
             _channels.value = _channels.value + channel
             _activeChannelID.value = channel.id
@@ -355,6 +372,7 @@ class ChannelService(
 
     /** Mirrors the iOS rollback: every lane is cleared and the NSD record is withdrawn (FND-2). */
     private fun rollbackFailedGuideSession(channelID: String) {
+        roomAdmission.stop()
         audioEngine.stopCapture()
         captureJob?.cancel()
         captureJob = null
@@ -375,6 +393,7 @@ class ChannelService(
     }
 
     override fun joinChannel(channel: Channel, tourCode: String) {
+        if (_activeChannelID.value == null && _connectionState.value == SessionConnectionState.CONNECTING) return
         sessionAttempt += 1
         val sessionID = runCatching { UUID.fromString(channel.id) }
             .getOrElse {
@@ -390,10 +409,22 @@ class ChannelService(
         val attempt = sessionAttempt
         scope.launch {
             val credential = try {
-                withContext(Dispatchers.Default) { SessionCredential.derive(normalizedCode, sessionID) }
-            } catch (error: SessionSecurityException) {
+                if (_activeChannelID.value == null && channel.roomAdmissionVersion == 1) {
+                    _connectionState.value = SessionConnectionState.CONNECTING
+                }
+                withContext(Dispatchers.IO) {
+                    if (channel.roomAdmissionVersion != null && channel.roomAdmissionVersion != 0) {
+                        require(channel.roomAdmissionVersion == 1) { "Unsupported room admission version." }
+                        val host = requireNotNull(channel.audioHostIP) { "Guide network address is unavailable." }
+                        val secret = roomAdmission.join(host, sessionID, tourCode.ifEmpty { null })
+                        SessionCredential.derive(secret, sessionID)
+                    } else SessionCredential.derive(normalizedCode, sessionID)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 if (attempt == sessionAttempt) {
                     _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                    if (_activeChannelID.value == null) _connectionState.value = SessionConnectionState.FAILED
                 } else {
                     Log.i(TAG, "Discarding a stale guest credential failure; the session was replaced during the stretch")
                 }
@@ -544,6 +575,9 @@ class ChannelService(
     }
 
     override fun leaveChannel() {
+        roomAdmission.stop()
+        roomAccessAttempt++
+        _isUpdatingRoomAccess.value = false
         sessionAttempt += 1
         val ch = activeChannel ?: return
         val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
@@ -619,7 +653,40 @@ class ChannelService(
      * already bumped [sessionAttempt], and a create/join started inside the flush window must
      * survive it (ADR-048).
      */
+    override fun updateRoomAccess(locked: Boolean, code: String) {
+        val channel = activeChannel ?: return
+        if (!isCreator) return
+        roomAccessAttempt++
+        val attempt = roomAccessAttempt
+        val generation = sessionGeneration
+        _isUpdatingRoomAccess.value = true
+        _roomAccessError.value = null
+        scope.launch {
+            try {
+                val policy = withContext(Dispatchers.Default) {
+                    RoomAccessPolicy(UUID.fromString(channel.id), if (locked) code else null)
+                }
+                if (attempt != roomAccessAttempt || generation != sessionGeneration || !isCreator) return@launch
+                roomAdmission.update(policy)
+                _isRoomLocked.value = locked
+                _tourCode.value = code
+                val updated = channel.copy(isRoomLocked = locked)
+                _channels.value = _channels.value.map { if (it.id == channel.id) updated else it }
+                broadcastChannelAnnounce(updated)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (attempt != roomAccessAttempt || generation != sessionGeneration) return@launch
+                _roomAccessError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Room access update failed (${error.javaClass.simpleName})")
+            }
+            _isUpdatingRoomAccess.value = false
+        }
+    }
+
     private fun stopCurrentActivity(discardingPendingStretch: Boolean = true) {
+        roomAdmission.stop()
+        roomAccessAttempt++
+        _isUpdatingRoomAccess.value = false
         if (discardingPendingStretch) sessionAttempt += 1
         sessionGeneration += 1
         reconnectJob?.cancel()
@@ -712,7 +779,9 @@ class ChannelService(
             createdBy = channel.createdBy,
             audioQuality = audioQuality,
             wifiSSID = null,
-            audioHostIP = channel.audioHostIP
+            audioHostIP = channel.audioHostIP,
+            roomAdmissionVersion = channel.roomAdmissionVersion,
+            isRoomLocked = channel.isRoomLocked,
         )
         coordinator.controlPlane.broadcast(announce)
     }
@@ -747,6 +816,8 @@ class ChannelService(
                                 name = command.channelName,
                                 audioHostIP = command.audioHostIP,
                                 hasWiFiAware = false,
+                                roomAdmissionVersion = command.roomAdmissionVersion,
+                                isRoomLocked = command.isRoomLocked ?: true,
                             )
                             _channels.value = _channels.value.map {
                                 if (it.id == command.channelID) updated else it
@@ -765,7 +836,9 @@ class ChannelService(
                                 name = command.channelName,
                                 createdAt = nowAsSwiftRef(),
                                 createdBy = command.createdBy,
-                                audioHostIP = command.audioHostIP
+                                audioHostIP = command.audioHostIP,
+                                roomAdmissionVersion = command.roomAdmissionVersion,
+                                isRoomLocked = command.isRoomLocked ?: true,
                             )
                             _channels.value = _channels.value + channel
                             Log.i(TAG, "Discovered megaphone")

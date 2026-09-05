@@ -1,5 +1,11 @@
 # Lessons Learned
 
+## 2026-09-04 — Editable admission is not a media-key rotation
+
+The former tour code derived all three media-lane credentials. Reusing it as an editable room lock would invalidate connected guests; advertising it for open joining would reveal media keys to passive observers. ADR-052 separates admission from the existing group credential and tests that lock/edit/unlock never reconfigures media lanes.
+
+Physical verification also exposed two test assumptions: a SwiftUI toggle accessibility container is not the switch's tap target, and ending a local tour does not imply an empty neighborhood. Target the inner switch and assert local termination instead. Per-platform native codec loopbacks still do not prove cross-platform audio: live Pixel logs received an authenticated iPhone frame but then failed decoding and crashed in MediaCodec cleanup. Keep that failure explicit until a real cross-platform regression test passes.
+
 ## 1. Never replace a working transport with an untested one
 **What happened**: Replaced MultipeerTransport with BLETransport for "cross-platform." Broke iOS-to-iOS which was working perfectly.
 **Root cause**: Assumed BLE could replace Multipeer. Different protocols, different reliability.

@@ -367,7 +367,8 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                     }
                 }
                 ChannelListView(channels, vm.localPeerID) { channel ->
-                    pendingJoinChannel = channel
+                    if (channel.roomAdmissionVersion == 1 && !channel.isRoomLocked) vm.joinChannel(channel, "")
+                    else pendingJoinChannel = channel
                     joinCode = ""
                 }
                 if (channels.isEmpty()) {
@@ -419,12 +420,12 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             title = { Text(channel.name) },
             text = {
                 Column {
-                    Text("Enter the tour code shown on the guide's screen.")
+                    Text("This room is locked. Ask your guide for the code.")
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = joinCode,
-                        onValueChange = { joinCode = it.uppercase() },
-                        label = { Text("10-character tour code") },
+                        onValueChange = { joinCode = it },
+                        label = { Text("Room Code") },
                         singleLine = true,
                     )
                 }
@@ -436,7 +437,8 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         pendingJoinChannel = null
                         joinCode = ""
                     },
-                    enabled = SessionCredential.normalize(joinCode).length == SessionCredential.SHORT_CODE_LENGTH,
+                    enabled = if (channel.roomAdmissionVersion == 1) com.aessam.toursession.RoomAccessPolicy.isValidCode(joinCode)
+                        else SessionCredential.normalize(joinCode).length == SessionCredential.SHORT_CODE_LENGTH,
                 ) { Text("Join") }
             },
             dismissButton = {
@@ -466,7 +468,8 @@ private fun ChannelListView(
             ListItem(
                 headlineContent = { Text(channel.name) },
                 supportingContent = {
-                    Text(if (channel.createdBy == localPeerID) "Your megaphone" else "Live")
+                    Text(if (channel.createdBy == localPeerID) "Your megaphone"
+                        else if (channel.isRoomLocked) "Locked room" else "Open room")
                 },
                 leadingContent = {
                     Icon(
@@ -572,16 +575,7 @@ private fun CreatorView(
         }
 
         if (tourCode != null) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("TOUR CODE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
-                Spacer(Modifier.width(12.dp))
-                Text(tourCode, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.weight(1f))
-                Text("Share with guests", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-            }
+            RoomAccessControls(vm, channel.id, tourCode)
         }
 
         HorizontalDivider()
@@ -644,6 +638,34 @@ private fun CreatorView(
                 Text("End Tour")
             }
         }
+    }
+}
+
+@Composable
+private fun RoomAccessControls(vm: AppViewModel, channelID: String, savedCode: String) {
+    val locked by vm.isRoomLocked.collectAsState()
+    val updating by vm.isUpdatingRoomAccess.collectAsState()
+    val error by vm.roomAccessError.collectAsState()
+    var code by remember(channelID) { mutableStateOf(savedCode) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Lock Room with Code", Modifier.weight(1f))
+            Switch(checked = locked, onCheckedChange = { vm.updateRoomAccess(it, code) }, enabled = !updating)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = code, onValueChange = { code = it }, singleLine = true,
+                label = { Text("Room code (4–64 characters)") }, modifier = Modifier.weight(1f))
+            if (locked) {
+                TextButton(onClick = { vm.updateRoomAccess(true, code) },
+                    enabled = !updating && code != savedCode && com.aessam.toursession.RoomAccessPolicy.isValidCode(code)) {
+                    Text("Save Code")
+                }
+            }
+        }
+        Text(error ?: if (locked) "New guests need this code. Connected guests stay connected."
+            else "Room is open. Set a code, then turn on the lock.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (error == null) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error)
     }
 }
 

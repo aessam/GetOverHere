@@ -26,6 +26,10 @@ struct ChannelSidebar: View {
                     ForEach(service.channels) { channel in
                         Button {
                             guard service.activeChannelID != channel.id else { return }
+                            if channel.roomAdmissionVersion == 1 && !channel.isRoomLocked {
+                                service.joinChannel(channel, tourCode: "")
+                                return
+                            }
                             joinCode = ""
                             pendingJoinChannel = channel
                         } label: {
@@ -51,14 +55,14 @@ struct ChannelSidebar: View {
         .sheet(item: $pendingJoinChannel) { channel in
             NavigationStack {
                 Form {
-                    Section("Tour Code") {
-                        TextField("10-character code", text: $joinCode)
-                            .textInputAutocapitalization(.characters)
+                    Section("Room Code") {
+                        TextField("Code from your guide", text: $joinCode)
+                            .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .fontDesign(.monospaced)
                     }
                     Section {
-                        Text("Ask the guide for the code shown on their screen.")
+                        Text("This room is locked. Ask your guide for the code.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -74,7 +78,9 @@ struct ChannelSidebar: View {
                             service.joinChannel(channel, tourCode: joinCode)
                             pendingJoinChannel = nil
                         }
-                        .disabled(SessionCredential.normalize(joinCode).count != SessionCredential.shortCodeLength)
+                        .disabled(channel.roomAdmissionVersion == 1
+                            ? !RoomAccessPolicy.isValidCode(joinCode)
+                            : SessionCredential.normalize(joinCode).count != SessionCredential.shortCodeLength)
                     }
                 }
             }
@@ -99,6 +105,8 @@ struct ChannelSidebar: View {
             }
 
             Spacer()
+
+            if channel.isRoomLocked { Image(systemName: "lock.fill").accessibilityLabel("Locked room") }
 
             Circle()
                 .fill(.red)

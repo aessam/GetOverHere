@@ -32,6 +32,27 @@ class LocalControlPlane(
     )
 
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val callbackExecutor = java.util.concurrent.Executor { command ->
+        android.os.Handler(android.os.Looper.getMainLooper()).post(command)
+    }
+    private val serviceCallbacks = mutableMapOf<String, NsdManager.ServiceInfoCallback>()
+    private val desiredAnnouncements = mutableMapOf<String, BLECommand.ChannelAnnounce>()
+    private val updatingRegistrations = mutableSetOf<String>()
+    private val legacyServices = mutableMapOf<String, NsdServiceInfo>()
+    private val legacyHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var legacyResolveInFlight = false
+    private var legacyResolveIndex = 0
+    private val legacyRefresh = object : Runnable {
+        override fun run() {
+            val services = legacyServices.values.toList()
+            if (!legacyResolveInFlight && services.isNotEmpty()) {
+                legacyResolveInFlight = true
+                val service = services[legacyResolveIndex++ % services.size]
+                nsdManager.resolveService(service, resolveListener(service.serviceName))
+            }
+            legacyHandler.postDelayed(this, 2_000)
+        }
+    }
 
     private val _connectedPeers = MutableStateFlow<List<PeerInfo>>(emptyList())
     override val connectedPeers: StateFlow<List<PeerInfo>> = _connectedPeers.asStateFlow()
@@ -77,10 +98,31 @@ class LocalControlPlane(
             if (normalizeServiceType(serviceInfo.serviceType) != normalizeServiceType(SERVICE_TYPE)) return
             if (publishedServices.containsKey(serviceInfo.serviceName)) return
             Log.i(TAG, "Found local service")
-            nsdManager.resolveService(serviceInfo, resolveListener(serviceInfo.serviceName))
+            if (Build.VERSION.SDK_INT >= 34) {
+                if (serviceCallbacks.containsKey(serviceInfo.serviceName)) return
+                val callback = object : NsdManager.ServiceInfoCallback {
+                    override fun onServiceUpdated(info: NsdServiceInfo) {
+                        resolveListener(serviceInfo.serviceName).onServiceResolved(info)
+                    }
+                    override fun onServiceLost() = Unit // DiscoveryListener owns removal.
+                    override fun onServiceInfoCallbackUnregistered() = Unit
+                    override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
+                        serviceCallbacks.remove(serviceInfo.serviceName)
+                        Log.e(TAG, "Service monitoring failed: $errorCode")
+                    }
+                }
+                serviceCallbacks[serviceInfo.serviceName] = callback
+                nsdManager.registerServiceInfoCallback(serviceInfo, callbackExecutor, callback)
+            } else {
+                legacyServices[serviceInfo.serviceName] = serviceInfo
+            }
         }
 
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+            legacyServices.remove(serviceInfo.serviceName)
+            if (Build.VERSION.SDK_INT >= 34) {
+                serviceCallbacks.remove(serviceInfo.serviceName)?.let(nsdManager::unregisterServiceInfoCallback)
+            }
             val peer = peerByChannelID.remove(serviceInfo.serviceName) ?: return
             _connectedPeers.value = _connectedPeers.value.filter { it.id != peer.id }
             _peerEvents.tryEmit(PeerEvent.Disconnected(peer))
@@ -90,9 +132,17 @@ class LocalControlPlane(
 
     override fun start() {
         nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+        if (Build.VERSION.SDK_INT < 34) legacyHandler.post(legacyRefresh)
     }
 
     override fun stop() {
+        legacyHandler.removeCallbacks(legacyRefresh)
+        legacyServices.clear()
+        legacyResolveInFlight = false
+        desiredAnnouncements.clear()
+        updatingRegistrations.clear()
+        if (Build.VERSION.SDK_INT >= 34) serviceCallbacks.values.forEach(nsdManager::unregisterServiceInfoCallback)
+        serviceCallbacks.clear()
         try {
             nsdManager.stopServiceDiscovery(discoveryListener)
         } catch (error: Exception) {
@@ -123,7 +173,20 @@ class LocalControlPlane(
     }
 
     private fun publishChannel(announce: BLECommand.ChannelAnnounce) {
-        if (publishedServices.containsKey(announce.channelID)) return
+        desiredAnnouncements[announce.channelID] = announce
+        if (updatingRegistrations.contains(announce.channelID)) return
+        publishedServices[announce.channelID]?.let { (info, listener) ->
+            val lock = if (announce.isRoomLocked == false) "0" else "1"
+            if (info.attributes["locked"]?.decodeToString() == lock) return
+            updatingRegistrations.add(announce.channelID)
+            try {
+                nsdManager.unregisterService(listener)
+            } catch (error: Exception) {
+                updatingRegistrations.remove(announce.channelID)
+                Log.e(TAG, "Cannot update room discovery (${error.javaClass.simpleName})")
+            }
+            return
+        }
 
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = announce.channelID
@@ -134,6 +197,8 @@ class LocalControlPlane(
             setAttribute(TXT_CREATOR_NAME, localPeer.displayName)
             setAttribute(TXT_AUDIO_QUALITY, announce.audioQuality.rawValue)
             setAttribute(TXT_PLATFORM, localPeer.platform.rawValue)
+            setAttribute("admission", (announce.roomAdmissionVersion ?: 0).toString())
+            setAttribute("locked", if (announce.isRoomLocked == false) "0" else "1")
         }
 
         val listener = object : NsdManager.RegistrationListener {
@@ -142,12 +207,19 @@ class LocalControlPlane(
             }
 
             override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                publishedServices.remove(announce.channelID)
                 Log.e(TAG, "Register failed: $errorCode")
             }
 
-            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
+            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {
+                if (updatingRegistrations.remove(announce.channelID)) {
+                    publishedServices.remove(announce.channelID)
+                    desiredAnnouncements[announce.channelID]?.let(::publishChannel)
+                }
+            }
 
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                updatingRegistrations.remove(announce.channelID)
                 Log.e(TAG, "Unregister failed: $errorCode")
             }
         }
@@ -157,6 +229,8 @@ class LocalControlPlane(
     }
 
     private fun unpublishChannel(channelID: String) {
+        desiredAnnouncements.remove(channelID)
+        if (updatingRegistrations.contains(channelID)) return
         val (_, listener) = publishedServices.remove(channelID) ?: return
         try {
             nsdManager.unregisterService(listener)
@@ -167,17 +241,21 @@ class LocalControlPlane(
 
     private fun resolveListener(channelID: String) = object : NsdManager.ResolveListener {
         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+            legacyResolveInFlight = false
             Log.e(TAG, "Resolve failed: $errorCode")
         }
 
         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+            legacyResolveInFlight = false
             val createdBy = serviceInfo.attributes[TXT_CREATED_BY]?.decodeToString() ?: return
             if (createdBy == localPeer.id) return
             val creatorName = serviceInfo.attributes[TXT_CREATOR_NAME]?.decodeToString() ?: "Peer"
             val channelName = serviceInfo.attributes[TXT_CHANNEL_NAME]?.decodeToString() ?: serviceInfo.serviceName
             val quality = serviceInfo.attributes[TXT_AUDIO_QUALITY]?.decodeToString()?.let(AudioQuality::fromRaw) ?: AudioQuality.STANDARD
             val platform = serviceInfo.attributes[TXT_PLATFORM]?.decodeToString()?.let(PeerInfo.Platform::fromRaw) ?: PeerInfo.Platform.ANDROID
-            val hostIP = serviceInfo.host?.hostAddress
+            val hostIP = if (Build.VERSION.SDK_INT >= 34) {
+                serviceInfo.hostAddresses.firstOrNull { it is java.net.Inet4Address }?.hostAddress
+            } else serviceInfo.host?.hostAddress
             Log.i(TAG, "Resolved local channel")
 
             val peer = PeerInfo(id = createdBy, displayName = creatorName, platform = platform)
@@ -194,7 +272,9 @@ class LocalControlPlane(
                     createdBy = createdBy,
                     audioQuality = quality,
                     wifiSSID = null,
-                    audioHostIP = hostIP
+                    audioHostIP = hostIP,
+                    roomAdmissionVersion = serviceInfo.attributes["admission"]?.decodeToString()?.toIntOrNull(),
+                    isRoomLocked = serviceInfo.attributes["locked"]?.decodeToString() != "0",
                 ) to peer
             )
         }

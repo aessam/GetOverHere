@@ -2,6 +2,9 @@ package com.aessam.toursession.cli
 
 import com.aessam.toursession.TourSessionFixtures
 import com.aessam.toursession.RealtimeSequenceAudit
+import com.aessam.toursession.RoomAdmission
+import com.aessam.toursession.RoomAccessPolicy
+import java.util.UUID
 import com.aessam.toursession.hexToByteArray
 import com.aessam.toursession.lowercaseHex
 import kotlin.system.exitProcess
@@ -9,6 +12,21 @@ import kotlin.system.exitProcess
 fun main(arguments: Array<String>) {
     try {
         when (val command = arguments.firstOrNull()) {
+            "room-guide", "room-guest" -> {
+                require(arguments.size == 3) { "room-guide/room-guest requires UUID CODE (use - for open)" }
+                val id = UUID.fromString(arguments[1])
+                val code = arguments[2].takeUnless { it == "-" }
+                fun receive() = requireNotNull(readlnOrNull()) { "Admission input closed" }.hexToByteArray()
+                if (command == "room-guide") {
+                    val guide = RoomAdmission.Guide(id, RoomAccessPolicy(id, code))
+                    println(guide.challenge.lowercaseHex())
+                    println(guide.reply(receive(), "23456789AB").lowercaseHex())
+                } else {
+                    val guest = RoomAdmission.Guest(receive(), id, code)
+                    println(guest.request.lowercaseHex())
+                    println(guest.open(receive()))
+                }
+            }
             "fixture" -> println(TourSessionFixtures.helloEnvelope().encode().lowercaseHex())
             "encrypted-fixture" -> println(TourSessionFixtures.encryptedHelloFixture().encode().lowercaseHex())
             "decode" -> {

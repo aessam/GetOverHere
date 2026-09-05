@@ -72,6 +72,7 @@ class ChannelServiceLifecycleTest {
             TourContentStore(root.resolve("packs")),
             guidance,
             reconnectBaseDelayMillis,
+            LifecycleRoomAdmission(),
         )
 
         fun resetClearSessionBaselines() {
@@ -458,6 +459,29 @@ class ChannelServiceLifecycleTest {
         } finally {
             h.close()
         }
+    }
+
+    @Test fun roomSettingsPreserveExistingConnections() {
+        val h = Harness()
+        try {
+            h.createGuide()
+            assertEquals(false, h.service.isRoomLocked.value)
+            assertEquals("", h.service.tourCode.value)
+            val controlConfigurations = h.control.configureCalls
+            val audioConfigurations = h.audioPlane.configureCalls
+            val assetConfigurations = h.asset.configureCalls
+            listOf(true to "1234", true to "Edited!", false to "Edited!").forEach { (locked, code) ->
+                h.service.updateRoomAccess(locked, code)
+                awaitCondition("room update") { !h.service.isUpdatingRoomAccess.value }
+                assertEquals(null, h.service.roomAccessError.value)
+                assertEquals(locked, h.service.isRoomLocked.value)
+                assertEquals(code, h.service.tourCode.value)
+                assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+                assertEquals(controlConfigurations, h.control.configureCalls)
+                assertEquals(audioConfigurations, h.audioPlane.configureCalls)
+                assertEquals(assetConfigurations, h.asset.configureCalls)
+            }
+        } finally { h.close() }
     }
 
     // MARK: - Helpers

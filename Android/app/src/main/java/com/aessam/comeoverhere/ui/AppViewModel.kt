@@ -32,6 +32,10 @@ class AppViewModel(
     val offlineMapStatus = channelService.offlineMapStatus
     val tourFeatureError = channelService.tourFeatureError
     val tourCode = channelService.tourCode
+    val isRoomLocked = channelService.isRoomLocked
+    val isUpdatingRoomAccess = channelService.isUpdatingRoomAccess
+    val roomAccessError = channelService.roomAccessError
+    fun updateRoomAccess(locked: Boolean, code: String) = channelService.updateRoomAccess(locked, code)
     val connectionState = channelService.connectionState
     val reconnectAttempt = channelService.reconnectAttempt
     val targetSnapshot = channelService.targetSnapshot
