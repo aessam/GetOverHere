@@ -984,3 +984,31 @@ Implemented on branch `fix/deep-dive-2026-09-02`: open-by-default rooms, guide t
 - Initial failures corrected: misplaced Kotlin import and explicit Swift closure capture syntax; privacy audit rejected raw exceptions in new Android logs; iPhone XCTest tapped the outer SwiftUI toggle container instead of its inner switch; Pixel UI test assumed an empty nearby-room list after ending the local tour. The latter now asserts local session termination and Create availability, which remains valid around other guides. No product behavior was weakened to pass these checks.
 
 Live follow-up: reinstalled and launched the verified Pixel app after instrumentation. Pixel discovered an open room. At 17:58:34 and 17:58:38 its production log reports `TCP: authenticated GOH2 session joined` then `TCP: received first GOH2 audio frame`, followed by `native audio decode failed (IllegalStateException)`. AndroidRuntime shows an uncaught `MediaCodec.stop()` failure during receive-thread cleanup. Thus physical admission/first-frame reception is observed, but sustained two-phone audio is NOT passing. This pre-existing codec interoperability/cleanup defect is the next separate fix; no 30-minute audio or Aware acceptance is claimed. Stopped UI automation on physical phones when their state changed during manual testing.
+
+## 2026-09-04 — Fix Apple→Android codec initialization, PCM rate, and cleanup crash (ADR-053)
+
+Environment: same M4 Max/Xcode beta toolchain, Android Studio JBR, API 36 emulator `emulator-5554`, and physical Pixel 11 Pro/API 37 `66180DLKX006ND`. No production Swift or wire-format changes.
+
+Reproduction and correction:
+
+- New `PlayoutClockTest.decoderCleanupFailureDoesNotEscapeReceiveThread` failed before the fix with `IllegalStateException` from decoder close (`/tmp/GetOverHere-codec-cleanup-repro.log`). After idempotent, contained cleanup it passes and asserts one failure notification and one decoder close across two close calls.
+- Production Apple-encoded tone packets reproduced Android native failure (`/tmp/GetOverHere-codec-interop-repro.log`). Removing `stop()` exposed the underlying `dequeueOutputBuffer` error without the masking cleanup exception (`/tmp/GetOverHere-codec-interop-cleanup-fixed.log`). Documented Android codec initialization resolved it.
+- The physical duration assertion then failed: Opus returned 61,440 PCM bytes for approximately 20,480 expected (`/tmp/GetOverHere-codec-pixel.log`). Actual 48 kHz output now passes through a streaming anti-aliased 48→16 kHz converter. The converter's initial frequency test counted startup transients; measurement now excludes the first 64 output samples and still checks frequency, amplitude, alias rejection, and exact chunked/whole-output equality.
+- `GOH_SWIFT_SCRATCH=/tmp/GetOverHereRoomAdmission scripts/generate_native_codec_fixture.sh > /tmp/GetOverHere-apple-codec-regenerated.hex 2>/tmp/GetOverHere-codec-generate.log`: generated 63 real encoded packets. Retained asset uses 32 Opus and 31 AAC-LC packets from the production Apple encoder, with generated 440 Hz input. A comparison against a later regeneration differed in AAC output; byte-identical native encoding across runs is not a gate. Tests use the fixed retained capture.
+
+Final verification:
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+ANDROID_SERIAL=66180DLKX006ND scripts/verify_native_codec_interop.sh
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android testDebugUnitTest
+```
+
+- Complete virtual-device gate passed (`/tmp/GetOverHere-codec-final-virtual.log`): host core/wire/privacy checks, lint/APK, iOS unit/integration and UI suites, and Android emulator instrumentation. Hardware-earpiece checks explicitly skip; no emulator failure.
+- Focused physical gate passed, five native-codec instrumented tests (`/tmp/GetOverHere-codec-final-pixel.log`). Includes actual Apple Opus/AAC decoding with duration, non-silence, and tone-frequency assertions, plus Apple-packet replay through encrypted realtime transport. Cleanup/converter JVM regressions pass through the same reusable script.
+- Complete JVM suite: 81 tests, zero failures/errors from `Android/app/build/test-results/testDebugUnitTest/TEST-*.xml`; `/tmp/GetOverHere-codec-final-unit.log` ends `BUILD SUCCESSFUL`.
+- Full physical-suite follow-up (`ANDROID_SERIAL=66180DLKX006ND JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android connectedDebugAndroidTest`) was interrupted after ten completed tests, not counted as a passing full suite. Gradle reported process crash during the eleventh test. Its captured log shows `adbd service requested 'shell:am force-stop com.aessam.comeoverhere'` at 20:11:52.445; this session issued no force-stop. No new application exception appears in the crash buffer. Artifact: `/tmp/GetOverHere-codec-final-pixel-full.log` and the instrumented Apple-transport testcase log under `Android/app/build/outputs/androidTest-results/connected/debug/Pixel 11 Pro - 17/`.
+- Read-only follow-up found the production app in the live Bolbol room, LISTENING, displaying a guide-selected pointer. PID 25858 logged 16 kHz playback at 20:12:16, authenticated audio at 20:12:17.231, first frame at 20:12:17.263, and remained alive through 20:13:36 without the prior decode/cleanup exception in the inspected interval. One startup short write (64/640 bytes, count 1) was logged; do not infer loss-free playback. Later rolling-log excerpt saved to `/tmp/GetOverHere-codec-live-pixel.log`. The app was already running the fixed build; no reinstall or UI automation interrupted that live session.
+- `bash -n scripts/generate_native_codec_fixture.sh scripts/verify_native_codec_interop.sh` and `git diff --check` passed.
+
+The reproduced initialization/cleanup crash is fixed. These results do not establish audible quality, sustained two-phone endurance, reverse-direction acceptance, or Aware/BLE readiness. No raw microphone recording or physical-device log is committed.

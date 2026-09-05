@@ -4,7 +4,7 @@
 
 Rooms now start open. Both apps have `Lock Room with Code`, a guide-editable code, discovery lock status, and independent encrypted admission (ADR-052). Existing guests keep their media sessions when the guide locks, edits, or unlocks. Host, simulator/emulator, and individual physical-device room-control checks passed; commands and artifacts are in ExperimentLog.md.
 
-The next live blocker is Android native audio: physical iPhone→Pixel joining authenticated and received an audio frame, then native decoding failed and cleanup threw from `MediaCodec.stop()`. Reproduce cross-platform codec configuration and make failure cleanup safe before claiming usable two-phone audio. Do not confuse same-platform codec loopbacks or admission parity with sustained cross-platform playback. Physical endurance and Aware/BLE gates below remain pending.
+The Android native-audio crash is fixed (ADR-053): Android builds documented codec initialization instead of consuming Apple's opaque cookie, converts actual 48 kHz Opus output to the 16 kHz playback contract, and safely releases failed decoders. Regression fixtures use real production Apple-encoded Opus/AAC packets; direct decoding checks duration, tone frequency, and non-silence, and encrypted-transport replay passes on the Pixel and emulator. The full virtual-device gate passes. This is not a sustained live two-phone listening result: physical endurance and Aware/BLE gates below remain pending.
 
 **Date:** 2026-08-22
 **Status:** P0 complete. P3 LAN software hardening through G6 is implemented; the P3 physical acceptance gate remains next, before P1. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).

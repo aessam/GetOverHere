@@ -178,6 +178,7 @@ class UDPAudioPlane(
         }
         @Volatile private var stopped = false
         private val failureReported = AtomicBoolean(false)
+        private val closed = AtomicBoolean(false)
 
         init {
             val duration = configuration.frameDurationMilliseconds
@@ -217,6 +218,7 @@ class UDPAudioPlane(
         }
 
         override fun close() {
+            if (!closed.compareAndSet(false, true)) return
             stopped = true
             executor.shutdownNow()
             // The receive thread is interrupted by stop(); clear the flag so the wait is real.
@@ -230,7 +232,12 @@ class UDPAudioPlane(
             } finally {
                 if (wasInterrupted) Thread.currentThread().interrupt()
             }
-            decoder.close()
+            try {
+                decoder.close()
+            } catch (error: Exception) {
+                Log.e(TAG, "TCP: decoder cleanup failed (${error.javaClass.simpleName})")
+                if (failureReported.compareAndSet(false, true)) onDecodeFailure()
+            }
         }
     }
 

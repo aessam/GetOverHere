@@ -22,6 +22,20 @@ import java.util.concurrent.atomic.AtomicInteger
 class PlayoutClockTest {
     private val fixedNow = 1_000_000L
 
+    @Test fun decoderCleanupFailureDoesNotEscapeReceiveThread() {
+        val decoder = FakePlayoutDecoder(failing = true, failingClose = true)
+        val failures = AtomicInteger()
+        val clock = UDPAudioPlane.PlayoutClock(decoder, { fixedNow }, {}, { failures.incrementAndGet() })
+        listOf(1L, 2L, 3L).forEach {
+            clock.offer(SequencedEncodedAudioFrame(it, decoder.payload(1)), fixedNow)
+        }
+        clock.tick()
+        clock.close()
+        clock.close()
+        assertEquals(1, failures.get())
+        assertEquals(1, decoder.closeCount.get())
+    }
+
     @Test
     fun gapIsConcealedWithSilence() {
         val decoder = FakePlayoutDecoder()
@@ -78,7 +92,7 @@ class PlayoutClockTest {
     }
 }
 
-private class FakePlayoutDecoder(private val failing: Boolean = false) : RealtimeAudioDecoderInterface {
+private class FakePlayoutDecoder(private val failing: Boolean = false, private val failingClose: Boolean = false) : RealtimeAudioDecoderInterface {
     override val configuration = SessionAudioCodecConfiguration(SessionAudioCodec.OPUS, 16_000, 1, 20, 20_000)
     val decodeCount = AtomicInteger()
     val closeCount = AtomicInteger()
@@ -94,5 +108,6 @@ private class FakePlayoutDecoder(private val failing: Boolean = false) : Realtim
 
     override fun close() {
         closeCount.incrementAndGet()
+        if (failingClose) throw IllegalStateException("codec stop rejected after decode failure")
     }
 }
