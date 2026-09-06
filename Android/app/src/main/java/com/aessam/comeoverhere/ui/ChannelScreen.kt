@@ -31,9 +31,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.aessam.comeoverhere.core.Channel
+import com.aessam.comeoverhere.core.BluetoothRoomDiscovery
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.service.ListenState
 import com.aessam.comeoverhere.service.LocalDevicePosition
@@ -63,6 +65,7 @@ import java.util.UUID
 @Composable
 fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     val channels by vm.channels.collectAsState()
+    val bluetoothEnabled by vm.bluetoothDiscoveryEnabled.collectAsState()
     val activeChannelID by vm.activeChannelID.collectAsState()
     val listenState by vm.listenState.collectAsState()
     val listenerCount by vm.listenerCount.collectAsState()
@@ -94,6 +97,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var newChannelName by remember { mutableStateOf("") }
     var pickerError by remember { mutableStateOf<String?>(null) }
+    var bluetoothError by remember { mutableStateOf<String?>(null) }
     var guestMinimizedSlide by remember { mutableStateOf(false) }
     var selectedFeature by remember { mutableStateOf(TourFeature.SLIDES) }
     var pendingJoinChannel by remember { mutableStateOf<Channel?>(null) }
@@ -102,6 +106,20 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     var createError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val pickerScope = rememberCoroutineScope()
+    val bluetoothPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val granted = BluetoothRoomDiscovery.requiredPermissions().all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        vm.setBluetoothDiscoveryEnabled(granted)
+        bluetoothError = if (granted) null else "Bluetooth permission denied. Enable it in Settings to try again."
+    }
+    val requestBluetooth: (Boolean) -> Unit = { enabled ->
+        bluetoothError = null
+        val required = BluetoothRoomDiscovery.requiredPermissions()
+        if (!enabled || required.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+            vm.setBluetoothDiscoveryEnabled(enabled)
+        } else bluetoothPermission.launch(required)
+    }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(50),
     ) { uris ->
@@ -279,6 +297,14 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Bluetooth room discovery", modifier = Modifier.weight(1f))
+                Switch(checked = bluetoothEnabled, onCheckedChange = requestBluetooth,
+                    modifier = Modifier.testTag("bluetoothRoomDiscovery"))
+            }
+            Text("Foreground room preview only. Joining and audio require local Wi-Fi.",
+                modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+            bluetoothError?.let { Text(it, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
             if (activeChannel != null) {
                 if (activeChannel!!.createdBy == vm.localPeerID) {
                     CreatorView(
@@ -652,7 +678,8 @@ private fun RoomAccessControls(vm: AppViewModel, channelID: String, savedCode: S
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Lock Room with Code", Modifier.weight(1f))
-            Switch(checked = locked, onCheckedChange = { vm.updateRoomAccess(it, code) }, enabled = !updating)
+            Switch(checked = locked, onCheckedChange = { vm.updateRoomAccess(it, code) }, enabled = !updating,
+                modifier = Modifier.testTag("roomLockToggle"))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = code, onValueChange = { code = it }, singleLine = true,

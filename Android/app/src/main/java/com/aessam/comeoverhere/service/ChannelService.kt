@@ -39,6 +39,8 @@ sealed interface OfflineMapStatus {
 }
 
 interface ChannelServiceProtocol {
+    val bluetoothDiscoveryEnabled: StateFlow<Boolean>
+    fun setBluetoothDiscoveryEnabled(enabled: Boolean)
     val channels: StateFlow<List<Channel>>
     val activeChannelID: StateFlow<String?>
     val listenState: StateFlow<ListenState>
@@ -118,6 +120,12 @@ class ChannelService(
 
     private val _listenState = MutableStateFlow(ListenState.IDLE)
     override val listenState: StateFlow<ListenState> = _listenState.asStateFlow()
+    private val _bluetoothDiscoveryEnabled = MutableStateFlow(false)
+    override val bluetoothDiscoveryEnabled = _bluetoothDiscoveryEnabled.asStateFlow()
+    private val discoveryForeground = MutableStateFlow(true)
+    private var discoveryJob: Job? = null
+    override fun setBluetoothDiscoveryEnabled(enabled: Boolean) { _bluetoothDiscoveryEnabled.value = enabled }
+    fun setDiscoveryForeground(foreground: Boolean) { discoveryForeground.value = foreground }
 
     private val _listenerCount = MutableStateFlow(0)
     override val listenerCount: StateFlow<Int> = _listenerCount.asStateFlow()
@@ -256,6 +264,17 @@ class ChannelService(
     // MARK: - Lifecycle
 
     override fun start() {
+        discoveryJob?.cancel()
+        discoveryJob = scope.launch {
+            kotlinx.coroutines.flow.combine(_bluetoothDiscoveryEnabled, discoveryForeground, listenState) { enabled, foreground, state ->
+                when {
+                    !enabled || !foreground -> BluetoothDiscoveryMode.OFF
+                    state == ListenState.IDLE -> BluetoothDiscoveryMode.BROWSING
+                    state == ListenState.BROADCASTING -> BluetoothDiscoveryMode.ADVERTISING
+                    else -> BluetoothDiscoveryMode.OFF
+                }
+            }.collect { coordinator.controlPlane.setBluetoothDiscoveryMode(it) }
+        }
         listenForChannelCommands()
         listenForPeerEvents()
         startPeriodicBroadcast()
@@ -263,6 +282,7 @@ class ChannelService(
     }
 
     override fun stop() {
+        setDiscoveryForeground(false)
         stopCurrentActivity()
     }
 

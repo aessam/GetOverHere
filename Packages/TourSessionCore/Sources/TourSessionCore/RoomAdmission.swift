@@ -114,7 +114,7 @@ public enum RoomAdmission {
         }
     }
 
-    private static func derive(_ key: P256.KeyAgreement.PrivateKey, _ peer: Data, _ salt: Data, _ transcript: Data) throws -> SymmetricKey {
+    static func derive(_ key: P256.KeyAgreement.PrivateKey, _ peer: Data, _ salt: Data, _ transcript: Data) throws -> SymmetricKey {
         let publicKey = try P256.KeyAgreement.PublicKey(x963Representation: peer)
         let shared = try key.sharedSecretFromKeyAgreement(with: publicKey)
         return shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt,

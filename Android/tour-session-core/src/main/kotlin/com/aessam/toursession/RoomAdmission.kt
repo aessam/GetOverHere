@@ -106,13 +106,14 @@ object RoomAdmission {
         return byteArrayOf(4) + coordinate(publicKey.w.affineX) + coordinate(publicKey.w.affineY)
     }
 
-    private fun derive(key: KeyPair, peer: ByteArray, salt: ByteArray, transcript: ByteArray): ByteArray {
+    internal fun derive(key: KeyPair, peer: ByteArray, salt: ByteArray, transcript: ByteArray): ByteArray {
         require(peer.size == 65 && peer[0].toInt() == 4)
         val parameters = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
             .getParameterSpec(ECParameterSpec::class.java)
         val point = ECPoint(BigInteger(1, peer.copyOfRange(1, 33)), BigInteger(1, peer.copyOfRange(33, 65)))
         val publicKey = KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(point, parameters))
         val shared = KeyAgreement.getInstance("ECDH").apply { init(key.private); doPhase(publicKey, true) }.generateSecret()
+        require(shared.size == 32) { "ECDH provider must return a fixed-width P-256 secret" }
         val extracted = SessionAuthenticator.hmac(salt, shared)
         return SessionAuthenticator.hmac(extracted, "GetOverHere/room-admission/v1".toByteArray() + transcript + byteArrayOf(1))
     }

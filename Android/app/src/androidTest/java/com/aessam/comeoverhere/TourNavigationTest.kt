@@ -9,7 +9,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
-import androidx.compose.ui.test.isToggleable
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsOff
 import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
@@ -21,6 +22,13 @@ import com.aessam.comeoverhere.service.SessionConnectionState
 import java.net.ServerSocket
 
 class TourNavigationTest {
+    @Test fun bluetoothDiscoveryDefaultsOffAndRequiresExplicitIntent() {
+        composeRule.onNodeWithTag("bluetoothRoomDiscovery").assertIsOff()
+        composeRule.onNodeWithTag("bluetoothRoomDiscovery").performClick()
+        composeRule.waitUntil(2_000) { channelService().bluetoothDiscoveryEnabled.value }
+        composeRule.onNodeWithTag("bluetoothRoomDiscovery").performClick()
+        composeRule.waitUntil(2_000) { !channelService().bluetoothDiscoveryEnabled.value }
+    }
     @get:Rule(order = 0)
     val tourPermissions: GrantPermissionRule =
         GrantPermissionRule.grant(
@@ -64,13 +72,13 @@ class TourNavigationTest {
 
         assertEquals(false, channelService().isRoomLocked.value)
         composeRule.onNodeWithText("Room code (4–64 characters)").performTextInput("1234")
-        composeRule.onNode(isToggleable()).performClick()
+        composeRule.onNodeWithTag("roomLockToggle").performClick()
         composeRule.waitUntil(10_000) { channelService().isRoomLocked.value }
         assertEquals("1234", channelService().tourCode.value)
         composeRule.onNodeWithText("Room code (4–64 characters)").performTextReplacement("Edited!")
         composeRule.onNodeWithText("Save Code").performClick()
         composeRule.waitUntil(10_000) { channelService().tourCode.value == "Edited!" }
-        composeRule.onNode(isToggleable()).performClick()
+        composeRule.onNodeWithTag("roomLockToggle").performClick()
         composeRule.waitUntil(10_000) { !channelService().isRoomLocked.value }
 
         composeRule.onNodeWithText("Slides").assertIsDisplayed()

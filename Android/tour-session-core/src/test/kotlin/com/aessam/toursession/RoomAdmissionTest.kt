@@ -7,6 +7,22 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RoomAdmissionTest {
+    @Test fun leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() {
+        val parameters = java.security.AlgorithmParameters.getInstance("EC").apply {
+            init(java.security.spec.ECGenParameterSpec("secp256r1"))
+        }.getParameterSpec(java.security.spec.ECParameterSpec::class.java)
+        val factory = java.security.KeyFactory.getInstance("EC")
+        val key = java.security.KeyPair(
+            factory.generatePublic(java.security.spec.ECPublicKeySpec(parameters.generator, parameters)),
+            factory.generatePrivate(java.security.spec.ECPrivateKeySpec(java.math.BigInteger.ONE, parameters)),
+        )
+        // Private scalars 1 and 379; identical CryptoKit fixture. Never a random coverage claim.
+        val peer = "04005543894af3d00ed7d740abdbd75c96b06877b787db5f70eea78b90a8d7c00abb4c85a3d8ea29efaafa24406912dd84d5b14dc32bf656ef6c6bd58a5d943f92".hexToByteArray()
+        val result = RoomAdmission.derive(key, peer, ByteArray(32), byteArrayOf())
+        assertEquals("1652d7207df35c849397c233a68b03323308bd4dcd2f50e20ab8323fea0bd015",
+            result.joinToString("") { "%02x".format(it.toInt() and 255) })
+    }
+
     @Test fun roundtripAndTamper() {
         listOf(null, "1234", "My-Tour!42", "a".repeat(64)).forEach { code ->
             val id = UUID.randomUUID()

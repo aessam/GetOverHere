@@ -1047,3 +1047,56 @@ xcrun devicectl --timeout 10 device info lockState --device F043EBB9-780F-5483-B
 The Pixel is absent from adb; only `emulator-5554` remains. Xcode reports `Unlock Dark knight to Continue`; the documented lock-state command confirms `passcodeRequired: true`. The waiting device test (`/tmp/GetOverHere-bluetooth-iphone-ui.log`, this session's PID 89881) was cancelled with SIGTERM after confirming its exact command, so it cannot unexpectedly take over the phone later. The user was asked to reconnect the Pixel and unlock the iPhone. No lock bypass or radio-setting change was attempted.
 
 Physical gate still required: with Wi-Fi off and Bluetooth on, create a real guide room and verify the other phone displays its name/lock status as discovery-only; change lock status, end/recreate the room, test expiration and Bluetooth off/on, and reverse guide/guest roles. Then restore LAN and verify one merged room with joining enabled. Foreground discovery is the current slice; Bluetooth admission, control, voice, background endurance, and group scale are not delivered by this checkpoint.
+
+## 2026-09-05 — A1 review remediation and A2 physical preflight
+
+Starting commit: `7a41610`. The user approved A1–A5 continuous execution with physical/security gates. Changes: explicit opt-in foreground Bluetooth discovery, browser/guide role separation, scan duty reduction, nonblocking admission completion, reverse native-codec fixtures, deterministic leading-zero ECDH coverage, admission in the main gate, and current onboarding/security documentation (ADR-055). No production reverse-codec change was needed. No BLE admission/control/voice or Aware production capability is claimed.
+
+Environment: selected Xcode beta / iOS 27 SDK; simulator iPhone 17 Pro `A7202CAB-B085-4F1A-A7B5-8AE00A839E76`, runtime 26.4.1 (23E254a); Android `emulator-5554`, API 36 / Android 16; Android Studio JBR; macOS 27. Physical Pixel remained absent and Dark knight required its passcode.
+
+Executed gates:
+
+```bash
+# Initial Android compilation, JVM tests and lint: PASS.
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :tour-session-core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+
+# Deterministic shared-secret edge: PASS; same derived key in Swift/Kotlin for scalars 1 and 379.
+swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG6/verifier-swift --filter RoomAdmissionTests
+
+# Focused iOS lifecycle / full-socket / lock-edit-unlock: PASS, 23 test methods.
+xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG6/verifier-ios test -only-testing:GetOverHereTests/RoomAdmissionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+
+# Complete final virtual gate: PASS.
+GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift bash scripts/verify_virtual_devices.sh
+
+# Fresh Android production encoder -> production iOS decoder: PASS.
+GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios bash scripts/verify_reverse_codec_interop.sh
+
+git diff --check
+bash -n scripts/verify_reverse_codec_interop.sh scripts/verify_tour_session.sh scripts/verify_virtual_devices.sh scripts/verify_bluetooth_discovery.sh
+```
+
+Final full-gate log: `/tmp/GetOverHere-A1-final-virtual.log`, ending `Virtual-device verification passed; physical audio and radio gates remain separate`. Swift core: 40 methods; real admission parity: 8/8 exchanges; Android JVM XML: 88 tests. Xcode summary for `Test-GetOverHere-2026.09.05_19-59-10--0700.xcresult`: 94 iOS unit methods / 97 parameterized runs, zero failures. UI bundle `Test-GetOverHere-2026.09.05_20-00-04--0700.xcresult`: four passing methods / seven runs plus one physical-guide skip. Android instrumentation XML contains 24 test cases, zero failures/errors and two earpiece skips; its progress console also printed 26 completions, so the XML is used for the case count. `RoomAdmissionBoundaryTest` passed the Android-provider leading-zero and actual NIO lock/edit/unlock cases.
+
+Reverse-codec log: `/tmp/GetOverHere-A1-final-reverse.log`, ending `Android-to-iOS native codec gate passed`. Retained input: `iOS/GetOverHereTests/android-native-codec.hex`, 128 generated-tone packets from production Android encoders. Tests assert approximately one negotiated frame duration per packet (two-frame priming allowance), RMS above 1,000 and 440 Hz within 10 Hz. The fresh gate injects its exported file path via a generated `.xctestrun` environment; normal unit tests use the bundled fixture. No recorded speech or microphone data is retained.
+
+Failed attempts and corrections:
+
+- The first reverse harness used Gradle connected tests followed by `run-as`; Gradle had uninstalled the package and the captured text was `run-as: unknown package`. Changed to explicit install/instrument/read and strict hex validation. An initial iOS 27 simulator startup did not reach tests and was cancelled; the recorded passing run uses 26.4.1 with parallel cloning disabled.
+- The first Android guide lifecycle assertion checked before its asynchronous collector applied the mode. The test now drives its scheduler and waits for the observable state. Production lifecycle behavior was not weakened to satisfy the test.
+- `/tmp/GetOverHere-A1-full-virtual.log` was cancelled during the new iOS full-socket regression. `sample 77734 1 -file /tmp/GetOverHere-A1-ios-sample.txt` placed the blocked thread inside the fixture's `send(..., MSG_DONTWAIT)`. Replaced per-send assumptions with verified `O_NONBLOCK` preparation before the policy lock. The focused full-socket regression then passed in 0.006 s; full verification subsequently passed. Android similarly prepares a nonblocking channel before its locked send. No blocking reply retries remain under either policy lock.
+- Added unique UI identifiers for room locking and discovery; the old Android `isToggleable()` selector became ambiguous with two switches.
+
+Visual verification: exported and inspected the iOS launch attachment at `/tmp/GetOverHere-A1-ui-attachments/5EE445B1-478B-4F23-8787-967C84C1F9FF.png`; inspected `/tmp/GetOverHere-A1-android-ui.png`. Both display discovery off and the foreground-preview/LAN-audio limitation without clipping. Android package inspection showed SCAN, CONNECT and ADVERTISE all `granted=false` at launch with no permission dialog. Tapping the explicit switch produced the system Nearby devices prompt (`/tmp/GetOverHere-A1-permission.xml`). These are emulator/UI observations, not physical BLE evidence.
+
+Physical preflight:
+
+```bash
+/Users/aessam/Library/Android/sdk/platform-tools/adb devices -l
+xcrun devicectl device info lockState --device F043EBB9-780F-5483-B0D1-BC0BD9955D9C
+bash scripts/capture_physical_test.sh start --ios-device F043EBB9-780F-5483-B0D1-BC0BD9955D9C --android-serial 66180DLKX006ND --run-dir /tmp/GetOverHerePhysicalRuns/A2-2026-09-05
+```
+
+Result: only `emulator-5554` in adb; iPhone `passcodeRequired: true`; capture harness exits 1 with `error: Android device 66180DLKX006ND is unavailable` (`/tmp/GetOverHere-A2-preflight.log`). A2 is blocked, not passed. The user was asked to reconnect/authorize Pixel and unlock iPhone. A3–A5 remain pending behind the physical gates and guide-key bootstrap decision. The `stable-local-network` tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`; no tag promotion or push was performed.
+
+Final permission-denial UI check: after installation completed, launched `com.aessam.comeoverhere/.MainActivity`, tapped the discovery switch at emulator coordinates `(970,294)`, inspected the permission dialog with `adb shell uiautomator dump`, then tapped its deny button at `(540,1480)`. `/tmp/GetOverHere-A1-denied-final.xml` contains the app UI, `checked="false"`, and `Bluetooth permission denied. Enable it in Settings to try again.` An earlier probe overlapped APK reinstallation and was discarded; it is not used as denial or crash evidence. No physical phone settings were changed.

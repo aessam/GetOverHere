@@ -8,6 +8,22 @@
 import XCTest
 
 final class GetOverHereUITests: XCTestCase {
+    @MainActor
+    func testBluetoothDiscoveryDefaultsOffWithoutPromptingAtLaunch() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .bluetooth)
+        app.launch()
+        let toggle = app.switches["bluetoothRoomDiscovery"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let bluetoothAlert = springboard.alerts.containing(NSPredicate(format: "label CONTAINS[c] 'Bluetooth'"))
+        XCTAssertFalse(bluetoothAlert.firstMatch.waitForExistence(timeout: 2))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Bluetooth discovery off at launch"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
 
     override func setUpWithError() throws {
         continueAfterFailure = false

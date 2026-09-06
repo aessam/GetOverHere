@@ -31,7 +31,7 @@ class BluetoothDiscoveryIntegrationTest {
     private class DiscoveryRadio : BluetoothRoomDiscoveryInterface {
         override var onRoom: ((BluetoothRoomRecord) -> Unit)? = null
         override var onLost: ((UUID) -> Unit)? = null
-        override fun start() = Unit
+        override fun setMode(mode: com.aessam.comeoverhere.core.BluetoothDiscoveryMode) = Unit
         override fun stop() = Unit
         override fun publish(record: BluetoothRoomRecord?) = Unit
     }

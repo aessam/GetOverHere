@@ -31,7 +31,7 @@ echo "[2/3] iOS Simulator UI suite (physical guide capture is explicitly skipped
 "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" -quiet \
     -project "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj" \
     -scheme GetOverHere \
-    -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    -destination "${GOH_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}" \
     -parallel-testing-enabled NO \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     test -only-testing:GetOverHereUITests

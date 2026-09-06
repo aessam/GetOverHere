@@ -2,11 +2,6 @@ package com.aessam.comeoverhere
 
 import android.os.Bundle
 import android.os.Build
-import android.content.pm.PackageManager
-import android.util.Log
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
-import com.aessam.comeoverhere.core.BluetoothRoomDiscovery
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import org.maplibre.android.MapLibre
@@ -22,15 +17,16 @@ import com.aessam.comeoverhere.ui.ChannelScreen
 import com.aessam.comeoverhere.ui.WiFiAwareLabScreen
 
 class MainActivity : ComponentActivity() {
-    private val bluetoothPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.any { !it }) Log.w("MainActivity", "Bluetooth room discovery permission denied")
+    override fun onStart() {
+        super.onStart()
+        (application as ComeOverHereApp).channelService.setDiscoveryForeground(true)
+    }
+    override fun onStop() {
+        (application as ComeOverHereApp).channelService.setDiscoveryForeground(false)
+        super.onStop()
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val required = BluetoothRoomDiscovery.requiredPermissions()
-        if (savedInstanceState == null && required.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
-            bluetoothPermissions.launch(required)
-        }
         MapLibre.getInstance(this)
         val channelService = (application as ComeOverHereApp).channelService
 

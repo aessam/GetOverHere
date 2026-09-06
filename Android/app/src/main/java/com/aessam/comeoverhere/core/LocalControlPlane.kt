@@ -160,10 +160,11 @@ class LocalControlPlane(
     }
 
     override fun start() {
-        bluetooth.start()
         nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
         if (Build.VERSION.SDK_INT < 34) legacyHandler.post(legacyRefresh)
     }
+
+    override fun setBluetoothDiscoveryMode(mode: BluetoothDiscoveryMode) = bluetooth.setMode(mode)
 
     override fun stop() {
         bluetooth.stop()

@@ -28,6 +28,8 @@ nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, Sendable
 
 @MainActor
 final class LifecycleControlPlane: ControlPlane {
+    private(set) var bluetoothMode: BluetoothDiscoveryMode = .off
+    func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) { bluetoothMode = mode }
     let localPeer: PeerInfo
     var connectedPeers: [PeerInfo] = []
     let commands: AsyncStream<(BLECommand, PeerInfo)>

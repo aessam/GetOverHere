@@ -34,7 +34,7 @@ import java.util.UUID
 interface BluetoothRoomDiscoveryInterface {
     var onRoom: ((BluetoothRoomRecord) -> Unit)?
     var onLost: ((UUID) -> Unit)?
-    fun start()
+    fun setMode(mode: BluetoothDiscoveryMode)
     fun stop()
     fun publish(record: BluetoothRoomRecord?)
 }
@@ -49,6 +49,8 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     private var adapter: BluetoothAdapter? = null
     private var server: BluetoothGattServer? = null
     private var running = false
+    private var mode = BluetoothDiscoveryMode.OFF
+    private var retryAt = 0L
     private var radioStarted = false
     private var serviceReady = false
     private var advertising = false
@@ -75,11 +77,17 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     }
     private fun now() = SystemClock.elapsedRealtime()
 
-    override fun start() {
-        if (running) return
+    override fun setMode(mode: BluetoothDiscoveryMode) {
+        if (this.mode == mode) return
+        val savedRecord = record
+        stop()
+        record = savedRecord
+        this.mode = mode
+        if (mode == BluetoothDiscoveryMode.OFF) return
         running = true; handler.post(refresh)
     }
     override fun stop() {
+        mode = BluetoothDiscoveryMode.OFF; retryAt = 0
         running = false; record = byteArrayOf(); handler.removeCallbacks(refresh); stopRadio()
     }
     override fun publish(record: BluetoothRoomRecord?) {
@@ -98,7 +106,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
                     adapter = manager.adapter
                     if (adapter?.isEnabled != true) { if (radioStarted) stopRadio() }
                     else {
-                        if (!radioStarted) startRadio()
+                        if (!radioStarted && now() >= retryAt) startRadio()
                         updateAdvertising()
                         val time = now()
                         pending.filterValues { time - it > 9_000 }.keys.toList().forEach(::disconnect)
@@ -116,14 +124,22 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
                     }
                 }
             } catch (error: Exception) {
-                Log.e(TAG, "Bluetooth discovery failed (${error.javaClass.simpleName})"); stopRadio()
+                Log.e(TAG, "Bluetooth discovery failed; retry in 30 s (${error.javaClass.simpleName})")
+                stopRadio(); retryAt = now() + 30_000
             }
             handler.postDelayed(this, 3_000)
         }
     }
 
     private fun startRadio() {
-        val scanner = adapter?.bluetoothLeScanner ?: return
+        if (mode == BluetoothDiscoveryMode.BROWSING) {
+            val scanner = adapter?.bluetoothLeScanner ?: error("Bluetooth scanner unavailable")
+            scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_ID)).build()),
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(), scanCallback)
+            radioStarted = true
+            Log.i(TAG, "Bluetooth room discovery scanning")
+            return
+        }
         server = manager.openGattServer(context, serverCallback)
             ?: throw IllegalStateException("Bluetooth GATT server unavailable")
         radioStarted = true
@@ -131,9 +147,6 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
         service.addCharacteristic(BluetoothGattCharacteristic(RECORD_ID,
             BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
         check(server?.addService(service) == true) { "Bluetooth service registration rejected" }
-        scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_ID)).build()),
-            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
-        Log.i(TAG, "Bluetooth room discovery scanning")
     }
 
     private fun stopRadio() {
@@ -157,8 +170,9 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     }
 
     private fun updateAdvertising() {
-        if (!radioStarted || !serviceReady) return
+        if (mode != BluetoothDiscoveryMode.ADVERTISING || !radioStarted || !serviceReady || now() < retryAt) return
         val advertiser = adapter?.bluetoothLeAdvertiser ?: run {
+            retryAt = now() + 30_000
             Log.e(TAG, "Bluetooth advertising unavailable"); return
         }
         if (record.isEmpty()) {
@@ -173,15 +187,19 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settings: AdvertiseSettings) { Log.i(TAG, "Bluetooth room advertising started") }
         override fun onStartFailure(errorCode: Int) { handler.post {
+            if (!running || mode != BluetoothDiscoveryMode.ADVERTISING) return@post
+            retryAt = now() + 30_000
             advertising = false; Log.e(TAG, "Bluetooth advertising failed: $errorCode")
         } }
     }
     private val scanCallback = object : ScanCallback() {
         override fun onScanFailed(errorCode: Int) { handler.post {
-            Log.e(TAG, "Bluetooth scan failed: $errorCode"); stopRadio()
+            if (!running || mode != BluetoothDiscoveryMode.BROWSING) return@post
+            Log.e(TAG, "Bluetooth scan failed: $errorCode; retry in 30 s")
+            stopRadio(); retryAt = now() + 30_000
         } }
         override fun onScanResult(callbackType: Int, result: ScanResult) { handler.post {
-            if (!running || !radioStarted || !permitted()) return@post
+            if (!running || mode != BluetoothDiscoveryMode.BROWSING || !radioStarted || !permitted()) return@post
             val address = result.device.address
             if (links.size >= 4 || links.containsKey(address) || now() - (attempts[address] ?: -6_000) < 6_000) return@post
             attempts[address] = now(); pending[address] = now()
@@ -240,7 +258,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
 
     private val serverCallback = object : BluetoothGattServerCallback() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService) { handler.post {
-            if (!running || !radioStarted || !permitted()) return@post
+            if (!running || mode != BluetoothDiscoveryMode.ADVERTISING || !radioStarted || !permitted()) return@post
             serviceReady = status == BluetoothGatt.GATT_SUCCESS
             if (serviceReady) updateAdvertising() else Log.e(TAG, "Bluetooth room service failed: $status")
         } }

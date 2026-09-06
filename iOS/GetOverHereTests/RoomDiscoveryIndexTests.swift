@@ -73,7 +73,7 @@ struct RoomDiscoveryIndexTests {
         var onRoom: ((BluetoothRoomRecord) -> Void)?
         var onLost: ((UUID) -> Void)?
         var published: BluetoothRoomRecord?
-        func start() {}
+        func setMode(_ mode: BluetoothDiscoveryMode) {}
         func stop() {}
         func publish(_ record: BluetoothRoomRecord?) { published = record }
     }

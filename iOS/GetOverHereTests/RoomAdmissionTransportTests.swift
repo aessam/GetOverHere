@@ -1,10 +1,34 @@
 import Foundation
+import Darwin
 import Testing
 import TourSessionCore
 @testable import GetOverHere
 
 @Suite(.serialized)
 struct RoomAdmissionTransportTests {
+    @Test func fullSocketRejectsReplyWithoutWaiting() throws {
+        var sockets: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
+        defer { Darwin.close(sockets[0]); Darwin.close(sockets[1]) }
+        let flags = fcntl(sockets[0], F_GETFL, 0)
+        try #require(flags >= 0 && fcntl(sockets[0], F_SETFL, flags | O_NONBLOCK) == 0)
+        let fill = Data(repeating: 1, count: 16_384)
+        var blocked = false
+        for _ in 0..<1_024 {
+            let sent = fill.withUnsafeBytes { send(sockets[0], $0.baseAddress, fill.count, 0) }
+            if sent < 0 {
+                try #require(errno == EAGAIN || errno == EWOULDBLOCK)
+                blocked = true; break
+            }
+        }
+        try #require(blocked)
+        let start = ContinuousClock.now
+        #expect(throws: (any Error).self) {
+            try RoomAdmissionTransport.writeReplyOnce(sockets[0], Data(repeating: 0, count: RoomAdmission.replySize))
+        }
+        #expect(start.duration(to: .now) < .seconds(1))
+    }
+
     @Test(arguments: [false, true])
     @MainActor
     func discoveryRoundtrip(locked: Bool) throws {

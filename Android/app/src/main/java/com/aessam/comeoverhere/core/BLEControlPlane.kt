@@ -30,6 +30,9 @@ class BLEControlPlane(
     private val context: Context,
     displayName: String
 ) : ControlPlane {
+    override fun setBluetoothDiscoveryMode(mode: BluetoothDiscoveryMode) {
+        check(mode == BluetoothDiscoveryMode.OFF) { "Legacy BLE control is not room discovery" }
+    }
 
     override val localPeer = PeerInfo(
         id = UUID.randomUUID().toString(),

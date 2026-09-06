@@ -1,5 +1,15 @@
 # GetOverHere Execution Plan
 
+## September 5 review remediation — approved A1–A5 execution
+
+The user approved continuous execution of review remediation, physical qualification, BLE admission/control, BLE voice, and Aware/hybrid routes, stopping at genuine hardware/security/acceptance blockers. Existing incoming physical gates still apply; passing software tests does not waive them.
+
+- **A1 — Software remediation:** Reverse Android-to-iOS codec fixtures pass without a decoder change. Explicit foreground Bluetooth intent and role-specific radio lifecycle replace launch-time scanning. Admission completion uses nonblocking sends under the policy lock, fixed leading-zero ECDH tests cover both cores, and the main gate runs cross-language admission. Current spec and CLAUDE onboarding now match open rooms with optional editable locking. ADR-055 and ExperimentLog record the evidence and limits.
+- **A2 — Physical gate:** Pixel `66180DLKX006ND` is absent from adb; Dark knight reports `passcodeRequired: true` on September 5. Reconnect/authorize Pixel and unlock iPhone before both-direction LAN audio and Wi-Fi-off discovery tests. Enable the Bluetooth preview toggle on each phone explicitly. Test fresh locked discovery separately from locking after joining; neither is qualified by the preview.
+- **A3–A5 — Not implemented in A1:** BLE admission/control and voice, group/locked-device qualification, Aware production ownership, and hybrid assets/routes remain behind their physical gates below. Decide the bounded discovery/link model from physical results, not an assumed seven-central limit. Before relay implementation, specify guide-key bootstrap for open rooms without silently imposing mandatory QR or a tour code. Strong short-code resistance to an active malicious guide requires a separately reviewed admission protocol; ADR-052 now states the attack explicitly.
+
+Keep `stable-local-network` pointing at `59b0402`. Do not label this remediation checkpoint as qualified Wi-Fi-off operation.
+
 ## September 4 room-admission checkpoint
 
 Rooms now start open. Both apps have `Lock Room with Code`, a guide-editable code, discovery lock status, and independent encrypted admission (ADR-052). Existing guests keep their media sessions when the guide locks, edits, or unlocks. Host, simulator/emulator, and individual physical-device room-control checks passed; commands and artifacts are in ExperimentLog.md.

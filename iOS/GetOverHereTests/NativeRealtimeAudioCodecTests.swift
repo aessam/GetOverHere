@@ -5,6 +5,37 @@ import TourSessionCore
 
 @Suite("Native realtime audio codec")
 struct NativeRealtimeAudioCodecTests {
+    private final class FixtureBundle {}
+
+    @Test("Production Android packets preserve duration, tone and level", arguments: SessionAudioCodec.allCases)
+    func androidPackets(codec: SessionAudioCodec) throws {
+        let path = ProcessInfo.processInfo.environment["GOH_ANDROID_CODEC_FIXTURE"]
+        let url = try #require(path.map { URL(fileURLWithPath: $0) }
+            ?? Bundle(for: FixtureBundle.self).url(forResource: "android-native-codec", withExtension: "hex"))
+        let frames = try String(contentsOf: url, encoding: .utf8).split(whereSeparator: \.isNewline).map {
+            try EncodedAudioFramePayload.decode(Data(hex: String($0)))
+        }.filter { $0.configuration.codec == codec }
+        #expect(frames.count >= 32)
+        let config = try #require(frames.first).configuration
+        let decoder = try NativeRealtimeAudioCodecFactory.makeDecoder(configuration: config)
+        var pcm = Data()
+        for frame in frames {
+            if let decoded = try decoder.decode(packet: frame.encodedBytes) { pcm.append(decoded) }
+        }
+        let frameSamples = Int(config.sampleRate) * Int(config.frameDurationMilliseconds) / 1_000
+        let expected = frames.count * frameSamples
+        #expect(abs(pcm.count / 2 - expected) <= 2 * frameSamples)
+        let samples = stride(from: 0, to: pcm.count, by: 2).map {
+            Double(Int16(bitPattern: UInt16(pcm[$0]) | UInt16(pcm[$0 + 1]) << 8))
+        }.dropFirst(2 * frameSamples)
+        try #require(!samples.isEmpty)
+        let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Double(samples.count))
+        #expect(rms > 1_000)
+        let crossings = zip(samples, samples.dropFirst()).filter { $0 <= 0 && $1 > 0 }.count
+        let frequency = Double(crossings) * Double(config.sampleRate) / Double(samples.count)
+        #expect(abs(frequency - 440) < 10)
+    }
+
     @Test("Opus and AAC-LC encode and decode native PCM16 frames", arguments: SessionAudioCodec.allCases)
     func nativeRoundtrip(codec: SessionAudioCodec) throws {
         let encoder = try NativeRealtimeAudioCodecFactory.makeEncoder(codec: codec)

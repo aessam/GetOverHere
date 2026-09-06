@@ -12,6 +12,32 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RoomAdmissionTransportTest {
+    @Test(timeout = 3_000) fun fullSocketRejectsReplyWithoutWaiting() {
+        java.nio.channels.ServerSocketChannel.open().use { listener ->
+            listener.socket().bind(java.net.InetSocketAddress("127.0.0.1", 0))
+            java.nio.channels.SocketChannel.open().use { guest ->
+                guest.socket().receiveBufferSize = 1_024
+                guest.connect(listener.localAddress)
+                listener.accept().use { guide ->
+                    guide.socket().sendBufferSize = 1_024
+                    guide.configureBlocking(false)
+                    val reply = ByteArray(com.aessam.toursession.RoomAdmission.REPLY_SIZE)
+                    var rejected = false
+                    val start = System.nanoTime()
+                    for (index in 0..<100_000) {
+                        try { RoomAdmissionTransport.writeReplyOnce(guide, reply) }
+                        catch (error: IllegalStateException) {
+                            assertEquals("Room admission reply backpressured.", error.message)
+                            rejected = true; break
+                        }
+                    }
+                    org.junit.Assert.assertTrue("Socket never backpressured", rejected)
+                    org.junit.Assert.assertTrue("Reply waited for peer", System.nanoTime() - start < 1_000_000_000L)
+                }
+            }
+        }
+    }
+
     @Test fun discoveryRoundtrip() {
         listOf(false, true).forEach { locked ->
             val announce = BLECommand.ChannelAnnounce(UUID.randomUUID().toString(), "Room", UUID.randomUUID().toString(),

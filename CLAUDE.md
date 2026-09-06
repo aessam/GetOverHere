@@ -4,14 +4,14 @@ Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product c
 
 ## Current implemented architecture
 
-- Discovery: Bonjour (`LocalControlPlane.swift`) and Android NSD (`LocalControlPlane.kt`) on a shared local Wi-Fi LAN. Internet is not required.
+- Discovery: Bonjour and Android NSD on a shared LAN, plus explicit opt-in foreground Bluetooth room previews. Bluetooth-only rooms cannot yet join. Internet is not required.
 - Realtime lane: TCP port 50000, encrypted GOH2 v4 encoded audio (native Opus or AAC-LC); the local capture/playback boundary is PCM16.
 - Control lane: TCP port 50001, authoritative presentation, target, bearing, membership, and recovery state.
 - Asset lane: TCP port 50002, request-driven 64 KiB chunks with resume, length checks, and SHA-256 verification.
-- Admission: a random per-tour short code derives nonce-based mutual proofs independently for every lane.
+- Admission: rooms start open, with optional guide-editable code locking. TCP port 50003 exchanges a hidden random per-tour media credential. Room codes and media credentials are separate (ADR-052).
 - State: `TourSessionCore` Swift package and `:tour-session-core` Kotlin module must emit identical GOH2 bytes.
 
-`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. Admission uses mutual proofs derived from a PBKDF2-stretched tour code. Application payloads on all three LAN lanes are separately authenticated and encrypted as GOH2 v4 sealed frames.
+`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. Each lane authenticates with the hidden admitted credential. Application payloads on all three LAN lanes are separately authenticated and encrypted as GOH2 v4 sealed frames. Locking or editing a room code does not revoke previously admitted guests. Short room codes remain vulnerable to offline guessing by an active malicious guide; they do not establish guide identity.
 
 BLE control-plane files remain compiled experimental code but are not selected by `NetworkCoordinator`; LocalOnlyHotspot, RAFT leader election, Multipeer, and the chat/file/walkie-talkie stubs were deleted (ADR-050). Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
 
@@ -28,7 +28,7 @@ The iOS production Wi-Fi Aware lane wrappers currently have no connection owner 
 - Application payloads require route-independent authenticated encryption; ADR-023 admission authentication alone is insufficient.
 - Encrypt a logical frame once at creation and route the immutable sealed bytes. Socket writers never encrypt or allocate nonces. Reusing one frame identity with different plaintext is a fatal protocol error.
 - Encrypted GOH2 is a hard major-version break. New builds expose legacy peers as an explicit version mismatch and never downgrade to plaintext.
-- V1 has session-wide revocation only. End and restart the tour to rotate a leaked code and all derived keys.
+- V1 has session-wide revocation only. End and restart the tour to rotate the hidden media credential and revoke admitted guests. Editing the visible room code changes future admission only.
 
 `NextSession.md` is the canonical gate-by-gate execution plan. Execute P0 → P3 → P1; P1 is limited to four focused physical sessions or two engineering days. Do not start production Aware or BLE implementation before its preceding physical gate passes.
 

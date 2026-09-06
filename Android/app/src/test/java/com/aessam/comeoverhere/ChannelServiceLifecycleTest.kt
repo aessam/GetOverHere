@@ -48,6 +48,41 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelServiceLifecycleTest {
+    @Test fun bluetoothDiscoveryLifecycle() {
+        val h = Harness()
+        try {
+            h.service.start()
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            h.service.setBluetoothDiscoveryEnabled(true)
+            awaitCondition("Bluetooth BROWSING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.BROWSING }
+            h.service.setDiscoveryForeground(false)
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            h.service.setDiscoveryForeground(true)
+            awaitCondition("Bluetooth BROWSING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.BROWSING }
+            h.discoverAndJoin()
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            h.service.leaveChannel()
+            awaitCondition("Bluetooth BROWSING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.BROWSING }
+            h.service.setBluetoothDiscoveryEnabled(false)
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+        } finally { h.close() }
+    }
+
+    @Test fun bluetoothGuideLifecycle() {
+        val h = Harness()
+        try {
+            h.service.start()
+            h.createGuide()
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            h.service.setBluetoothDiscoveryEnabled(true)
+            awaitCondition("Bluetooth ADVERTISING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.ADVERTISING }
+            h.service.setDiscoveryForeground(false)
+            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            h.service.setDiscoveryForeground(true)
+            awaitCondition("Bluetooth ADVERTISING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.ADVERTISING }
+        } finally { h.close() }
+    }
+
     private class Harness(reconnectBaseDelayMillis: Long = 1L) {
         val uncaught = CopyOnWriteArrayList<Throwable>()
         val scheduler = TestCoroutineScheduler()

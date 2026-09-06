@@ -128,6 +128,8 @@ enum AudioQuality: String, Codable, Sendable, CaseIterable {
 // MARK: - Control Plane Protocol (BLE)
 
 /// Lightweight BLE control plane. Discovery, commands, coordination. NO audio.
+enum BluetoothDiscoveryMode { case off, browsing, advertising }
+
 protocol ControlPlane: AnyObject {
     var localPeer: PeerInfo { get }
     var connectedPeers: [PeerInfo] { get }
@@ -138,6 +140,7 @@ protocol ControlPlane: AnyObject {
     func stop()
     func broadcast(_ command: BLECommand)
     func send(_ command: BLECommand, to peer: PeerInfo)
+    func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode)
 }
 
 enum PeerEvent: Sendable {

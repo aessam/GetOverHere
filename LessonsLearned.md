@@ -399,3 +399,21 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **Root cause**: Production instantiated Bonjour/NSD-only `LocalControlPlane`; no call site started `BLEControlPlane`. The Bluetooth usage description/runtime permission declarations had also been removed. LAN test success and unused radio code did not establish no-Wi-Fi behavior.
 **Resolution**: Add read-only Bluetooth room discovery behind an injected interface in the production discovery owner, restore permission handling, merge observations without losing LAN addresses, and label/disable discovery-only rooms instead of implying that audio works. The old unauthenticated command channel stays unused. Metadata, merge, lifecycle, and UI regression gates are recorded in ExperimentLog.md; physical validation remains pending because the Pixel disconnected and the iPhone was locked.
 **Decision**: Prove the selected runtime path with the target radios disabled/enabled explicitly. Treat room visibility, authenticated joining, control delivery, and voice playback as separate gates. Do not infer any of them from the existence of an implementation file or a passed LAN test.
+
+## 71. Reverse codec assumptions need cross-platform evidence, not an automatic rewrite
+**What happened**: Review identified that iOS installs Android codec-specific bytes as its native magic cookie, without an Android-to-iOS regression.
+**Root cause**: Prior native fixtures tested only Apple encoding into Android decoding.
+**Resolution**: Export generated 440 Hz tones through production Android encoders; decode Opus and AAC through production iOS code, checking duration, non-silence and frequency. Both passed on the iOS 26.4 simulator without decoder changes. The first fixture-export harness failed because Gradle uninstalled the app before retrieval; explicit install/instrument/read and strict hex validation corrected the harness.
+**Decision**: A compatibility risk is not a reproduced failure. Retain the fixture, test both directions, and change production decoding only when evidence requires it. Set test-process environment explicitly rather than assuming xcodebuild forwards arbitrary shell variables.
+
+## 72. A preview still needs a permission and resource lifecycle
+**What happened**: Bluetooth permission fired at app launch and both managers/server roles ran throughout a LAN tour.
+**Root cause**: App-owned discovery startup was treated as permission intent and radio ownership, without a distinction between browsing, advertising and listening.
+**Resolution**: Explicit foreground preview toggle; role-specific manager/server creation; no scanning for guides or joined LAN guests; stop on background; iOS burst and Android balanced scanning; suppress power alerts and back off radio errors. Service and UI regression tests cover intent and lifecycle.
+**Decision**: Permission approval is not permission to scan forever. Read-only previews need bounded resource ownership and must not imply joining/audio capability.
+
+## 73. Nonblocking behavior must survive a full socket
+**What happened**: Admission reply writes could block the room-policy lock. The first iOS nonblocking regression itself hung inside `send` while filling a socket pair using `MSG_DONTWAIT` alone.
+**Root cause**: A per-send flag was assumed to establish the required behavior without proving it on the target runtime. Android's `soTimeout` also limits reads, not writes.
+**Resolution**: Prepare and verify `O_NONBLOCK` on iOS and a nonblocking channel on Android before the locked final send. Reject incomplete AEAD replies instead of retrying under the lock. The simulator full-socket test then completed in 0.006 s; functional lock/edit/unlock still passed.
+**Decision**: Backpressure must be exercised, not inferred from a timeout or flag name. Keep the policy-revision check and final send serialized without waiting for peer progress.

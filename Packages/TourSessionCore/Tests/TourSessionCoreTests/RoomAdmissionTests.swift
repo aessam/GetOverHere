@@ -1,8 +1,17 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import TourSessionCore
 
 struct RoomAdmissionTests {
+    @Test func leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() throws {
+        // Private scalars 1 and 379: x(379*G) begins with 00. Same vector in Kotlin.
+        let peer = try Data(hex: "04005543894af3d00ed7d740abdbd75c96b06877b787db5f70eea78b90a8d7c00abb4c85a3d8ea29efaafa24406912dd84d5b14dc32bf656ef6c6bd58a5d943f92")
+        let key = try P256.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0, count: 31) + Data([1]))
+        let derived = try RoomAdmission.derive(key, peer, Data(repeating: 0, count: 32), Data())
+        #expect(derived.withUnsafeBytes { Data($0).lowercaseHex } == "1652d7207df35c849397c233a68b03323308bd4dcd2f50e20ab8323fea0bd015")
+    }
+
     @Test(arguments: [nil, "1234", "My-Tour!42", String(repeating: "a", count: 64)] as [String?])
     func roundtrip(code: String?) throws {
         let id = UUID()

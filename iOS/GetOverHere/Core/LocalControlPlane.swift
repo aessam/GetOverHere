@@ -61,9 +61,12 @@ final class LocalControlPlane: NSObject, ControlPlane {
     }
 
     func start() {
-        bluetooth.start()
         browser.searchForServices(ofType: Self.serviceType, inDomain: "local.")
         Logger.transport.info("Local control plane started")
+    }
+
+    func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) {
+        bluetooth.setMode(mode)
     }
 
     func stop() {

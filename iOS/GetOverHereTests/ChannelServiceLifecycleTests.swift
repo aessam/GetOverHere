@@ -69,6 +69,41 @@ struct ChannelServiceLifecycleTests {
 
     // MARK: - FND-2
 
+    @Test("Bluetooth discovery requires intent and stops for a LAN guest or background")
+    @MainActor
+    func bluetoothDiscoveryLifecycle() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        #expect(h.controlPlane.bluetoothMode == .off)
+        h.service.bluetoothDiscoveryEnabled = true
+        #expect(h.controlPlane.bluetoothMode == .browsing)
+        h.service.discoveryForeground = false
+        #expect(h.controlPlane.bluetoothMode == .off)
+        h.service.discoveryForeground = true
+        #expect(h.controlPlane.bluetoothMode == .browsing)
+        _ = try await discoverAndJoin(h)
+        #expect(h.controlPlane.bluetoothMode == .off)
+        h.service.leaveChannel()
+        #expect(h.controlPlane.bluetoothMode == .browsing)
+        h.service.bluetoothDiscoveryEnabled = false
+        #expect(h.controlPlane.bluetoothMode == .off)
+    }
+
+    @Test("A guide advertises without scanning only after Bluetooth opt-in")
+    @MainActor
+    func bluetoothGuideLifecycle() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        _ = try await createGuide(h)
+        #expect(h.controlPlane.bluetoothMode == .off)
+        h.service.bluetoothDiscoveryEnabled = true
+        #expect(h.controlPlane.bluetoothMode == .advertising)
+        h.service.discoveryForeground = false
+        #expect(h.controlPlane.bluetoothMode == .off)
+        h.service.discoveryForeground = true
+        #expect(h.controlPlane.bluetoothMode == .advertising)
+    }
+
     @Test("room settings never reconfigure existing media lanes")
     @MainActor
     func roomSettingsPreserveExistingConnections() async throws {

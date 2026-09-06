@@ -10,6 +10,14 @@ struct ChannelSidebar: View {
 
     var body: some View {
         List {
+            Section {
+                Toggle("Bluetooth room discovery", isOn: Binding(
+                    get: { service.bluetoothDiscoveryEnabled },
+                    set: { service.bluetoothDiscoveryEnabled = $0 }))
+                    .accessibilityIdentifier("bluetoothRoomDiscovery")
+                Text("Foreground room preview only. Joining and audio still require a local Wi-Fi network.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if service.activeChannelID == nil, service.connectionState == .failed,
                let error = service.tourFeatureError {
                 Section("Could not start tour") {

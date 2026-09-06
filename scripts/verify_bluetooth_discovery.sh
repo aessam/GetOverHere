@@ -10,7 +10,7 @@ swift test --package-path "$PROJECT_ROOT/Packages/TourSessionCore" \
 JAVA_HOME="$DISCOVERY_JAVA" "$PROJECT_ROOT/Android/gradlew" -p "$PROJECT_ROOT/Android" \
     :tour-session-core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 xcodebuild -quiet -project "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj" -scheme GetOverHere \
-    -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    -destination "${GOH_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}" -parallel-testing-enabled NO \
     -derivedDataPath "${GOH_IOS_DERIVED_DATA:-/tmp/GetOverHereBluetoothIOS}" \
     test -only-testing:GetOverHereTests/RoomDiscoveryIndexTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
 echo 'Bluetooth discovery software gate passed; Wi-Fi-off physical gate remains separate'

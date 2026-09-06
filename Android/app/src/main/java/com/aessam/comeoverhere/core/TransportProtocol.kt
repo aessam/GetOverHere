@@ -74,6 +74,8 @@ sealed class PeerEvent {
 
 // MARK: - Control Plane (BLE)
 
+enum class BluetoothDiscoveryMode { OFF, BROWSING, ADVERTISING }
+
 interface ControlPlane {
     val localPeer: PeerInfo
     val connectedPeers: StateFlow<List<PeerInfo>>
@@ -84,6 +86,7 @@ interface ControlPlane {
     fun stop()
     fun broadcast(command: BLECommand)
     fun send(command: BLECommand, to: PeerInfo)
+    fun setBluetoothDiscoveryMode(mode: BluetoothDiscoveryMode)
 }
 
 // MARK: - Audio Plane

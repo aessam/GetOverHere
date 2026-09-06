@@ -6,7 +6,7 @@ import os
 protocol BluetoothRoomDiscoveryInterface: AnyObject {
     var onRoom: ((BluetoothRoomRecord) -> Void)? { get set }
     var onLost: ((UUID) -> Void)? { get set }
-    func start()
+    func setMode(_ mode: BluetoothDiscoveryMode)
     func stop()
     func publish(_ record: BluetoothRoomRecord?)
 }
@@ -20,6 +20,8 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothRoomDiscoveryInterface {
     private var central: CBCentralManager?
     private var peripheral: CBPeripheralManager?
     private var running = false
+    private var mode: BluetoothDiscoveryMode = .off
+    private var scanTick = 0
     private var serviceReady = false
     private var record = Data()
     private var timer: Task<Void, Never>?
@@ -30,11 +32,21 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothRoomDiscoveryInterface {
     private var rooms: [UUID: (BluetoothRoomRecord, Date)] = [:]
     private var snapshots: [UUID: (Data, Date)] = [:]
 
-    func start() {
-        guard !running else { return }
+    func setMode(_ mode: BluetoothDiscoveryMode) {
+        guard self.mode != mode else { return }
+        let savedRecord = record
+        stop()
+        record = savedRecord
+        self.mode = mode
+        guard mode != .off else { return }
         running = true
-        central = CBCentralManager(delegate: self, queue: .main)
-        peripheral = CBPeripheralManager(delegate: self, queue: .main)
+        if mode == .browsing {
+            central = CBCentralManager(delegate: self, queue: .main,
+                options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        } else {
+            peripheral = CBPeripheralManager(delegate: self, queue: .main,
+                options: [CBPeripheralManagerOptionShowPowerAlertKey: false])
+        }
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
@@ -44,6 +56,7 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothRoomDiscoveryInterface {
     }
 
     func stop() {
+        mode = .off; scanTick = 0
         running = false; record = Data(); timer?.cancel(); timer = nil
         central?.stopScan()
         for link in links.values { central?.cancelPeripheralConnection(link) }
@@ -71,6 +84,12 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothRoomDiscoveryInterface {
 
     private func refresh() {
         guard running else { return }
+        if mode == .browsing, let central, central.state == .poweredOn {
+            // Three seconds scanning, three seconds resting; duplicate delivery is unnecessary.
+            scanTick += 1
+            if scanTick % 2 == 1 { central.stopScan() }
+            else { central.scanForPeripherals(withServices: [Self.serviceID]) }
+        }
         let now = Date()
         for (id, since) in pending where now.timeIntervalSince(since) > 9 { disconnect(id) }
         for (id, ch) in characteristics where pending[id] == nil {
@@ -91,10 +110,10 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothRoomDiscoveryInterface {
 
 extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard running else { return }
+        guard running, self.central === central else { return }
         if central.state == .poweredOn {
-            central.scanForPeripherals(withServices: [Self.serviceID],
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+            scanTick = 0
+            central.scanForPeripherals(withServices: [Self.serviceID])
             Logger.transport.info("Bluetooth room discovery scanning")
         } else {
             for id in Array(links.keys) { disconnect(id) }
@@ -106,7 +125,7 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
 
     func centralManager(_ central: CBCentralManager, didDiscover link: CBPeripheral,
                         advertisementData: [String: Any], rssi: NSNumber) {
-        guard running, links.count < 4, links[link.identifier] == nil,
+        guard running, self.central === central, mode == .browsing, links.count < 4, links[link.identifier] == nil,
               attempts[link.identifier].map({ Date().timeIntervalSince($0) >= 6 }) ?? true else { return }
         attempts[link.identifier] = Date(); links[link.identifier] = link; pending[link.identifier] = Date()
         link.delegate = self; central.connect(link)
@@ -158,7 +177,7 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
 
 extension BluetoothRoomDiscovery: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
-        guard running else { return }
+        guard running, peripheral === manager else { return }
         serviceReady = false
         guard manager.state == .poweredOn else { return }
         manager.removeAllServices()
@@ -168,6 +187,7 @@ extension BluetoothRoomDiscovery: CBPeripheralManagerDelegate {
         manager.add(service)
     }
     func peripheralManager(_ manager: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        guard peripheral === manager else { return }
         guard running, error == nil else { Logger.transport.error("Bluetooth room service failed"); return }
         serviceReady = true; updateAdvertising()
     }

@@ -67,13 +67,17 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
                         try Self.write(client, guide.challenge)
                         let request = try Self.read(client, count: RoomAdmission.requestSize)
                         let reply = try guide.reply(to: request, sessionCode: sessionCode)
+                        let flags = fcntl(client.fd, F_GETFL, 0)
+                        guard flags >= 0, fcntl(client.fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                            throw RoomAdmissionError.invalidMessage
+                        }
                         // Serialize admission completion with lock/code changes. No old-policy
                         // response can be sent after update returns to the guide's UI.
                         try self.lock.withLock {
                             guard self.listener === socket, self.revision == snapshot.1 else {
                                 throw RoomAdmissionError.changed
                             }
-                            try Self.write(client, reply)
+                            try Self.writeReplyOnce(client.fd, reply)
                         }
                     } catch {
                         Logger.transport.notice("Room admission rejected or disconnected")
@@ -176,6 +180,17 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
             offset += received
         }
         return Data(bytes)
+    }
+
+    /// One nonblocking send under the policy lock. Partial delivery fails closed: a guest
+    /// cannot open an incomplete AEAD reply. Never wait for a slow peer while holding the lock.
+    static func writeReplyOnce(_ fd: Int32, _ data: Data) throws {
+        let flags = fcntl(fd, F_GETFL, 0)
+        guard flags >= 0, flags & O_NONBLOCK != 0, data.count == RoomAdmission.replySize else {
+            throw RoomAdmissionError.invalidMessage
+        }
+        let sent = data.withUnsafeBytes { send(fd, $0.baseAddress, data.count, 0) }
+        guard sent == data.count else { throw RoomAdmissionError.invalidMessage }
     }
 
     private static func write(_ socket: ManagedSocket, _ data: Data) throws {

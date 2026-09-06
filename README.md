@@ -30,7 +30,7 @@ The authoritative requirements and acceptance gates are in [TourGuideProductSpec
           └── TCP :50002, GOH2 asset chunks ─────►│
 ```
 
-Bonjour on iOS and NSD on Android discover LAN guide sessions. Read-only Bluetooth room discovery is implemented but awaits physical Wi-Fi-off validation; Bluetooth-only rooms explicitly show that audio is unavailable and cannot yet join. Rooms start open, with optional guide-editable code locking; admission supplies a separate hidden media credential. Control and assets cannot block audio because each has an independent authenticated connection. Slide and map assets are content-addressed, chunked, resumable, and SHA-256 verified.
+Bonjour on iOS and NSD on Android discover LAN guide sessions. The `Bluetooth room discovery` toggle enables a foreground-only preview, without prompting at launch. Browsers scan, guides advertise, and joined LAN guests stop Bluetooth discovery. Physical Wi-Fi-off validation remains pending; Bluetooth-only rooms show that audio is unavailable and cannot yet join. Rooms start open, with optional guide-editable code locking; admission supplies a separate hidden media credential. Control and assets cannot block audio because each has an independent authenticated connection. Slide and map assets are content-addressed, chunked, resumable, and SHA-256 verified.
 
 The current production path needs an existing local LAN. Native Wi-Fi Aware is isolated behind a diagnostic lab and is not yet a production dependency.
 

@@ -101,7 +101,8 @@ TourPack
 - **The pin is the only geographic coordinate sent by the product.**
 - Wire contracts must contain no participant-location or location-history payload.
 - Location permission descriptions state that location is used only on-device to show the user relative to the shared pin.
-- Session discovery is not authentication. Production onboarding requires possession of a per-tour credential delivered by QR or short code.
+- Discovery is not authentication. Rooms start open: anyone nearby may request admission. The guide can enable `Lock Room with Code` and edit the code. Admission establishes a separate hidden per-tour media credential; QR scanning and manual code entry are not required for open rooms (ADR-052).
+- A room code is an access restriction, not verified guide identity. A malicious guide can solicit a locked-room proof and test code guesses offline; stretching raises the cost but does not prevent this. Short codes must not be described as strong protection against an active impersonator. Previously admitted guests retain access after a code change.
 - Admission authentication is not payload confidentiality. Realtime, control, and asset payloads require route-independent authenticated encryption derived from the per-tour credential.
 - A logical application frame is encrypted once at creation and remains byte-identical across every route. Transport writers cannot reseal it or allocate a new nonce.
 - Legacy plaintext protocol majors are rejected with an explicit version-mismatch state. There is no plaintext downgrade.
@@ -177,7 +178,7 @@ These defaults are active and do not block implementation:
 5. The isolated physical Wi-Fi Aware lab proves discovery, pairing, NDP establishment, socket traffic, disconnect, and reconnect in both iOS/Android role directions before production promotion.
 6. Physical iPhone and Android tests prove both guide directions while compressed audio, slide changes, target changes, and asset transfers run together across each supported route.
 7. BLE physical gates progress through 2/5/10 mixed iOS/Android devices and record direct and relayed control/voice latency, loss, queue depth, battery, thermal state, and locked/pocketed behavior. BLE voice is removed if its gate fails.
-8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets.
+8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets. Fresh discovery while locked and continued delivery after joining then locking are separate acceptance cases. The current Bluetooth discovery preview supports neither as a qualified background feature; it explicitly stops in background. Wi-Fi-radio-off BLE tests are separate from no-access-point Aware tests.
 9. Aware tests exercise capacity-minus-one, capacity, and capacity-plus-one. Overflow follows ADR-031 and never changes the existing Aware participant set.
 10. One guide runs Aware, BLE central, BLE peripheral, LAN, audio encode, and active traffic concurrently for 60 minutes while coexistence loss, thermal state, and battery delta are recorded.
 11. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, poor heading accuracy, and mixed transport availability are exercised.

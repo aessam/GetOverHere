@@ -36,7 +36,22 @@ final class ChannelService {
         case failed
     }
 
-    private(set) var listenState: ListenState = .idle
+    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery() } }
+    var bluetoothDiscoveryEnabled = false { didSet { updateBluetoothDiscovery() } }
+    var discoveryForeground = true { didSet { updateBluetoothDiscovery() } }
+
+    private func updateBluetoothDiscovery() {
+        let mode: BluetoothDiscoveryMode
+        if !bluetoothDiscoveryEnabled || !discoveryForeground { mode = .off }
+        else {
+            switch listenState {
+            case .idle: mode = .browsing
+            case .broadcasting: mode = .advertising
+            case .listening: mode = .off
+            }
+        }
+        coordinator.controlPlane.setBluetoothDiscoveryMode(mode)
+    }
     private(set) var listenerCount: Int = 0
     private(set) var listenerOutput: ListenerOutput = .privateAudio
     private(set) var isImportingSlides = false
@@ -570,6 +585,7 @@ final class ChannelService {
     /// Process-termination path (FND-8): the synchronous, bounded leave flush is the only place the
     /// main thread may wait, because the process has seconds left and no Task will run.
     func terminate() {
+        discoveryForeground = false
         sessionAttempt &+= 1
         guard let ch = activeChannel else { return }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id

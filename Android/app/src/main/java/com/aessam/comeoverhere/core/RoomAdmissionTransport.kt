@@ -6,6 +6,9 @@ import com.aessam.toursession.RoomAdmission
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.nio.ByteBuffer
+import java.nio.channels.ServerSocketChannel
+import java.nio.channels.SocketChannel
 import java.util.UUID
 import java.util.concurrent.Semaphore
 import kotlin.concurrent.thread
@@ -28,7 +31,7 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
     override fun start(sessionID: UUID, sessionCode: String) {
         stop()
         val open = RoomAccessPolicy(sessionID, null)
-        val server = ServerSocket()
+        val server = ServerSocketChannel.open().socket()
         try {
             server.reuseAddress = true
             server.bind(InetSocketAddress(port), 8)
@@ -44,7 +47,6 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
                     break
                 }
                 if (!slots.tryAcquire()) { client.close(); continue }
-                client.soTimeout = 5_000
                 val snapshot = synchronized(lock) {
                     if (listener !== server) null else {
                         pending.add(client)
@@ -55,13 +57,16 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
                 thread(name = "room-admission-handshake", isDaemon = true) {
                     try {
                         client.use {
+                            client.soTimeout = 5_000
                             val guide = RoomAdmission.Guide(sessionID, snapshot.first)
                             client.getOutputStream().write(guide.challenge)
                             val request = read(client, RoomAdmission.REQUEST_SIZE)
                             val reply = guide.reply(request, sessionCode)
+                            val channel = requireNotNull(client.channel)
+                            channel.configureBlocking(false)
                             synchronized(lock) {
                                 check(listener === server && revision == snapshot.second) { "Room access changed." }
-                                client.getOutputStream().write(reply)
+                                writeReplyOnce(channel, reply)
                             }
                         }
                     } catch (error: Exception) {
@@ -113,5 +118,13 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
             offset += received
         }
         return bytes
+    }
+
+    companion object {
+        /** A partial AEAD reply fails closed; never wait for socket writability under the policy lock. */
+        internal fun writeReplyOnce(channel: SocketChannel, reply: ByteArray) {
+            check(!channel.isBlocking && reply.size == RoomAdmission.REPLY_SIZE)
+            check(channel.write(ByteBuffer.wrap(reply)) == reply.size) { "Room admission reply backpressured." }
+        }
     }
 }

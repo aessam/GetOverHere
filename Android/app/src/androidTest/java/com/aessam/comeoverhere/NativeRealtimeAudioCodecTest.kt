@@ -29,6 +29,32 @@ import kotlin.math.sin
 
 @RunWith(AndroidJUnit4::class)
 class NativeRealtimeAudioCodecTest {
+    @Test fun exportsProductionAndroidPackets() {
+        val output = java.io.File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir,
+            "android-native-codec.hex")
+        output.bufferedWriter().use { writer ->
+            SessionAudioCodec.entries.forEach { codec ->
+                NativeRealtimeAudioCodecFactory.makeEncoder(codec).use { encoder ->
+                    var packets = 0
+                    repeat(64) { frame ->
+                        val samples = encoder.inputPCMByteCount / 2
+                        val pcm = ByteBuffer.allocate(encoder.inputPCMByteCount).order(ByteOrder.LITTLE_ENDIAN)
+                        repeat(samples) { index ->
+                            pcm.putShort((sin((frame * samples + index) * 440 * 2 * PI / 16_000) * 8_000).toInt().toShort())
+                        }
+                        encoder.encode(pcm.array())?.let { packet ->
+                            val payload = EncodedAudioFramePayload(packet.configuration, 1, 2, packet.bytes).encode()
+                            writer.appendLine(payload.joinToString("") { "%02x".format(it.toInt() and 255) })
+                            packets++
+                        }
+                    }
+                    assertTrue("Missing production Android $codec packets", packets >= 32)
+                }
+            }
+        }
+        assertTrue("Android fixture export is empty", output.length() > 0)
+    }
+
     @Test fun decodesProductionApplePackets() {
         val packets = InstrumentationRegistry.getInstrumentation().context.assets
             .open("apple-native-codec.hex").bufferedReader().useLines { lines ->

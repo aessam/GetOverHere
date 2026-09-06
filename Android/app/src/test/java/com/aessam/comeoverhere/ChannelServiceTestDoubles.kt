@@ -50,6 +50,8 @@ class LifecycleRoomAdmission : RoomAdmissionInterface {
 internal class LifecycleControlPlane(
     override val localPeer: PeerInfo = PeerInfo(id = UUID.randomUUID().toString(), displayName = "Local"),
 ) : ControlPlane {
+    var bluetoothMode = com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF
+    override fun setBluetoothDiscoveryMode(mode: com.aessam.comeoverhere.core.BluetoothDiscoveryMode) { bluetoothMode = mode }
     private val mutableConnectedPeers = MutableStateFlow<List<PeerInfo>>(emptyList())
     override val connectedPeers: StateFlow<List<PeerInfo>> = mutableConnectedPeers.asStateFlow()
     private val mutableCommands = MutableSharedFlow<Pair<BLECommand, PeerInfo>>(extraBufferCapacity = 64)
