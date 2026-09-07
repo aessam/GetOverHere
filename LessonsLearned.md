@@ -449,3 +449,13 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **What happened**: Designing the signed relay prerequisite exposed ECDSA's equivalent high-S representation and different native signature encodings (CryptoKit raw versus Android DER).
 **Resolution**: Normalize signatures to low-S at creation, reject high-S at verification, use fixed-width `r || s` on the wire, and test DER leading-zero/high-bit handling separately. Compare real signatures in both language directions and against Android's native provider.
 **Decision**: A signature verifier still needs a securely obtained pin. Core cryptographic tests do not qualify app key bootstrap or relay behavior. CLI negative tests must reject cleanly; a crashed process is not successful validation.
+
+## 80. Local admission EOF does not prove native reply delivery
+**What happened**: Resumed physical BLE tests failed admission twice. The guide's adapter forwarded 141 bytes (103-byte challenge plus 38-byte reply), but the guest forwarded only the challenge before EOF. Closing the native socket immediately when the local admission server closed discarded the queued final reply. TCP-only tests had not exposed this native close behavior.
+**Resolution**: Guide-side admission keeps the native stream alive until the guest closes, capped at five seconds after local EOF. Apply the same rule in Swift and Kotlin without changing the admission wire protocol. Add regression coverage for queued output retention and abandoned-peer cleanup. The physical harness now collects the exact app UID's logs even after instrumentation exits.
+**Decision**: A successful native write is not peer receipt. Preserve completion semantics across adapters, and bound drains rather than inserting an arbitrary delivery sleep or retrying authentication blindly.
+
+## 81. Freeze running scripts as well as app sources
+**What happened**: Adding verified APK reuse while a physical harness was still executing shifted its input and caused a shell parse failure after both instrumentation roles had passed. Separately, a fixture intended to be foreground was observed running with its guide asleep behind keyguard.
+**Resolution**: Preserve the failed harness result, freeze the script before the next run, and verify installed APK hashes instead of repeatedly reinstalling unchanged candidates. Record actual foreground state rather than infer it from activity flags or the absence of a device passcode.
+**Decision**: Do not edit executing scripts. Native discovery failures need lifecycle/stage evidence; a passing wake/dismiss rerun is not a proven root cause.

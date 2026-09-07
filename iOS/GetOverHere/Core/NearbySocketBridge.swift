@@ -130,7 +130,7 @@ final class NearbySocketBridge {
                 let realtime = request.lane == .realtime
                 let framed: any NearbyByteConnection = realtime ? NearbyRealtimeConnection(remote) : remote
                 if realtime { connections[id]?.append(framed) }
-                try await Self.pump(framed, local, realtime: realtime)
+                try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission)
             } catch {
                 if !Task.isCancelled { report(error) }
             }
@@ -220,10 +220,19 @@ final class NearbySocketBridge {
         }
     }
 
-    private static func pump(_ first: any NearbyByteConnection, _ second: any NearbyByteConnection, realtime: Bool) async throws {
+    private static func pump(_ first: any NearbyByteConnection, _ second: any NearbyByteConnection, realtime: Bool,
+                             drainAdmissionReply: Bool = false) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { if realtime { try await copyRealtime(first, second) } else { try await copy(first, second) } }
-            group.addTask { if realtime { try await copyRealtime(second, first) } else { try await copy(second, first) } }
+            group.addTask {
+                if realtime { try await copyRealtime(second, first) } else { try await copy(second, first) }
+                // Native close may discard queued writes. Let the admitted guest receive
+                // the final reply and close first; never retain an abandoned peer forever.
+                if drainAdmissionReply {
+                    try await Task.sleep(for: .seconds(5))
+                    Logger.transport.warning("Admission reply drain deadline expired")
+                }
+            }
             do { _ = try await group.next() }
             catch { first.close(); second.close(); group.cancelAll(); throw error }
             first.close(); second.close(); group.cancelAll()

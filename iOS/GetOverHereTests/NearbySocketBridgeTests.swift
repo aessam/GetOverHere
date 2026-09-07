@@ -7,6 +7,30 @@ import TourSessionCore
 @Suite(.serialized)
 @MainActor
 struct NearbySocketBridgeTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [true, false])
+    func admissionReplyDrainsUntilPeerClosesOrDeadline(peerCloses: Bool) async throws {
+        let roomID = UUID()
+        let record = BluetoothRoomRecord(roomID: roomID, guideID: UUID(), name: "Tour", isAndroid: false, isLocked: true)
+        let reply = Data(repeating: 42, count: RoomAdmission.challengeSize + RoomAdmission.replySize)
+        let local = BufferedNearbyTestConnection(bytes: reply, waitsForClose: false)
+        let remote = BufferedNearbyTestConnection(
+            bytes: try NearbyLaneRequest(lane: .admission, roomID: roomID).encode(), waitsForClose: true)
+        let bridge = NearbySocketBridge(localConnect: { _ in local })
+        defer { bridge.stop() }
+        await withCheckedContinuation { continuation in
+            local.onEOF = { continuation.resume() }
+            bridge.accept(remote) { record }
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!remote.closed)
+        #expect(remote.pendingOutput == Data([0]) + reply)
+        if peerCloses { remote.close() }
+        else {
+            try await Task.sleep(for: .seconds(5))
+            #expect(remote.closed)
+        }
+    }
+
     @Test func metadataRoundtripsThroughRealTCP() async throws {
         let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "جولة 🌍", isAndroid: false, isLocked: false)
         let bridge = NearbySocketBridge()
@@ -60,6 +84,38 @@ struct NearbySocketBridgeTests {
 
     @concurrent private func join(_ roomID: UUID, code: String?) async throws -> String {
         try RoomAdmissionTransport().join(host: "127.0.0.1", sessionID: roomID, code: code)
+    }
+}
+
+/// Models native output that close can discard before the peer consumes it.
+@MainActor
+private final class BufferedNearbyTestConnection: NearbyByteConnection {
+    private var bytes: Data
+    private let waitsForClose: Bool
+    private var reader: CheckedContinuation<Data, any Error>?
+    var onEOF: (() -> Void)?
+    private(set) var pendingOutput = Data()
+    private(set) var closed = false
+    init(bytes: Data, waitsForClose: Bool) { self.bytes = bytes; self.waitsForClose = waitsForClose }
+    func read(maximum: Int) async throws -> Data {
+        if closed { return Data() }
+        if !bytes.isEmpty {
+            let result = Data(bytes.prefix(maximum)); bytes.removeFirst(result.count)
+            return result
+        }
+        if waitsForClose {
+            return try await withCheckedThrowingContinuation { reader = $0 }
+        }
+        let notify = onEOF; onEOF = nil; notify?()
+        return Data()
+    }
+    func write(_ bytes: Data) async throws {
+        guard !closed else { throw NearbyConnectionError.closed }
+        pendingOutput.append(bytes)
+    }
+    func close() {
+        closed = true; pendingOutput.removeAll()
+        reader?.resume(returning: Data()); reader = nil
     }
 }
 

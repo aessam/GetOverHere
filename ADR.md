@@ -502,6 +502,8 @@
 
 **Owner recovery follow-up**: Fatal native discovery termination invalidates that owner's routes and permits explicit restart. Do not retain a dead owner's listener/probes or advertise its cached endpoints as joinable. Local cancellation belongs to its old operation and cannot stop a replacement. Keep per-peer errors separate so one guest does not disconnect the group. The iOS operation/capability boundaries are injectable for lifecycle regression tests; production defaults still invoke native Network/WiFiAware APIs. Android applies teardown only to fatal attach/startup/configuration/termination callbacks.
 
+**September 7 admission completion follow-up**: Physical BLE reproduced a dropped final admission reply when local TCP EOF immediately closed the native guide stream. Guide-side admission now drains until peer closure, with a five-second limit after local EOF; other lanes retain their existing close policy. No new wire bytes, authentication downgrade, or unconditional sleep before delivery are introduced. Both adapters preserve this behavior and test bounded abandoned-peer cleanup. This is an adapter completion fix, not signed admission or mixed-Aware qualification.
+
 ## ADR-057: Canonical signed-guide frame contract
 **Date**: 2026-09-07
 **Status**: Core prerequisite implemented; app bootstrap and relay integration pending. Does not complete ADR-038.

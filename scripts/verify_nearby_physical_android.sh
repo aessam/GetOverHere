@@ -18,9 +18,28 @@ NEARBY_TRANSPORT="${GOH_NEARBY_TRANSPORT:-bluetooth}"
 NEARBY_DEVICE_PIN="$(jot -r 1 100000 999999)"
 echo "Artifacts: $NEARBY_RUN; room: $NEARBY_ROOM"
 JAVA_HOME="$NEARBY_JAVA" "$PROJECT_ROOT/Android/gradlew" -p "$PROJECT_ROOT/Android" :app:assembleDebug :app:assembleDebugAndroidTest
+install_or_verify() {
+    local device="$1" package="$2" apk="$3" installed local_hash remote_hash
+    if [[ "${GOH_NEARBY_REUSE_INSTALLED:-0}" != 1 ]]; then
+        "$NEARBY_ADB" -s "$device" install -r "$apk"
+        return
+    fi
+    installed="$("$NEARBY_ADB" -s "$device" shell pm path "$package" | tr -d '\r' | sed -n 's/^package://p')"
+    # This build has one APK per package. Reject split/missing/unsafe paths rather than
+    # running an older candidate or interpolating an unchecked remote-shell argument.
+    [[ "$installed" == /data/app/*/base.apk && "$installed" != *$'\n'* && "$installed" != *[!a-zA-Z0-9/._=+~-]* ]] || {
+        echo "error: cannot verify installed $package on $device; run without GOH_NEARBY_REUSE_INSTALLED" >&2; exit 1;
+    }
+    local_hash="$(shasum -a 256 "$apk" | cut -d ' ' -f 1)"
+    remote_hash="$("$NEARBY_ADB" -s "$device" shell sha256sum "$installed" | tr -d '\r' | cut -d ' ' -f 1)"
+    [[ "$local_hash" == "$remote_hash" && ${#remote_hash} == 64 ]] || {
+        echo "error: installed $package differs from build on $device; reinstall before testing" >&2; exit 1;
+    }
+    echo "Verified installed APK SHA-256: $device $package $local_hash"
+}
 for device in "$NEARBY_GUIDE" "$NEARBY_GUEST"; do
-    "$NEARBY_ADB" -s "$device" install -r "$PROJECT_ROOT/Android/app/build/outputs/apk/debug/app-debug.apk"
-    "$NEARBY_ADB" -s "$device" install -r "$PROJECT_ROOT/Android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+    install_or_verify "$device" com.aessam.comeoverhere "$PROJECT_ROOT/Android/app/build/outputs/apk/debug/app-debug.apk"
+    install_or_verify "$device" com.aessam.comeoverhere.test "$PROJECT_ROOT/Android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
     # Wake the test display only. Never dismiss a secure keyguard or alter credentials.
     "$NEARBY_ADB" -s "$device" shell input keyevent KEYCODE_WAKEUP
 done
@@ -72,12 +91,12 @@ for role in guide guest; do
     cat "$NEARBY_RUN/$role.txt"
 done
 for device in "$NEARBY_GUIDE" "$NEARBY_GUEST"; do
-    app_pid="$("$NEARBY_ADB" -s "$device" shell pidof com.aessam.comeoverhere | tr -d '\r')" || app_pid=""
-    if [[ "$app_pid" =~ ^[0-9]+$ ]]; then
-        "$NEARBY_ADB" -s "$device" logcat -d --pid="$app_pid" -v threadtime > "$NEARBY_RUN/$device-logcat.txt"
-    else
-        echo "warning: app process unavailable on $device; skipping logcat, never collecting other apps' logs" >&2
-    fi
+    # Instrumentation exits its process before this collection. Resolve the exact package
+    # UID instead of a now-dead PID; never collect another app's logs.
+    app_uid="$("$NEARBY_ADB" -s "$device" shell pm list packages -U com.aessam.comeoverhere |
+        tr -d '\r' | sed -n 's/^package:com\.aessam\.comeoverhere uid:\([0-9][0-9]*\)$/\1/p')"
+    [[ "$app_uid" =~ ^[0-9]+$ ]] || { echo "error: cannot resolve app UID on $device" >&2; exit 1; }
+    "$NEARBY_ADB" -s "$device" logcat -d --uid="$app_uid" -v threadtime > "$NEARBY_RUN/$device-logcat.txt"
 done
 [[ "$NEARBY_STATUS" == 0 ]] || { echo "error: physical $NEARBY_TRANSPORT fixture failed; artifacts $NEARBY_RUN" >&2; exit 1; }
 echo "Physical Android $NEARBY_TRANSPORT fixture passed (Wi-Fi-off requested: ${GOH_NEARBY_WIFI_OFF:-0}); not microphone, locked-phone, endurance, or relay qualification"

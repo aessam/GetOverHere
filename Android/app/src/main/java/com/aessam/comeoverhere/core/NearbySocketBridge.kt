@@ -15,6 +15,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
@@ -82,7 +83,7 @@ class NearbySocketBridge(
                     val realtime = request.lane == NearbyLaneRequest.Lane.REALTIME
                     val framed = if (realtime) NearbyRealtimeConnection(remote, executor, timer) else remote
                     if (realtime && !register(id, framed, attempt)) return@launch
-                    pump(id, framed, local, realtime)
+                    pump(id, framed, local, realtime, drainAdmissionReply = request.lane == NearbyLaneRequest.Lane.ADMISSION)
                 }
             } finally { deadline.cancel(false) }
         }
@@ -166,14 +167,23 @@ class NearbySocketBridge(
         return true
     }
 
-    private fun pump(id: UUID, first: NearbyByteConnection, second: NearbyByteConnection, realtime: Boolean) {
+    private fun pump(id: UUID, first: NearbyByteConnection, second: NearbyByteConnection, realtime: Boolean,
+                     drainAdmissionReply: Boolean = false) {
+        val peerFinished = CountDownLatch(1)
         executor.execute {
-            try { if (realtime) copyRealtime(id, second, first) else copy(second.input, first.output) }
+            try {
+                if (realtime) copyRealtime(id, second, first) else copy(second.input, first.output)
+                // Native close may discard queued writes. The admission server closes after
+                // its reply; let the guest receive it and close first. Bound abandoned peers.
+                if (drainAdmissionReply && !peerFinished.await(5, TimeUnit.SECONDS)) {
+                    Log.w("NearbyLane", "Admission reply drain deadline expired")
+                }
+            }
             catch (error: Exception) { if (connections.containsKey(id)) report(error) }
             finally { closeConnections(id) }
         }
         try { if (realtime) copyRealtime(id, first, second) else copy(first.input, second.output) }
-        finally { closeConnections(id) }
+        finally { peerFinished.countDown(); closeConnections(id) }
     }
 
     private fun copyRealtime(id: UUID, source: NearbyByteConnection, destination: NearbyByteConnection) {
@@ -221,11 +231,16 @@ class NearbySocketBridge(
 
     private fun copy(input: InputStream, output: OutputStream) {
         val bytes = ByteArray(16_384)
+        var transferred = 0L
         while (!Thread.currentThread().isInterrupted) {
             val count = input.read(bytes)
-            if (count < 0) return
+            if (count < 0) {
+                Log.d("NearbyLane", "Byte stream EOF after $transferred bytes forwarded")
+                return
+            }
             if (count == 0) continue
             output.write(bytes, 0, count); output.flush()
+            transferred += count
         }
     }
 
