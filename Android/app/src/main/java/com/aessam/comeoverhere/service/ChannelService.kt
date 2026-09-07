@@ -39,6 +39,8 @@ sealed interface OfflineMapStatus {
 }
 
 interface ChannelServiceProtocol {
+    val awareSettings: com.aessam.comeoverhere.core.NearbyAwareSettings? get() = null
+    fun canJoin(channel: Channel): Boolean = channel.audioHostIP != null || channel.createdBy == localPeerID
     val bluetoothDiscoveryEnabled: StateFlow<Boolean>
     fun setBluetoothDiscoveryEnabled(enabled: Boolean)
     val channels: StateFlow<List<Channel>>
@@ -111,6 +113,13 @@ class ChannelService(
     private val reconnectBaseDelayMillis: Long = 1_000L,
     private val roomAdmission: RoomAdmissionInterface = RoomAdmissionTransport(),
 ) : ChannelServiceProtocol {
+    override val awareSettings get() = (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.awareSettings
+    private var resolvedGuestHost: String? = null
+    override fun canJoin(channel: Channel): Boolean {
+        if (channel.audioHostIP != null || channel.createdBy == localPeerID) return true
+        val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return false }
+        return (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.canConnectNearby(room) == true
+    }
 
     private val _channels = MutableStateFlow<List<Channel>>(emptyList())
     override val channels: StateFlow<List<Channel>> = _channels.asStateFlow()
@@ -266,11 +275,13 @@ class ChannelService(
     override fun start() {
         discoveryJob?.cancel()
         discoveryJob = scope.launch {
-            kotlinx.coroutines.flow.combine(_bluetoothDiscoveryEnabled, discoveryForeground, listenState) { enabled, foreground, state ->
+            kotlinx.coroutines.flow.combine(_bluetoothDiscoveryEnabled, discoveryForeground, listenState, _connectionState) { enabled, foreground, state, connection ->
                 when {
-                    !enabled || !foreground -> BluetoothDiscoveryMode.OFF
+                    !enabled || (!foreground && state == ListenState.IDLE) -> BluetoothDiscoveryMode.OFF
                     state == ListenState.IDLE -> BluetoothDiscoveryMode.BROWSING
                     state == ListenState.BROADCASTING -> BluetoothDiscoveryMode.ADVERTISING
+                    connection == SessionConnectionState.RECONNECTING -> BluetoothDiscoveryMode.BROWSING
+                    (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.usesBluetoothGuestRoute == true -> BluetoothDiscoveryMode.BROWSING
                     else -> BluetoothDiscoveryMode.OFF
                 }
             }.collect { coordinator.controlPlane.setBluetoothDiscoveryMode(it) }
@@ -428,14 +439,17 @@ class ChannelService(
             }
         val attempt = sessionAttempt
         scope.launch {
+            val host: String
             val credential = try {
                 if (_activeChannelID.value == null && channel.roomAdmissionVersion == 1) {
                     _connectionState.value = SessionConnectionState.CONNECTING
                 }
+                host = channel.audioHostIP ?: requireNotNull(
+                    coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl,
+                ) { "No nearby connection is available" }.prepareNearbyGuest(sessionID)
                 withContext(Dispatchers.IO) {
                     if (channel.roomAdmissionVersion != null && channel.roomAdmissionVersion != 0) {
                         require(channel.roomAdmissionVersion == 1) { "Unsupported room admission version." }
-                        val host = requireNotNull(channel.audioHostIP) { "Guide network address is unavailable." }
                         val secret = roomAdmission.join(host, sessionID, tourCode.ifEmpty { null })
                         SessionCredential.derive(secret, sessionID)
                     } else SessionCredential.derive(normalizedCode, sessionID)
@@ -444,7 +458,10 @@ class ChannelService(
                 if (error is CancellationException) throw error
                 if (attempt == sessionAttempt) {
                     _tourFeatureError.value = error.message ?: error.javaClass.simpleName
-                    if (_activeChannelID.value == null) _connectionState.value = SessionConnectionState.FAILED
+                    if (_activeChannelID.value == null) {
+                        (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
+                        _connectionState.value = SessionConnectionState.FAILED
+                    }
                 } else {
                     Log.i(TAG, "Discarding a stale guest credential failure; the session was replaced during the stretch")
                 }
@@ -454,7 +471,7 @@ class ChannelService(
                 Log.i(TAG, "Discarding a stale guest credential; the session was replaced during the stretch")
                 return@launch
             }
-            startGuestSession(channel, sessionID, participantID, normalizedCode, credential)
+            startGuestSession(channel, sessionID, participantID, normalizedCode, credential, host)
         }
     }
 
@@ -464,8 +481,11 @@ class ChannelService(
         participantID: UUID,
         normalizedCode: String,
         credential: SessionCredential,
+        host: String,
     ) {
-        stopCurrentActivity()
+        stopCurrentActivity(preservingNearbyRoute = true)
+        if (channel.audioHostIP != null) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
+        resolvedGuestHost = if (channel.audioHostIP == null) host else null
         _readySlideFiles.value = emptyMap()
         _readyParticipantCount.value = 0
         _offlineMapConfiguration.value = null
@@ -599,7 +619,11 @@ class ChannelService(
         roomAccessAttempt++
         _isUpdatingRoomAccess.value = false
         sessionAttempt += 1
-        val ch = activeChannel ?: return
+        val ch = activeChannel ?: run {
+            (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
+            _connectionState.value = SessionConnectionState.IDLE
+            return
+        }
         val isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
         sessionGeneration += 1
         val generation = sessionGeneration
@@ -703,7 +727,9 @@ class ChannelService(
         }
     }
 
-    private fun stopCurrentActivity(discardingPendingStretch: Boolean = true) {
+    private fun stopCurrentActivity(discardingPendingStretch: Boolean = true, preservingNearbyRoute: Boolean = false) {
+        if (!preservingNearbyRoute) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
+        resolvedGuestHost = null
         roomAdmission.stop()
         roomAccessAttempt++
         _isUpdatingRoomAccess.value = false
@@ -830,6 +856,10 @@ class ChannelService(
             coordinator.controlPlane.commands.collect { (command, _) ->
                 when (command) {
                     is BLECommand.ChannelAnnounce -> {
+                        val nearbyAvailable = try {
+                            (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)
+                                ?.canConnectNearby(UUID.fromString(command.channelID)) == true
+                        } catch (error: IllegalArgumentException) { false }
                         val existing = _channels.value.find { it.id == command.channelID }
                         if (existing != null) {
                             val updated = existing.copy(
@@ -838,6 +868,7 @@ class ChannelService(
                                 hasWiFiAware = false,
                                 roomAdmissionVersion = command.roomAdmissionVersion,
                                 isRoomLocked = command.isRoomLocked ?: true,
+                                nearbyAvailable = nearbyAvailable,
                             )
                             _channels.value = _channels.value.map {
                                 if (it.id == command.channelID) updated else it
@@ -860,6 +891,7 @@ class ChannelService(
                                 audioHostIP = command.audioHostIP,
                                 roomAdmissionVersion = command.roomAdmissionVersion,
                                 isRoomLocked = command.isRoomLocked ?: true,
+                                nearbyAvailable = nearbyAvailable,
                             )
                             _channels.value = _channels.value + channel
                             Log.i(TAG, "Discovered megaphone")
@@ -911,7 +943,7 @@ class ChannelService(
         participantID: UUID,
         credential: SessionCredential,
     ) {
-        val hostIP = channel.audioHostIP
+        val hostIP = resolvedGuestHost ?: channel.audioHostIP
         if (hostIP == null) {
             _connectionState.value = SessionConnectionState.FAILED
             _tourFeatureError.value = "No local LAN route is available"
@@ -1083,7 +1115,32 @@ class ChannelService(
             reconnectJob = null
             if (_listenState.value != ListenState.LISTENING) return@launch
             // A fresher discovery address wins over the one captured when the reconnect was scheduled.
-            restartGuestTransports(activeChannel ?: channel)
+            val current = activeChannel ?: channel
+            refreshGuestRouteForReconnect(current)
+            if (_listenState.value == ListenState.LISTENING && _activeChannelID.value == current.id && guestCredential != null) {
+                restartGuestTransports(current)
+            }
+        }
+    }
+
+    private suspend fun refreshGuestRouteForReconnect(channel: Channel) {
+        val nearby = coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl ?: return
+        val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return }
+        if (resolvedGuestHost != null && channel.audioHostIP != null) {
+            nearby.stopNearbyGuest(); resolvedGuestHost = null
+            coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.OFF)
+        } else if (nearby.canConnectNearby(room)) {
+            coordinator.activeAudioPlane?.stop(); tourControlService.stop(); assetTransferService.stop()
+            nearby.stopNearbyGuest()
+            try {
+                resolvedGuestHost = nearby.prepareNearbyGuest(room)
+                if (_bluetoothDiscoveryEnabled.value && nearby.usesBluetoothGuestRoute) {
+                    coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.BROWSING)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w(TAG, "Nearby route recovery failed (${error.javaClass.simpleName})")
+            }
         }
     }
 

@@ -417,3 +417,25 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **Root cause**: A per-send flag was assumed to establish the required behavior without proving it on the target runtime. Android's `soTimeout` also limits reads, not writes.
 **Resolution**: Prepare and verify `O_NONBLOCK` on iOS and a nonblocking channel on Android before the locked final send. Reject incomplete AEAD replies instead of retrying under the lock. The simulator full-socket test then completed in 0.006 s; functional lock/edit/unlock still passed.
 **Decision**: Backpressure must be exercised, not inferred from a timeout or flag name. Keep the policy-revision check and final send serialized without waiting for peer progress.
+
+## 74. A visible room must not be mistaken for an implemented session
+**What happened**: The Bluetooth preview displayed guide rooms while joining was intentionally disabled. That did not meet the user's walking-tour requirement.
+**Root cause**: Metadata discovery was delivered without admission and media transport ownership, while broader implementation remained a plan.
+**Resolution**: Add native direct byte connections through the existing admitted audio/control/asset lanes; gate Join on an actual local endpoint capability. Add physical fixtures that require all four stages, including non-silent decoded audio rather than a handshake or first-frame log.
+**Decision**: Report complete loops and exact remaining platform limits. Direct Android passes do not qualify iPhone, mesh, locked devices or large groups.
+
+## 75. Aware discovery, pairing and data-path security are different contracts
+**What happened**: The first Android Aware implementation attempted to advertise a server port without an NDP security configuration. Pixel 7 additionally reported no native Aware pairing support. Initial secured requests then timed out.
+**Root cause**: Pairing capability was treated as a prerequisite for every Android data path, and pairing success as sufficient link configuration. The public Android builder explicitly requires security for port advertisement; responder registration must precede subscriber initiation.
+**Resolution**: Explicit SK-128 NDP security, matching publish security, and responder-first setup passed the actual two-phone fixture in both directions. Pixel 7 uses PIN-secured legacy NAN instead of unsupported native pairing. Apple system-paired Aware remains a different setup and is not claimed interoperable.
+**Decision**: Validate each public API contract and each physical role. A street file transfer in another app does not establish the transport or security scheme available to this app.
+
+## 76. Parallel logical lanes still share one Bluetooth controller
+**What happened**: The first BLE physical fixture authenticated audio but missed pointer state; one of three concurrent L2CAP opens failed. A later run delivered control/assets but missed the decoded-audio threshold; passing reruns do not erase that failure.
+**Resolution**: Serialize Android L2CAP opens, request high connection priority only while joined, disable Nagle on local adapters, and retain strict non-silent audio assertions. Bound complete sealed-frame queues and close stalled writers rather than accumulating stale speech.
+**Decision**: Separate application sockets do not establish radio-level scheduling or group capacity. Keep congestion, locked-device and endurance qualification open.
+
+## 77. A native error code is evidence, not a diagnosis
+**What happened**: The user reported iOS Wi-Fi Aware `-11992` after successful installation. The signed app contains both required Aware entitlement values; no physical diagnostic capture was available before the user left.
+**Resolution**: Preserve the operation and native code, show retry guidance and the mixed-platform limitation, and regression-test message handling in the simulator. The native root cause remains unresolved.
+**Decision**: Do not assign an undocumented code to permissions, unsupported hardware or an OS defect without evidence. A passing simulator error-handling test is not a radio fix.

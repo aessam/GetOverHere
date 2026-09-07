@@ -5,6 +5,31 @@ import TourSessionCore
 
 @MainActor
 struct RoomDiscoveryIndexTests {
+    @Test func threeSourcesFallBackWithoutInventingAnAddress() throws {
+        var index = RoomDiscoveryIndex()
+        let peer = PeerInfo(displayName: "Guide")
+        let id = UUID().uuidString
+        func value(_ name: String) -> BLECommand.ChannelAnnounce {
+            BLECommand.ChannelAnnounce(channelID: id, channelName: name, createdBy: peer.id,
+                audioQuality: .standard, wifiSSID: nil, audioHostIP: "192.0.2.1")
+        }
+        func announce(_ result: (BLECommand, PeerInfo)?) throws -> BLECommand.ChannelAnnounce {
+            guard case let .channelAnnounce(value) = try #require(result).0 else { throw TestFailure.invalid }
+            return value
+        }
+        _ = index.update(value("Bluetooth"), peer: peer, source: .bluetooth)
+        _ = index.update(value("Aware"), peer: peer, source: .aware)
+        #expect(try announce(index.update(value("LAN"), peer: peer, source: .lan)).audioHostIP == "192.0.2.1")
+        let aware = try announce(index.remove(id, source: .lan))
+        #expect(aware.channelName == "Aware"); #expect(aware.audioHostIP == nil)
+        let bluetooth = try announce(index.remove(id, source: .aware))
+        #expect(bluetooth.channelName == "Bluetooth"); #expect(bluetooth.audioHostIP == nil)
+        let removed = index.remove(id, source: .bluetooth)
+        guard case .channelUnavailable = try #require(removed).0 else {
+            Issue.record("Last source loss did not remove room"); return
+        }
+        #expect(index.peers.isEmpty)
+    }
     @Test func bluetoothCannotOverwriteLANAndLossFallsBack() throws {
         var index = RoomDiscoveryIndex()
         let peer = PeerInfo(displayName: "Guide")

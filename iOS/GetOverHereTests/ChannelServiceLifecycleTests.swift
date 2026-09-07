@@ -69,6 +69,29 @@ struct ChannelServiceLifecycleTests {
 
     // MARK: - FND-2
 
+    @Test("A failed nearby admission closes its route and permits another attempt")
+    @MainActor
+    func failedNearbyAdmissionClosesRoute() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        let channel = Channel(id: UUID().uuidString, name: "Nearby", createdAt: .now,
+                              createdBy: UUID().uuidString, roomAdmissionVersion: 1)
+        #expect(!h.service.canJoin(channel))
+        h.controlPlane.nearbyAvailable = true
+        #expect(h.service.canJoin(channel))
+        let stops = h.controlPlane.nearbyStopCalls
+        h.service.joinChannel(channel, tourCode: "")
+        try await waitUntil("failed nearby admission") { h.service.connectionState == .failed }
+        #expect(h.controlPlane.nearbyStopCalls == stops + 1)
+        #expect(!h.controlPlane.usesBluetoothGuestRoute)
+        #expect(h.control.startGuestCalls == 0)
+        h.service.leaveChannel()
+        #expect(h.service.connectionState == .idle)
+        h.service.joinChannel(channel, tourCode: "")
+        try await waitUntil("second nearby admission failure") { h.service.connectionState == .failed }
+        #expect(h.controlPlane.nearbyPrepareCalls == 2)
+    }
+
     @Test("Bluetooth discovery requires intent and stops for a LAN guest or background")
     @MainActor
     func bluetoothDiscoveryLifecycle() async throws {
@@ -99,7 +122,8 @@ struct ChannelServiceLifecycleTests {
         h.service.bluetoothDiscoveryEnabled = true
         #expect(h.controlPlane.bluetoothMode == .advertising)
         h.service.discoveryForeground = false
-        #expect(h.controlPlane.bluetoothMode == .off)
+        // A joined tour keeps its Bluetooth listener alive when the guide locks the phone.
+        #expect(h.controlPlane.bluetoothMode == .advertising)
         h.service.discoveryForeground = true
         #expect(h.controlPlane.bluetoothMode == .advertising)
     }

@@ -30,9 +30,11 @@ The authoritative requirements and acceptance gates are in [TourGuideProductSpec
           └── TCP :50002, GOH2 asset chunks ─────►│
 ```
 
-Bonjour on iOS and NSD on Android discover LAN guide sessions. The `Bluetooth room discovery` toggle enables a foreground-only preview, without prompting at launch. Browsers scan, guides advertise, and joined LAN guests stop Bluetooth discovery. Physical Wi-Fi-off validation remains pending; Bluetooth-only rooms show that audio is unavailable and cannot yet join. Rooms start open, with optional guide-editable code locking; admission supplies a separate hidden media credential. Control and assets cannot block audio because each has an independent authenticated connection. Slide and map assets are content-addressed, chunked, resumable, and SHA-256 verified.
+Bonjour on iOS and NSD on Android discover LAN guide sessions. The `Bluetooth room discovery` toggle now enables experimental direct joining over LE credit-based sockets, not just room-name previews. Both platforms implement admission, audio, control, and assets through the existing authenticated lanes. Android requires API 29+ for these sockets; older peers remain discovery-only. LAN guests stop scanning; Bluetooth guests stop scanning once their guide link is established and resume after route loss. Rooms start open, with optional guide-editable code locking; admission supplies a separate hidden media credential. Slide and map assets remain content-addressed, chunked, resumable, and SHA-256 verified.
 
-The current production path needs an existing local LAN. Native Wi-Fi Aware is isolated behind a diagnostic lab and is not yet a production dependency.
+The LAN path remains the qualified floor. Explicit experimental Wi-Fi Aware controls now own native connections outside the lab. The Android-to-Android path uses a displayed device PIN to secure its data path, separate from room locking; Apple uses system device pairing. These security setups are not interoperable in this candidate, so mixed iPhone/Android groups must use LAN or the experimental Bluetooth route. Aware needs Wi-Fi enabled but no access point or Internet. Bluetooth is the route intended for a disabled Wi-Fi radio.
+
+Physical Android fixtures have passed admission, pointer state, exact asset bytes, and non-silent native audio over BLE with Wi-Fi disabled on both phones in both guide directions. Android Aware also passed both roles. This does not qualify iPhone interoperability, live radio-toggle recovery, locked phones, acoustic playback, large groups, or endurance. The implementation is direct, not the planned signed relay overlay. See ADR-056 and `NextSession.md` for remaining work; do not label the entire no-Wi-Fi product complete.
 
 ## Selected transport architecture
 

@@ -11,11 +11,23 @@ struct ChannelSidebar: View {
     var body: some View {
         List {
             Section {
+                if #available(iOS 26.4, *) {
+                    Toggle("Wi-Fi Aware (experimental)", isOn: Binding(
+                        get: { service.awareDiscoveryEnabled }, set: { service.awareDiscoveryEnabled = $0 }))
+                        .accessibilityIdentifier("awareRoomDiscovery")
+                    if service.awareDiscoveryEnabled {
+                        NearbyAwarePairingView(isGuide: service.isCreator)
+                    }
+                    if let error = service.nearbyError {
+                        Text(error).foregroundStyle(.red).font(.caption)
+                            .accessibilityIdentifier("nearbyTransportError")
+                    }
+                }
                 Toggle("Bluetooth room discovery", isOn: Binding(
                     get: { service.bluetoothDiscoveryEnabled },
                     set: { service.bluetoothDiscoveryEnabled = $0 }))
                     .accessibilityIdentifier("bluetoothRoomDiscovery")
-                Text("Foreground room preview only. Joining and audio still require a local Wi-Fi network.")
+                Text("Experimental direct Bluetooth joining and audio. Keep Bluetooth enabled. Older app versions may provide discovery only.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if service.activeChannelID == nil, service.connectionState == .failed,
@@ -44,7 +56,7 @@ struct ChannelSidebar: View {
                             channelRow(channel)
                         }
                         .buttonStyle(.plain)
-                        .disabled(channel.audioHostIP == nil && channel.createdBy != service.localPeer.id)
+                        .disabled(!service.canJoin(channel))
                     }
                 }
             }
@@ -109,7 +121,7 @@ struct ChannelSidebar: View {
                     .font(.body.bold())
                     .lineLimit(1)
                 Text(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "Your megaphone"
-                     : channel.audioHostIP == nil ? "Nearby via Bluetooth · Audio unavailable" : "Live")
+                     : channel.audioHostIP == nil ? (service.canJoin(channel) ? "Nearby direct · Experimental" : "Nearby via Bluetooth · Audio unavailable") : "Live")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

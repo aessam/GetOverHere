@@ -5,7 +5,8 @@ import TourSessionCore
 /// Bonjour plus read-only Bluetooth room discovery. Only Bonjour supplies a join address.
 /// Each live channel is advertised as a `_goh-audio._tcp` service and Bluetooth GOR1 metadata.
 @Observable
-final class LocalControlPlane: NSObject, ControlPlane {
+final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
+    var onNearbyError: ((String) -> Void)?
     let localPeer: PeerInfo
     private(set) var connectedPeers: [PeerInfo] = []
 
@@ -21,6 +22,13 @@ final class LocalControlPlane: NSObject, ControlPlane {
     private var peerByChannelID: [String: PeerInfo] = [:]
     private let bluetooth: any BluetoothRoomDiscoveryInterface
     private var discoveryIndex = RoomDiscoveryIndex()
+    private var aware: (any NearbyRoomTransport)?
+    private var awareRooms = Set<UUID>()
+    private var hostedRecord: BluetoothRoomRecord?
+    private let nearbyBridge = NearbySocketBridge()
+    private var nearbyGuestRoom: UUID?
+    private var routeAttempt: UInt64 = 0
+    private(set) var usesBluetoothGuestRoute = false
 
     private static let serviceType = "_goh-audio._tcp."
     private static let audioPort = 50000
@@ -69,7 +77,69 @@ final class LocalControlPlane: NSObject, ControlPlane {
         bluetooth.setMode(mode)
     }
 
+    func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) {
+        if aware == nil, mode != .off, #available(iOS 26.4, *) {
+            let transport = WiFiAwareRoomTransport()
+            transport.onError = { [weak self] message in self?.onNearbyError?(message) }
+            transport.onRoom = { [weak self] record in
+                guard let self, record.guideID != UUID(uuidString: localPeer.id) else { return }
+                awareRooms.insert(record.roomID)
+                let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
+                                    platform: record.isAndroid ? .android : .ios)
+                let announce = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
+                    channelName: record.name, createdBy: peer.id, audioQuality: .standard,
+                    roomAdmissionVersion: 1, isRoomLocked: record.isLocked)
+                emit(discoveryIndex.update(announce, peer: peer, source: .aware))
+            }
+            transport.onLost = { [weak self] room in
+                guard let self else { return }
+                awareRooms.remove(room)
+                emit(discoveryIndex.remove(room.uuidString, source: .aware))
+            }
+            aware = transport
+        }
+        aware?.publish(hostedRecord)
+        aware?.setMode(mode)
+    }
+
+    func canConnectNearby(roomID: UUID) -> Bool {
+        awareRooms.contains(roomID) || (bluetooth as? any BluetoothSessionDiscoveryInterface)?.canConnect(roomID: roomID) == true
+    }
+
+    func prepareNearbyGuest(roomID: UUID) async throws -> String {
+        if let nearbyGuestRoom {
+            guard nearbyGuestRoom == roomID else { throw NearbyConnectionError.rejected }
+            return "127.0.0.1"
+        }
+        routeAttempt &+= 1
+        let attempt = routeAttempt
+        let connect: NearbySocketBridge.Connect
+        if let aware, awareRooms.contains(roomID) {
+            connect = { try await aware.connect(roomID: roomID) }
+            usesBluetoothGuestRoute = false
+        } else if let bluetooth = bluetooth as? any BluetoothSessionDiscoveryInterface, bluetooth.canConnect(roomID: roomID) {
+            bluetooth.setJoinedRoom(roomID)
+            connect = { try await bluetooth.connect(roomID: roomID) }
+            usesBluetoothGuestRoute = true
+        } else { throw NearbyConnectionError.unavailable }
+        let host: String
+        do { host = try await nearbyBridge.startGuest(roomID: roomID, connect: connect) }
+        catch { if routeAttempt == attempt { stopNearbyGuest() }; throw error }
+        guard routeAttempt == attempt else { throw CancellationError() }
+        nearbyGuestRoom = roomID
+        return host
+    }
+
+    func stopNearbyGuest() {
+        routeAttempt &+= 1
+        nearbyBridge.stop(); nearbyGuestRoom = nil
+        if usesBluetoothGuestRoute { (bluetooth as? any BluetoothSessionDiscoveryInterface)?.setJoinedRoom(nil) }
+        usesBluetoothGuestRoute = false
+    }
+
     func stop() {
+        stopNearbyGuest()
+        aware?.stop()
         bluetooth.stop()
         discoveryIndex = RoomDiscoveryIndex()
         browser.stop()
@@ -101,8 +171,11 @@ final class LocalControlPlane: NSObject, ControlPlane {
 
     private func publishChannel(_ announce: BLECommand.ChannelAnnounce) {
         if let roomID = UUID(uuidString: announce.channelID), let guideID = UUID(uuidString: announce.createdBy) {
-            bluetooth.publish(BluetoothRoomRecord(roomID: roomID, guideID: guideID, name: announce.channelName,
-                isAndroid: false, isLocked: announce.isRoomLocked ?? true))
+            let record = BluetoothRoomRecord(roomID: roomID, guideID: guideID, name: announce.channelName,
+                isAndroid: false, isLocked: announce.isRoomLocked ?? true)
+            hostedRecord = record
+            bluetooth.publish(record)
+            aware?.publish(record)
         }
         let txtData = NetService.data(fromTXTRecord: [
             TXTKey.channelName: Data(announce.channelName.utf8),
@@ -128,6 +201,8 @@ final class LocalControlPlane: NSObject, ControlPlane {
     }
 
     private func unpublishChannel(channelID: String) {
+        hostedRecord = nil
+        aware?.publish(nil)
         bluetooth.publish(nil)
         publishedServices.removeValue(forKey: channelID)?.stop()
         Logger.transport.info("Unpublished local channel")

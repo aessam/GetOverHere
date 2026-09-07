@@ -551,7 +551,8 @@ class WiFiAwareSessionTransport(
         const val REALTIME_PORT = 50_000
         const val CONTROL_PORT = 50_001
         const val ASSET_PORT = 50_002
-        const val BOOTSTRAP_PORT = 50_003
+        // 50003 is owned by room admission. Aware must never bind that listener.
+        const val BOOTSTRAP_PORT = 50_004
         private const val CONNECT_TIMEOUT_MILLISECONDS = 5_000
         private const val MAXIMUM_BOOTSTRAP_SIZE = 65_536
     }

@@ -59,6 +59,9 @@ run_kotlin() {
 }
 
 echo "[3/9] Exact Swift/Kotlin wire bytes"
+SWIFT_NEARBY="$($SWIFT_BIN nearby-fixture)"
+KOTLIN_NEARBY="$(run_kotlin nearby-fixture)"
+[[ -n "$SWIFT_NEARBY" && "$SWIFT_NEARBY" == "$KOTLIN_NEARBY" ]] || { echo 'error: nearby selector/expiry parity failed' >&2; exit 1; }
 SWIFT_HEX="$($SWIFT_BIN fixture)"
 KOTLIN_HEX="$(run_kotlin fixture)"
 if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then

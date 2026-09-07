@@ -13,6 +13,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -95,6 +97,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     val reconnectAttempt by vm.reconnectAttempt.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showNearbySettings by remember { mutableStateOf(false) }
     var newChannelName by remember { mutableStateOf("") }
     var pickerError by remember { mutableStateOf<String?>(null) }
     var bluetoothError by remember { mutableStateOf<String?>(null) }
@@ -297,14 +300,22 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Bluetooth room discovery", modifier = Modifier.weight(1f))
-                Switch(checked = bluetoothEnabled, onCheckedChange = requestBluetooth,
-                    modifier = Modifier.testTag("bluetoothRoomDiscovery"))
+            if (activeChannel != null) {
+                TextButton(onClick = { showNearbySettings = !showNearbySettings }) {
+                    Text(if (showNearbySettings) "Hide nearby settings" else "Nearby connections")
+                }
             }
-            Text("Foreground room preview only. Joining and audio require local Wi-Fi.",
-                modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-            bluetoothError?.let { Text(it, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
+            if (activeChannel == null || showNearbySettings) {
+                vm.awareSettings?.let { NearbyAwareSettingsView(it) }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bluetooth room discovery", modifier = Modifier.weight(1f))
+                    Switch(checked = bluetoothEnabled, onCheckedChange = requestBluetooth,
+                        modifier = Modifier.testTag("bluetoothRoomDiscovery"))
+                }
+                Text("Experimental direct Bluetooth joining and audio on Android 10+. Older apps may provide discovery only.",
+                    modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                bluetoothError?.let { Text(it, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
+            }
             if (activeChannel != null) {
                 if (activeChannel!!.createdBy == vm.localPeerID) {
                     CreatorView(
@@ -392,7 +403,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         }
                     }
                 }
-                ChannelListView(channels, vm.localPeerID) { channel ->
+                ChannelListView(channels, vm.localPeerID, canJoin = vm::canJoin) { channel ->
                     if (channel.roomAdmissionVersion == 1 && !channel.isRoomLocked) vm.joinChannel(channel, "")
                     else pendingJoinChannel = channel
                     joinCode = ""
@@ -478,6 +489,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
 internal fun ChannelListView(
     channels: List<Channel>,
     localPeerID: String,
+    canJoin: (Channel) -> Boolean = { it.audioHostIP != null || it.createdBy == localPeerID },
     onJoin: (Channel) -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -495,7 +507,9 @@ internal fun ChannelListView(
                 headlineContent = { Text(channel.name) },
                 supportingContent = {
                     Text(if (channel.createdBy == localPeerID) "Your megaphone"
-                        else if (channel.audioHostIP == null) "Nearby via Bluetooth · Audio unavailable"
+                        else if (channel.audioHostIP == null) {
+                            if (canJoin(channel)) "Nearby direct · Experimental" else "Nearby via Bluetooth · Audio unavailable"
+                        }
                         else if (channel.isRoomLocked) "Locked room" else "Open room")
                 },
                 leadingContent = {
@@ -513,7 +527,7 @@ internal fun ChannelListView(
                         modifier = Modifier.size(8.dp)
                     )
                 },
-                modifier = Modifier.clickable(enabled = channel.audioHostIP != null || channel.createdBy == localPeerID) { onJoin(channel) }
+                modifier = Modifier.clickable(enabled = canJoin(channel)) { onJoin(channel) }
             )
         }
     }
@@ -1035,7 +1049,7 @@ private fun PointerFeatureStage(
     val arrowRotation by animateFloatAsState((relativeDegrees ?: 0.0).toFloat(), label = "pointer")
 
     Column(
-        modifier.fillMaxSize().padding(20.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

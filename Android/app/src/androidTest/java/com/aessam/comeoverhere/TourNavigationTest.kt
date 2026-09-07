@@ -9,11 +9,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsOff
 import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import com.aessam.toursession.TourVisualMode
@@ -22,6 +24,10 @@ import com.aessam.comeoverhere.service.SessionConnectionState
 import java.net.ServerSocket
 
 class TourNavigationTest {
+    @After fun releaseTourEvenWhenAnAssertionFails() {
+        // The application intentionally outlives Activity recreation. Tests must end their tour.
+        composeRule.runOnIdle { channelService().leaveChannel(); channelService().stop() }
+    }
     @Test fun bluetoothDiscoveryDefaultsOffAndRequiresExplicitIntent() {
         composeRule.onNodeWithTag("bluetoothRoomDiscovery").assertIsOff()
         composeRule.onNodeWithTag("bluetoothRoomDiscovery").performClick()
@@ -96,7 +102,7 @@ class TourNavigationTest {
         assertEquals(TourVisualMode.POINTER, channelService().visualFocusSnapshot.value?.mode)
         composeRule.onNodeWithText(
             "Only the selected bearing angle is shared. Device location and guest compass readings stay local.",
-        ).assertIsDisplayed()
+        ).performScrollTo().assertIsDisplayed()
         assertTrue(composeRule.onAllNodesWithText("Audio Quality").fetchSemanticsNodes().isEmpty())
 
         composeRule.onNodeWithText("End Tour").performClick()

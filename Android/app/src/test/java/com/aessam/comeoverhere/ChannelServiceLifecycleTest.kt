@@ -48,6 +48,26 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelServiceLifecycleTest {
+    @Test fun failedNearbyAdmissionClosesRouteAndPermitsRetry() {
+        val h = Harness()
+        try {
+            val channel = Channel(UUID.randomUUID().toString(), "Nearby", 0.0,
+                UUID.randomUUID().toString(), roomAdmissionVersion = 1)
+            assertFalse(h.service.canJoin(channel))
+            h.controlPlane.nearbyAvailable = true
+            assertTrue(h.service.canJoin(channel))
+            val stops = h.controlPlane.nearbyStopCalls
+            h.service.joinChannel(channel, "")
+            awaitCondition("failed nearby admission") {
+                h.scheduler.runCurrent(); h.service.connectionState.value == SessionConnectionState.FAILED
+            }
+            assertEquals(stops + 1, h.controlPlane.nearbyStopCalls)
+            assertFalse(h.controlPlane.usesBluetoothGuestRoute)
+            assertEquals(0, h.control.startGuestCalls)
+            h.service.joinChannel(channel, "")
+            awaitCondition("second nearby admission") { h.scheduler.runCurrent(); h.controlPlane.nearbyPrepareCalls == 2 }
+        } finally { h.close() }
+    }
     @Test fun bluetoothDiscoveryLifecycle() {
         val h = Harness()
         try {
@@ -77,7 +97,8 @@ class ChannelServiceLifecycleTest {
             h.service.setBluetoothDiscoveryEnabled(true)
             awaitCondition("Bluetooth ADVERTISING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.ADVERTISING }
             h.service.setDiscoveryForeground(false)
-            awaitCondition("Bluetooth OFF") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF }
+            // Locking the guide must not tear down the Bluetooth session listener.
+            awaitCondition("Bluetooth ADVERTISING in background") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.ADVERTISING }
             h.service.setDiscoveryForeground(true)
             awaitCondition("Bluetooth ADVERTISING") { h.scheduler.runCurrent(); h.controlPlane.bluetoothMode == com.aessam.comeoverhere.core.BluetoothDiscoveryMode.ADVERTISING }
         } finally { h.close() }

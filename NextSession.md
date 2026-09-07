@@ -1,12 +1,35 @@
 # GetOverHere Execution Plan
 
+## September 6 implementation checkpoint
+
+Direct BLE admission, encrypted native voice, control, and assets are implemented through native L2CAP byte connections on both platforms. Native Aware owners are connected to the room UI and the same application lanes. This is a direct-session milestone, not completion of the signed relay/guide-key work below.
+
+Wi-Fi-disabled Android acceptance passed in both directions after adding a four-frame native ACK window. Application queue bounds alone did not prevent stale audio inside the native socket; the strict test reproduced that failure before the fix. Both original Wi-Fi settings were restored and read back as enabled. Reusable harnesses: `verify_nearby_physical_android.sh` (`GOH_NEARBY_WIFI_OFF=1`) and the compiled-but-not-physically-run `verify_nearby_cross_platform.sh` for the unavailable iPhone.
+
+- **A3:** GOD1 fixed-lane selector, GOR1 metadata, capability-aware joining, failed-join cleanup, and endpoint recovery are implemented. Admission remains the existing open/optional-lock protocol. Signed relay and guide-key pinning remain unimplemented.
+- **A4:** Complete sealed realtime frames use bounded queues (8 frames, 150 ms queued-audio lifetime, 1 s write deadline), with unchanged receiving authentication/dedup/expiry. Physical Pixel 11 Pro→Pixel 7 and reverse BLE fixtures passed admission, pointer, exact 512-byte assets and 100 non-silent native-decoded frames. Earlier setup/audio failures are retained in ExperimentLog, not erased by passing reruns. No acoustic/endurance/group claim follows.
+- **A5:** Android Aware has a working PIN-secured NDP path, including Pixel 7 without native pairing. Apple Aware uses system-paired connections. Those security setups do not implement mixed-platform Aware interoperability; the UI says to use Bluetooth for mixed groups. Direct lane reconnect can re-resolve nearby endpoints and retain admitted credentials. Mesh/hybrid scale and 5/10/50-participant physical acceptance remain outstanding.
+- **A2:** Physical testing is paused at the user's request: all phones are unavailable while travelling. Before that pause, the signed iPhone candidate installed successfully, but no automated mixed-platform radio run completed. The user reported iOS `NWError.wifiAware(-11992)`; the signed artifact contains Publish/Subscribe entitlements, but the native failure's cause is unresolved. Continue simulator/emulator checks only; do not contact phones or request repeated unlocks.
+
+The older plan below is preserved as the target; its statements about unowned Aware connections and unavailable Pixel hardware are superseded by this checkpoint. `stable-local-network` remains at `59b0402`; do not move it to this experimental work.
+
 ## September 5 review remediation — approved A1–A5 execution
 
-The user approved continuous execution of review remediation, physical qualification, BLE admission/control, BLE voice, and Aware/hybrid routes, stopping at genuine hardware/security/acceptance blockers. Existing incoming physical gates still apply; passing software tests does not waive them.
+The user approved review remediation, BLE admission/control, BLE voice, and Aware/hybrid routes. On September 5 the user explicitly requested all coding before one consolidated physical feedback round. This supersedes the previous rule that incoming physical gates must pass before implementation: software implementation and integration proceed while phones are unavailable. Physical gates below still control acceptance and product claims; passing software tests does not waive them.
 
 - **A1 — Software remediation:** Reverse Android-to-iOS codec fixtures pass without a decoder change. Explicit foreground Bluetooth intent and role-specific radio lifecycle replace launch-time scanning. Admission completion uses nonblocking sends under the policy lock, fixed leading-zero ECDH tests cover both cores, and the main gate runs cross-language admission. Current spec and CLAUDE onboarding now match open rooms with optional editable locking. ADR-055 and ExperimentLog record the evidence and limits.
-- **A2 — Physical gate:** Pixel `66180DLKX006ND` is absent from adb; Dark knight reports `passcodeRequired: true` on September 5. Reconnect/authorize Pixel and unlock iPhone before both-direction LAN audio and Wi-Fi-off discovery tests. Enable the Bluetooth preview toggle on each phone explicitly. Test fresh locked discovery separately from locking after joining; neither is qualified by the preview.
-- **A3–A5 — Not implemented in A1:** BLE admission/control and voice, group/locked-device qualification, Aware production ownership, and hybrid assets/routes remain behind their physical gates below. Decide the bounded discovery/link model from physical results, not an assumed seven-central limit. Before relay implementation, specify guide-key bootstrap for open rooms without silently imposing mandatory QR or a tour code. Strong short-code resistance to an active malicious guide requires a separately reviewed admission protocol; ADR-052 now states the attack explicitly.
+- **A2 — Consolidated physical acceptance, deferred until the integrated candidate:** Pixel `66180DLKX006ND` is absent from adb; Dark knight reports `passcodeRequired: true` on September 5. These are acceptance limitations, not coding blockers. Do not repeatedly ask the user to reconnect or unlock devices during implementation. Test fresh locked discovery separately from locking after joining; neither is qualified by the preview.
+- **A3–A5 — Remaining implementation:** BLE admission/control and voice, Aware production ownership, and hybrid assets/routes proceed behind explicit experimental capability status. Implement a bounded discovery/link model without assuming an unmeasured seven-central platform limit. Before relay implementation, specify guide-key bootstrap for open rooms without silently imposing mandatory QR or a tour code. Strong short-code resistance to an active malicious guide requires a separately reviewed admission protocol; ADR-052 states the attack explicitly. Group and locked-device qualification remain physical acceptance work.
+
+### Integrated candidate delivery contract
+
+- **A3 — BLE session path:** Implement authenticated direct admission, authoritative control, guide-key pinning and bounded relay behavior; test open/locked/edit/unlock, malformed input, tampering, expiry, topology faults, and cross-language byte parity.
+- **A4 — BLE realtime path:** Integrate native encoded audio with bounded queues, stale-frame drops, duplicate suppression, and control priority. Verify production codec interoperability and deterministic congestion/relay tests. Do not equate simulator results with radio capacity.
+- **A5 — Complete product integration:** Wire Aware ownership, per-participant routes, reconnect/current-state recovery, and asset availability/resume into both apps. Preserve LAN and test actual production call sites, not only unused transport wrappers.
+- **A6 — Software qualification before handoff:** Run the complete simulator/emulator gate, fresh reverse codec interop, cross-language security/wire fixtures, and new transport/topology/route tests. Review diffs and commit focused passing checkpoints. Keep `stable-local-network` unchanged. A passing build alone is not completion.
+- **A2 — One user acceptance package:** Supply exact iOS/Android build and commit identities, install steps, one ordered checklist, reusable log capture, and a single results template. The checklist covers both guide directions on LAN, Wi-Fi radio off/Bluetooth on, Aware without an AP, open/locked/wrong-code/edit/unlock, live audio, slides/assets, pin/pointer, route loss/recovery, Bluetooth power recovery, background/locked phones, and endurance. Record unavailable multi-phone scale cases as untested, not passed.
+
+Do not hand back intermediate builds for user testing. Report implementation progress without requesting physical feedback until the candidate and software gates are ready. A consolidated test round collects feedback together; it cannot guarantee that no further hardware-specific fixes will be needed.
 
 Keep `stable-local-network` pointing at `59b0402`. Do not label this remediation checkpoint as qualified Wi-Fi-off operation.
 
@@ -17,9 +40,9 @@ Rooms now start open. Both apps have `Lock Room with Code`, a guide-editable cod
 The Android native-audio crash is fixed (ADR-053): Android builds documented codec initialization instead of consuming Apple's opaque cookie, converts actual 48 kHz Opus output to the 16 kHz playback contract, and safely releases failed decoders. Regression fixtures use real production Apple-encoded Opus/AAC packets; direct decoding checks duration, tone frequency, and non-silence, and encrypted-transport replay passes on the Pixel and emulator. The full virtual-device gate passes. This is not a sustained live two-phone listening result: physical endurance and Aware/BLE gates below remain pending.
 
 **Date:** 2026-08-22
-**Bluetooth discovery checkpoint (September 4):** The LAN baseline is tagged `stable-local-network` at `59b0402` (annotation: `Stable Local Network`). The first Bluetooth slice now adds read-only room metadata to production discovery on both apps (ADR-054). Bluetooth-only rooms show `Audio unavailable` and cannot join; Bluetooth admission/control/audio are not implemented. Software gates pass, but the required Wi-Fi-off two-phone discovery test is pending: reconnect Pixel `66180DLKX006ND` and unlock Dark knight. Verify both guide directions, lock/unlock metadata, end/expiry, Bluetooth power recovery, and LAN/BLE dedup before advancing to encrypted BLE admission/control. Do not move the stable LAN tag to this unqualified radio checkpoint.
+**Bluetooth discovery checkpoint (September 4):** The LAN baseline is tagged `stable-local-network` at `59b0402` (annotation: `Stable Local Network`). The first Bluetooth slice adds read-only room metadata to production discovery on both apps (ADR-054). Bluetooth-only rooms show `Audio unavailable` and cannot join; Bluetooth admission/control/audio are not implemented at this checkpoint. Software gates pass, but the Wi-Fi-off two-phone discovery test is pending. Under the September 5 delivery instruction, discovery qualification joins the consolidated physical acceptance round rather than blocking encrypted BLE implementation. Do not move the stable LAN tag to this unqualified radio checkpoint.
 
-**Status:** P0 complete. P3 LAN software hardening through G6 is implemented; the P3 physical acceptance gate remains next, before P1. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).
+**Status:** P0 complete. P3 LAN software hardening through G6 and A1 remediation are implemented. P3 physical acceptance is deferred to the integrated candidate alongside the remaining radio gates. A3–A5 implementation is next. See the 2026-09-02 G1–G6 entries in ExperimentLog.md (executed September 3–4).
 
 ## Intent
 
@@ -208,21 +231,16 @@ The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect
 ```mermaid
 graph TD
     P0[P0: baseline + focused commit] --> P3[P3: encrypted encoded realtime]
-    P3 --> P1[P1: timeboxed physical Aware lab]
-    P1 --> G1{Both Aware directions pass?}
-    G1 -->|no| R1[Park Aware; LAN floor + BLE work continue]
-    G1 -->|yes| P2[P2: production Aware owner]
-    P2 --> P4[P4: BLE control overlay]
-    R1 --> P4
-    P4 --> P5[P5: BLE voice]
-    P5 --> G2{BLE voice meets latency and stability gate?}
-    G2 -->|no| R2[BLE remains control-only]
-    G2 -->|yes| P6[P6: hybrid per-participant routing]
-    R2 --> P6
+    P3 --> P4[P4: BLE control overlay + software gates]
+    P4 --> P5[P5: BLE voice + software gates]
+    P5 --> P2[P1/P2: Aware lab readiness + production owner]
+    P2 --> P6[P6: hybrid per-participant routing]
     P6 --> P7[P7: assets + degraded behavior]
-    P7 --> P8[P8: scale + product acceptance]
-    style G1 fill:#ffd
-    style G2 fill:#ffd
+    P7 --> V[Complete simulator/emulator qualification + committed candidate]
+    V --> P8[One physical acceptance package: LAN, BLE, Aware, hybrid]
+    P8 --> G{Physical evidence meets route gates?}
+    G -->|yes| S[Enable only qualified product capabilities]
+    G -->|no| F[Collect feedback together; fix or restrict affected capability]
 ```
 
 ## Cross-cutting action
@@ -256,4 +274,4 @@ Probabilities are planning estimates, not measured field rates. Treating the 35%
 
 ## Recommended execution mode
 
-Gate-by-gate. Commit P0, execute P3 on the working LAN path, then run the timeboxed P1 lab. A P1 failure parks Aware and proceeds to P4/P5; it does not block transport-neutral product improvements or BLE evaluation. Do not start a phase until its incoming gate passes.
+Integrated implementation, then consolidated physical acceptance. Keep software gates and focused commits between phases; do not require user device feedback between coding milestones. Prepare the full candidate and the A2 acceptance package described above before requesting a test round. Physical failures determine fixes and shipping capability limits, not whether unrelated implementation may proceed. Keep the P1 physical investigation timebox and all security/privacy boundaries.

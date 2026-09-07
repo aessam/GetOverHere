@@ -27,7 +27,20 @@ nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, Sendable
 }
 
 @MainActor
-final class LifecycleControlPlane: ControlPlane {
+final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
+    var onNearbyError: ((String) -> Void)?
+    var usesBluetoothGuestRoute = false
+    var nearbyAvailable = false
+    var nearbyStopCalls = 0
+    var nearbyPrepareCalls = 0
+    func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) {}
+    func canConnectNearby(roomID: UUID) -> Bool { nearbyAvailable }
+    func prepareNearbyGuest(roomID: UUID) async throws -> String {
+        guard nearbyAvailable else { throw NearbyConnectionError.unavailable }
+        nearbyPrepareCalls += 1; usesBluetoothGuestRoute = true
+        return "127.0.0.1"
+    }
+    func stopNearbyGuest() { nearbyStopCalls += 1; usesBluetoothGuestRoute = false }
     private(set) var bluetoothMode: BluetoothDiscoveryMode = .off
     func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) { bluetoothMode = mode }
     let localPeer: PeerInfo

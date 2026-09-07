@@ -36,18 +36,39 @@ final class ChannelService {
         case failed
     }
 
-    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery() } }
+    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery(); updateAwareDiscovery() } }
+    var awareDiscoveryEnabled = false { didSet { updateAwareDiscovery() } }
+    private(set) var nearbyError: String?
+    private var resolvedGuestHost: String?
+
+    private func updateAwareDiscovery() {
+        nearbyError = nil
+        (coordinator.controlPlane as? any NearbyRouteControl)?.onNearbyError = { [weak self] message in
+            self?.nearbyError = message
+        }
+        let mode: BluetoothDiscoveryMode = !awareDiscoveryEnabled ? .off :
+            listenState == .broadcasting ? .advertising : .browsing
+        (coordinator.controlPlane as? any NearbyRouteControl)?.setAwareDiscoveryMode(mode)
+    }
+
+    func canJoin(_ channel: Channel) -> Bool {
+        if channel.audioHostIP != nil || channel.createdBy == localPeer.id { return true }
+        guard let room = UUID(uuidString: channel.id) else { return false }
+        return (coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: room) == true
+    }
     var bluetoothDiscoveryEnabled = false { didSet { updateBluetoothDiscovery() } }
     var discoveryForeground = true { didSet { updateBluetoothDiscovery() } }
 
     private func updateBluetoothDiscovery() {
         let mode: BluetoothDiscoveryMode
-        if !bluetoothDiscoveryEnabled || !discoveryForeground { mode = .off }
+        if !bluetoothDiscoveryEnabled || (!discoveryForeground && listenState == .idle) { mode = .off }
         else {
             switch listenState {
             case .idle: mode = .browsing
             case .broadcasting: mode = .advertising
-            case .listening: mode = .off
+            case .listening:
+                if case .reconnecting = connectionState { mode = .browsing }
+                else { mode = (coordinator.controlPlane as? any NearbyRouteControl)?.usesBluetoothGuestRoute == true ? .browsing : .off }
             }
         }
         coordinator.controlPlane.setBluetoothDiscoveryMode(mode)
@@ -65,7 +86,7 @@ final class ChannelService {
     private(set) var roomAccessError: String?
     private let roomAdmission: any RoomAdmissionInterface
     private var roomAccessAttempt: UInt64 = 0
-    private(set) var connectionState: ConnectionState = .idle
+    private(set) var connectionState: ConnectionState = .idle { didSet { updateBluetoothDiscovery() } }
     var audioQuality: AudioQuality = .standard
 
     struct SlideImport: Sendable {
@@ -313,16 +334,17 @@ final class ChannelService {
             return
         }
         let normalizedCode = SessionCredential.normalize(rawTourCode)
-        guard let hostIP = channel.audioHostIP else {
-            tourFeatureError = "Guide network address is unavailable"
-            Logger.channel.error("Cannot join session without a guide network address")
-            return
-        }
         let attempt = sessionAttempt
+        if activeChannelID == nil { connectionState = .connecting }
         Task { [weak self] in
             guard let self else { return }
             let credential: SessionCredential
+            let hostIP: String
             do {
+                if let lanHost = channel.audioHostIP { hostIP = lanHost }
+                else if let nearby = coordinator.controlPlane as? any NearbyRouteControl {
+                    hostIP = try await nearby.prepareNearbyGuest(roomID: sessionID)
+                } else { throw NearbyConnectionError.unavailable }
                 if let version = channel.roomAdmissionVersion, version != 0 {
                     if activeChannelID == nil { connectionState = .connecting }
                     guard version == 1 else { throw RoomAdmissionError.invalidMessage }
@@ -337,7 +359,10 @@ final class ChannelService {
                     return
                 }
                 tourFeatureError = error.localizedDescription
-                if activeChannelID == nil { connectionState = .failed }
+                if activeChannelID == nil {
+                    (coordinator.controlPlane as? any NearbyRouteControl)?.stopNearbyGuest()
+                    connectionState = .failed
+                }
                 if case RoomAdmissionError.locked = error,
                    let index = channels.firstIndex(where: { $0.id == channel.id }) {
                     channels[index].isRoomLocked = true
@@ -367,7 +392,9 @@ final class ChannelService {
         normalizedCode: String,
         credential: SessionCredential
     ) {
-        stopCurrentActivity()
+        stopCurrentActivity(preservingNearbyRoute: true)
+        if channel.audioHostIP != nil { (coordinator.controlPlane as? any NearbyRouteControl)?.stopNearbyGuest() }
+        resolvedGuestHost = channel.audioHostIP == nil ? hostIP : nil
         offlineMapConfiguration = nil
         offlineMapStatus = .transferring
         tourFeatureError = nil
@@ -538,7 +565,11 @@ final class ChannelService {
         roomAccessAttempt &+= 1
         isUpdatingRoomAccess = false
         sessionAttempt &+= 1
-        guard let ch = activeChannel else { return }
+        guard let ch = activeChannel else {
+            (coordinator.controlPlane as? any NearbyRouteControl)?.stopNearbyGuest()
+            connectionState = .idle
+            return
+        }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
         sessionGeneration &+= 1
         let generation = sessionGeneration
@@ -587,7 +618,10 @@ final class ChannelService {
     func terminate() {
         discoveryForeground = false
         sessionAttempt &+= 1
-        guard let ch = activeChannel else { return }
+        guard let ch = activeChannel else {
+            (coordinator.controlPlane as? any NearbyRouteControl)?.stopNearbyGuest()
+            return
+        }
         let isGuide = ch.createdBy == coordinator.controlPlane.localPeer.id
         sessionGeneration &+= 1
         if isGuide {
@@ -700,7 +734,9 @@ final class ChannelService {
     /// `discardingPendingStretch` is false only from the deferred End Tour teardown: that leave
     /// already bumped `sessionAttempt`, and a create/join started inside the flush window must
     /// survive it (ADR-048).
-    private func stopCurrentActivity(discardingPendingStretch: Bool = true) {
+    private func stopCurrentActivity(discardingPendingStretch: Bool = true, preservingNearbyRoute: Bool = false) {
+        if !preservingNearbyRoute { (coordinator.controlPlane as? any NearbyRouteControl)?.stopNearbyGuest() }
+        resolvedGuestHost = nil
         roomAdmission.stop()
         roomAccessAttempt &+= 1
         isUpdatingRoomAccess = false
@@ -819,12 +855,16 @@ final class ChannelService {
             for await (command, _) in self.coordinator.channelCommands {
                 switch command {
                 case .channelAnnounce(announce: let announce):
+                    let nearbyAvailable = UUID(uuidString: announce.channelID).map {
+                        (self.coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: $0) == true
+                    } ?? false
                     if let idx = self.channels.firstIndex(where: { $0.id == announce.channelID }) {
                         let previousHostIP = self.channels[idx].audioHostIP
                         self.channels[idx].name = announce.channelName
                         self.channels[idx].audioHostIP = announce.audioHostIP
                         self.channels[idx].roomAdmissionVersion = announce.roomAdmissionVersion
                         self.channels[idx].isRoomLocked = announce.isRoomLocked ?? true
+                        self.channels[idx].nearbyAvailable = nearbyAvailable
                         Logger.channel.info("Updated discovered megaphone")
 
                         if self.activeChannelID == announce.channelID,
@@ -843,7 +883,8 @@ final class ChannelService {
                             createdBy: announce.createdBy,
                             audioHostIP: announce.audioHostIP,
                             roomAdmissionVersion: announce.roomAdmissionVersion,
-                            isRoomLocked: announce.isRoomLocked ?? true
+                            isRoomLocked: announce.isRoomLocked ?? true,
+                            nearbyAvailable: nearbyAvailable
                         )
                         self.channels.append(channel)
                         Logger.channel.info("Discovered megaphone")
@@ -1022,7 +1063,7 @@ final class ChannelService {
               reconnectAttempt < 5,
               let channel = activeChannel,
               guestCredential != nil,
-              channel.audioHostIP != nil else {
+              (channel.audioHostIP != nil || resolvedGuestHost != nil) else {
             if reconnectAttempt >= 5 {
                 failGuestSession(message: "Could not reconnect to the guide")
             }
@@ -1041,7 +1082,30 @@ final class ChannelService {
             guard let self, self.listenState == .listening else { return }
             self.reconnectTask = nil
             // A fresher discovery address wins over the one captured when the reconnect was scheduled.
-            self.restartGuestTransports(channel: self.activeChannel ?? channel)
+            let current = self.activeChannel ?? channel
+            await self.refreshGuestRouteForReconnect(current)
+            guard self.listenState == .listening, self.activeChannelID == current.id, self.guestCredential != nil else { return }
+            self.restartGuestTransports(channel: current)
+        }
+    }
+
+    private func refreshGuestRouteForReconnect(_ channel: Channel) async {
+        guard let nearby = coordinator.controlPlane as? any NearbyRouteControl,
+              let room = UUID(uuidString: channel.id) else { return }
+        if resolvedGuestHost != nil, channel.audioHostIP != nil {
+            nearby.stopNearbyGuest(); resolvedGuestHost = nil
+            updateBluetoothDiscovery()
+        } else if nearby.canConnectNearby(roomID: room) {
+            let generation = sessionGeneration
+            // Keep the admitted credential and participant identity; replace only lane connections.
+            coordinator.activeAudioPlane?.stop(); tourControlService.stop(); assetTransferService.stop()
+            nearby.stopNearbyGuest()
+            do {
+                let host = try await nearby.prepareNearbyGuest(roomID: room)
+                guard sessionGeneration == generation, activeChannelID == channel.id else { return }
+                resolvedGuestHost = host
+                updateBluetoothDiscovery()
+            } catch { Logger.transport.error("Nearby route recovery failed (\(String(describing: type(of: error))))") }
         }
     }
 
@@ -1054,7 +1118,7 @@ final class ChannelService {
             Logger.channel.error("Cannot restart guest transports without an admitted credential")
             return
         }
-        guard let hostIP = channel.audioHostIP,
+        guard let hostIP = resolvedGuestHost ?? channel.audioHostIP,
               let sessionID = UUID(uuidString: channel.id),
               let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
             Logger.channel.error("Cannot restart guest transports without a guide address and UUID identities")

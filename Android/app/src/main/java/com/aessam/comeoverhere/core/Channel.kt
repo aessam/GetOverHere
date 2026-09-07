@@ -9,6 +9,8 @@ data class Channel(
     val hasWiFiAware: Boolean = false,
     val roomAdmissionVersion: Int? = null,
     val isRoomLocked: Boolean = true,
+    /** Locally resolved endpoint capability, not a remote advertisement flag. */
+    val nearbyAvailable: Boolean = false,
 ) {
     companion object {
         val TOWNSQUARE = Channel(

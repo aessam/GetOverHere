@@ -9,6 +9,8 @@ struct Channel: Identifiable, Hashable, Sendable {
     var audioHostIP: String?
     var roomAdmissionVersion: Int? = nil
     var isRoomLocked: Bool = true
+    /// Local endpoint capability, never accepted from a discovery payload.
+    var nearbyAvailable: Bool = false
 
     static let townsquare = Channel(
         id: "00000000-0000-0000-0000-000000000000",

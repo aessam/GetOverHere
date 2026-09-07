@@ -543,7 +543,10 @@ class UDPAudioPlane(
                         ).also { it.start() }
                     }
                     val clock = playout ?: continue
-                    clock.offer(SequencedEncodedAudioFrame(envelope.sequence, encoded), wallClockNanoseconds())
+                    val offered = clock.offer(SequencedEncodedAudioFrame(envelope.sequence, encoded), wallClockNanoseconds())
+                    if (receivedPacketCount % 100 == 0) {
+                        Log.d(TAG, "TCP: received $receivedPacketCount audio frames; latest jitter result $offered")
+                    }
                 }
             } catch (error: UnsupportedSessionVersionException) {
                 if (isRunActive(epoch)) {

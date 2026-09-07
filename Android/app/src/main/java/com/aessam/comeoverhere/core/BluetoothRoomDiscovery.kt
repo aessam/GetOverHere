@@ -12,6 +12,8 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -30,6 +32,8 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.aessam.toursession.BluetoothRoomRecord
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 
 interface BluetoothRoomDiscoveryInterface {
     var onRoom: ((BluetoothRoomRecord) -> Unit)?
@@ -39,9 +43,15 @@ interface BluetoothRoomDiscoveryInterface {
     fun publish(record: BluetoothRoomRecord?)
 }
 
+interface BluetoothSessionDiscoveryInterface : BluetoothRoomDiscoveryInterface {
+    fun canConnect(roomID: UUID): Boolean
+    fun connector(roomID: UUID): () -> NearbyByteConnection
+    fun setJoinedRoom(roomID: UUID?)
+}
+
 /** Read-only room metadata. All mutable state is serialized on the main handler. */
 @SuppressLint("MissingPermission") // Every radio start and refresh checks all runtime permissions.
-class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscoveryInterface {
+class BluetoothRoomDiscovery(private val context: Context) : BluetoothSessionDiscoveryInterface {
     override var onRoom: ((BluetoothRoomRecord) -> Unit)? = null
     override var onLost: ((UUID) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -54,18 +64,65 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     private var radioStarted = false
     private var serviceReady = false
     private var advertising = false
-    private var record = byteArrayOf()
+    @Volatile private var record = byteArrayOf()
     private val links = mutableMapOf<String, BluetoothGatt>()
     private val characteristics = mutableMapOf<String, BluetoothGattCharacteristic>()
     private val pending = mutableMapOf<String, Long>()
     private val attempts = mutableMapOf<String, Long>()
     private val rooms = mutableMapOf<String, Pair<BluetoothRoomRecord, Long>>()
     private val snapshots = mutableMapOf<String, Pair<ByteArray, Long>>()
+    private var sessionServer: BluetoothServerSocket? = null
+    private var localPSM = 0
+    private val peerPSMs = mutableMapOf<String, Int>()
+    private var joinedRoom: UUID? = null
+    private var scanning = false
+    private data class Endpoint(val device: BluetoothDevice, val psm: Int)
+    private val roomEndpoints = ConcurrentHashMap<UUID, Endpoint>()
+    private val connectLock = Any()
+    private val sessionBridge = NearbySocketBridge()
+    private val io = Executors.newCachedThreadPool { work -> Thread(work, "bluetooth-room").apply { isDaemon = true } }
+
+    override fun canConnect(roomID: UUID): Boolean = Build.VERSION.SDK_INT >= 29 &&
+        rooms.any { (address, record) -> record.first.roomID == roomID && peerPSMs.containsKey(address) && links.containsKey(address) }
+    override fun setJoinedRoom(roomID: UUID?) {
+        joinedRoom = roomID
+        if (!permitted()) return
+        links.forEach { (address, gatt) ->
+            val priority = if (roomID != null && rooms[address]?.first?.roomID == roomID)
+                BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED
+            if (!gatt.requestConnectionPriority(priority)) Log.w(TAG, "Bluetooth connection priority request rejected")
+        }
+        if (roomID != null) stopScanning()
+        else if (running && mode == BluetoothDiscoveryMode.BROWSING) startScanning()
+    }
+    override fun connector(roomID: UUID): () -> NearbyByteConnection {
+        check(Build.VERSION.SDK_INT >= 29) { "Bluetooth session connections require Android 10 or later" }
+        check(roomEndpoints.containsKey(roomID)) { "Bluetooth room is no longer reachable" }
+        return {
+            if (Build.VERSION.SDK_INT < 29) error("Bluetooth session connections require Android 10 or later")
+            synchronized(connectLock) {
+                val endpoint = requireNotNull(roomEndpoints[roomID]) { "Bluetooth route is reconnecting" }
+                val socket = endpoint.device.createInsecureL2capChannel(endpoint.psm)
+                val timeout = Runnable { try { socket.close() } catch (error: Exception) { Log.w(TAG, "Bluetooth connect timeout close failed (${error.javaClass.simpleName})") } }
+                handler.postDelayed(timeout, 8_000)
+                try { socket.connect(); BluetoothByteConnection(socket) }
+                catch (error: Exception) { socket.close(); throw error }
+                finally { handler.removeCallbacks(timeout) }
+            }
+        }
+    }
+
+    private class BluetoothByteConnection(private val socket: BluetoothSocket) : NearbyByteConnection {
+        override val input get() = socket.inputStream
+        override val output get() = socket.outputStream
+        override fun close() = socket.close()
+    }
 
     companion object {
         private const val TAG = "BluetoothRoomDiscovery"
         val SERVICE_ID: UUID = UUID.fromString("A1B2C3D4-0005-0000-0000-000000000000")
         val RECORD_ID: UUID = UUID.fromString("A1B2C3D4-0006-0000-0000-000000000000")
+        val PSM_ID: UUID = UUID.fromString("A1B2C3D4-0007-0000-0000-000000000000")
         fun requiredPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= 31) arrayOf(
             Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.BLUETOOTH_ADVERTISE,
@@ -87,6 +144,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
         running = true; handler.post(refresh)
     }
     override fun stop() {
+        joinedRoom = null
         mode = BluetoothDiscoveryMode.OFF; retryAt = 0
         running = false; record = byteArrayOf(); handler.removeCallbacks(refresh); stopRadio()
     }
@@ -107,6 +165,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
                     if (adapter?.isEnabled != true) { if (radioStarted) stopRadio() }
                     else {
                         if (!radioStarted && now() >= retryAt) startRadio()
+                        if (mode == BluetoothDiscoveryMode.BROWSING && joinedRoom?.let { !canConnect(it) } == true) startScanning()
                         updateAdvertising()
                         val time = now()
                         pending.filterValues { time - it > 9_000 }.keys.toList().forEach(::disconnect)
@@ -133,9 +192,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
 
     private fun startRadio() {
         if (mode == BluetoothDiscoveryMode.BROWSING) {
-            val scanner = adapter?.bluetoothLeScanner ?: error("Bluetooth scanner unavailable")
-            scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_ID)).build()),
-                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(), scanCallback)
+            startScanning()
             radioStarted = true
             Log.i(TAG, "Bluetooth room discovery scanning")
             return
@@ -146,11 +203,36 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
         val service = BluetoothGattService(SERVICE_ID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         service.addCharacteristic(BluetoothGattCharacteristic(RECORD_ID,
             BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
+        if (Build.VERSION.SDK_INT >= 29) {
+            val listener = requireNotNull(adapter).listenUsingInsecureL2capChannel()
+            sessionServer = listener; localPSM = listener.psm
+            service.addCharacteristic(BluetoothGattCharacteristic(PSM_ID,
+                BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
+            io.execute {
+                while (true) {
+                    try {
+                        val socket = listener.accept()
+                        handler.post {
+                            if (sessionServer !== listener) socket.close()
+                            else sessionBridge.accept(BluetoothByteConnection(socket)) {
+                                if (record.isEmpty()) null else BluetoothRoomRecord.decode(record)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        handler.post { if (sessionServer === listener) Log.w(TAG, "Bluetooth session accept failed (${error.javaClass.simpleName})") }
+                        break
+                    }
+                }
+            }
+        }
         check(server?.addService(service) == true) { "Bluetooth service registration rejected" }
     }
 
     private fun stopRadio() {
-        try { adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
+        val listener = sessionServer; sessionServer = null; localPSM = 0
+        try { listener?.close() } catch (error: Exception) { Log.w(TAG, "Bluetooth session listener close failed (${error.javaClass.simpleName})") }
+        sessionBridge.stop(); peerPSMs.clear(); roomEndpoints.clear()
+        try { stopScanning() }
         catch (error: Exception) { Log.w(TAG, "Stop scan failed (${error.javaClass.simpleName})") }
         try { adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
         catch (error: Exception) { Log.w(TAG, "Stop advertising failed (${error.javaClass.simpleName})") }
@@ -163,6 +245,8 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     }
 
     private fun disconnect(address: String) {
+        rooms[address]?.first?.roomID?.let { roomEndpoints.remove(it) }
+        peerPSMs.remove(address)
         val link = links.remove(address)
         characteristics.remove(address); pending.remove(address)
         try { link?.disconnect(); link?.close() }
@@ -200,6 +284,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
         } }
         override fun onScanResult(callbackType: Int, result: ScanResult) { handler.post {
             if (!running || mode != BluetoothDiscoveryMode.BROWSING || !radioStarted || !permitted()) return@post
+            if (joinedRoom?.let { canConnect(it) } == true) return@post
             val address = result.device.address
             if (links.size >= 4 || links.containsKey(address) || now() - (attempts[address] ?: -6_000) < 6_000) return@post
             attempts[address] = now(); pending[address] = now()
@@ -237,7 +322,27 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
     private fun receive(gatt: BluetoothGatt, characteristicID: UUID, value: ByteArray, status: Int) { handler.post {
         if (!running || !radioStarted || !permitted()) return@post
         val address = gatt.device.address
-        if (links[address] !== gatt || characteristicID != RECORD_ID) return@post
+        if (links[address] !== gatt) return@post
+        if (characteristicID == PSM_ID) {
+            pending.remove(address)
+            if (status == BluetoothGatt.GATT_SUCCESS && value.size == 2) {
+                val psm = ((value[0].toInt() and 255) shl 8) or (value[1].toInt() and 255)
+                if (psm > 0) peerPSMs[address] = psm
+                else peerPSMs.remove(address)
+                rooms[address]?.first?.let {
+                    if (psm > 0) roomEndpoints[it.roomID] = Endpoint(gatt.device, psm)
+                    else roomEndpoints.remove(it.roomID)
+                    if (joinedRoom == it.roomID && psm > 0) {
+                        stopScanning()
+                        if (!gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH))
+                            Log.w(TAG, "Bluetooth connection priority request rejected")
+                    }
+                    onRoom?.invoke(it)
+                }
+            }
+            return@post
+        }
+        if (characteristicID != RECORD_ID) return@post
         pending.remove(address)
         if (status != BluetoothGatt.GATT_SUCCESS) {
             Log.e(TAG, "Bluetooth room read failed: $status"); disconnect(address); return@post
@@ -248,13 +353,33 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
         }
         try {
             val decoded = BluetoothRoomRecord.decode(value)
+            if (joinedRoom != null && decoded.roomID != joinedRoom) { disconnect(address); return@post }
             rooms[address]?.first?.takeIf { it.roomID != decoded.roomID }?.let { onLost?.invoke(it.roomID) }
             rooms[address] = decoded to now(); onRoom?.invoke(decoded)
+            if (!peerPSMs.containsKey(address)) {
+                gatt.getService(SERVICE_ID)?.getCharacteristic(PSM_ID)?.let { characteristic ->
+                    pending[address] = now()
+                    if (!gatt.readCharacteristic(characteristic)) pending.remove(address)
+                }
+            }
             Log.d(TAG, "Bluetooth room metadata received")
         } catch (error: Exception) {
             Log.e(TAG, "Invalid Bluetooth room record (${error.javaClass.simpleName})"); disconnect(address)
         }
     } }
+
+    private fun startScanning() {
+        if (scanning) return
+        val scanner = adapter?.bluetoothLeScanner ?: error("Bluetooth scanner unavailable")
+        scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_ID)).build()),
+            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(), scanCallback)
+        scanning = true
+    }
+    private fun stopScanning() {
+        if (!scanning) return
+        adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        scanning = false
+    }
 
     private val serverCallback = object : BluetoothGattServerCallback() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService) { handler.post {
@@ -266,6 +391,12 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothRoomDiscov
                                                  characteristic: BluetoothGattCharacteristic) { handler.post {
             if (!running || !radioStarted || !permitted()) return@post
             val current = server ?: return@post
+            if (characteristic.uuid == PSM_ID) {
+                val bytes = byteArrayOf((localPSM shr 8).toByte(), localPSM.toByte())
+                if (offset !in 0..2) current.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
+                else current.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, bytes.copyOfRange(offset, 2))
+                return@post
+            }
             if (characteristic.uuid != RECORD_ID) {
                 current.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, offset, null); return@post
             }

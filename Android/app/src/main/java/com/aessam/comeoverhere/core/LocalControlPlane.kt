@@ -25,7 +25,7 @@ class LocalControlPlane(
     context: Context,
     displayName: String,
     private val bluetooth: BluetoothRoomDiscoveryInterface = BluetoothRoomDiscovery(context),
-) : ControlPlane {
+) : ControlPlane, NearbyRouteControl {
 
     override val localPeer = PeerInfo(
         id = UUID.randomUUID().toString(),
@@ -68,8 +68,73 @@ class LocalControlPlane(
     private val publishedServices = mutableMapOf<String, Pair<NsdServiceInfo, NsdManager.RegistrationListener>>()
     private val peerByChannelID = mutableMapOf<String, PeerInfo>()
     private var discoveryIndex = RoomDiscoveryIndex()
+    private val aware = if (Build.VERSION.SDK_INT >= 34) WiFiAwareRoomTransport(context) else null
+    private var awareEnabled = false
+    private var hostedRecord: BluetoothRoomRecord? = null
+    private val awareRooms = mutableSetOf<UUID>()
+    private val nearbyBridge = NearbySocketBridge()
+    private var nearbyGuestRoom: UUID? = null
+    override var usesBluetoothGuestRoute = false
+        private set
+    override val awareSettings: NearbyAwareSettings? = aware?.let { transport ->
+        object : NearbyAwareSettings {
+            override val state = transport.state
+            override fun setEnabled(enabled: Boolean) {
+                awareEnabled = enabled
+                updateAwareMode()
+            }
+            override fun pair(peerID: String, pin: String) = transport.pair(peerID, pin)
+        }
+    }
+
+    private fun updateAwareMode() {
+        aware?.publish(hostedRecord)
+        aware?.setMode(if (!awareEnabled) BluetoothDiscoveryMode.OFF
+            else if (hostedRecord != null) BluetoothDiscoveryMode.ADVERTISING else BluetoothDiscoveryMode.BROWSING)
+    }
+
+    override fun canConnectNearby(roomID: UUID): Boolean = roomID in awareRooms ||
+        (bluetooth as? BluetoothSessionDiscoveryInterface)?.canConnect(roomID) == true
+    override suspend fun prepareNearbyGuest(roomID: UUID): String {
+        nearbyGuestRoom?.let { check(it == roomID) { "Leave the current nearby room before joining another" }; return "127.0.0.1" }
+        val connect = if (roomID in awareRooms) {
+            usesBluetoothGuestRoute = false
+            requireNotNull(aware).connector(roomID)
+        } else {
+            val transport = requireNotNull(bluetooth as? BluetoothSessionDiscoveryInterface) { "No nearby route is available" }
+            check(transport.canConnect(roomID)) { "No nearby route is available" }
+            val connection = transport.connector(roomID)
+            transport.setJoinedRoom(roomID)
+            usesBluetoothGuestRoute = true
+            connection
+        }
+        val host = try { nearbyBridge.startGuest(roomID, connect) }
+        catch (error: Exception) { stopNearbyGuest(); throw error }
+        nearbyGuestRoom = roomID
+        return host
+    }
+    override fun stopNearbyGuest() {
+        nearbyBridge.stop(); nearbyGuestRoom = null
+        if (usesBluetoothGuestRoute) (bluetooth as? BluetoothSessionDiscoveryInterface)?.setJoinedRoom(null)
+        usesBluetoothGuestRoute = false
+    }
 
     init {
+        aware?.onRoom = { record ->
+            if (record.guideID != UUID.fromString(localPeer.id)) {
+                awareRooms.add(record.roomID)
+                val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
+                    if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
+                emit(discoveryIndex.update(BLECommand.ChannelAnnounce(channelID = record.roomID.toString(),
+                    channelName = record.name, createdBy = peer.id, audioQuality = AudioQuality.STANDARD,
+                    wifiSSID = null, audioHostIP = null, roomAdmissionVersion = 1, isRoomLocked = record.isLocked),
+                    peer, RoomDiscoveryIndex.Source.AWARE))
+            }
+        }
+        aware?.onLost = { room ->
+            awareRooms.remove(room)
+            emit(discoveryIndex.remove(room.toString(), RoomDiscoveryIndex.Source.AWARE))
+        }
         bluetooth.onRoom = { record ->
             if (record.guideID != UUID.fromString(localPeer.id)) {
                 val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
@@ -167,6 +232,8 @@ class LocalControlPlane(
     override fun setBluetoothDiscoveryMode(mode: BluetoothDiscoveryMode) = bluetooth.setMode(mode)
 
     override fun stop() {
+        stopNearbyGuest()
+        aware?.stop()
         bluetooth.stop()
         discoveryIndex = RoomDiscoveryIndex()
         legacyHandler.removeCallbacks(legacyRefresh)
@@ -206,8 +273,11 @@ class LocalControlPlane(
     }
 
     private fun publishChannel(announce: BLECommand.ChannelAnnounce) {
-        bluetooth.publish(BluetoothRoomRecord(UUID.fromString(announce.channelID), UUID.fromString(announce.createdBy),
-            announce.channelName, true, announce.isRoomLocked ?: true))
+        val record = BluetoothRoomRecord(UUID.fromString(announce.channelID), UUID.fromString(announce.createdBy),
+            announce.channelName, true, announce.isRoomLocked ?: true)
+        hostedRecord = record
+        bluetooth.publish(record)
+        updateAwareMode()
         desiredAnnouncements[announce.channelID] = announce
         if (updatingRegistrations.contains(announce.channelID)) return
         publishedServices[announce.channelID]?.let { (info, listener) ->
@@ -265,6 +335,8 @@ class LocalControlPlane(
 
     private fun unpublishChannel(channelID: String) {
         bluetooth.publish(null)
+        hostedRecord = null
+        updateAwareMode()
         desiredAnnouncements.remove(channelID)
         if (updatingRegistrations.contains(channelID)) return
         val (_, listener) = publishedServices.remove(channelID) ?: return

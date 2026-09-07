@@ -4,6 +4,8 @@ import com.aessam.toursession.TourSessionFixtures
 import com.aessam.toursession.RealtimeSequenceAudit
 import com.aessam.toursession.RoomAdmission
 import com.aessam.toursession.RoomAccessPolicy
+import com.aessam.toursession.NearbyLaneRequest
+import com.aessam.toursession.NearbyRealtimeQueue
 import java.util.UUID
 import com.aessam.toursession.hexToByteArray
 import com.aessam.toursession.lowercaseHex
@@ -12,6 +14,18 @@ import kotlin.system.exitProcess
 fun main(arguments: Array<String>) {
     try {
         when (val command = arguments.firstOrNull()) {
+            "nearby-fixture" -> {
+                NearbyLaneRequest.Lane.entries.forEach { lane ->
+                    val room = if (lane == NearbyLaneRequest.Lane.METADATA) NearbyLaneRequest.METADATA_ROOM_ID
+                        else UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")
+                    println(NearbyLaneRequest(lane, room).encode().lowercaseHex())
+                }
+                val queue = NearbyRealtimeQueue()
+                queue.offer(byteArrayOf(99), false, 0)
+                repeat(100) { queue.offer(byteArrayOf(it.toByte()), true, it.toLong()) }
+                while (true) { val bytes = queue.next(245) ?: break; println(bytes.lowercaseHex()) }
+                println("dropped=${queue.dropped}")
+            }
             "room-guide", "room-guest" -> {
                 require(arguments.size == 3) { "room-guide/room-guest requires UUID CODE (use - for open)" }
                 val id = UUID.fromString(arguments[1])
@@ -57,7 +71,7 @@ fun main(arguments: Array<String>) {
             "auth" -> println(TourSessionFixtures.authenticationFixtureHex())
             "recovery" -> println(TourSessionFixtures.simulateRecovery())
             "focus" -> println(TourSessionFixtures.simulateVisualFocus())
-            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
+            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | nearby-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
             else -> fail("unknown command: $command")
         }
     } catch (error: Exception) {

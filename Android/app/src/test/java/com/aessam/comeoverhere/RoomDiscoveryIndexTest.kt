@@ -11,6 +11,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RoomDiscoveryIndexTest {
+    @Test fun threeSourcesFallBackWithoutInventingAnAddress() {
+        val index = RoomDiscoveryIndex()
+        index.update(value.copy(channelName = "Bluetooth"), peer, RoomDiscoveryIndex.Source.BLUETOOTH)
+        index.update(value.copy(channelName = "Aware"), peer, RoomDiscoveryIndex.Source.AWARE)
+        val lan = index.update(value, peer, RoomDiscoveryIndex.Source.LAN)!!.first as BLECommand.ChannelAnnounce
+        assertEquals("192.0.2.1", lan.audioHostIP)
+        val aware = index.remove(value.channelID, RoomDiscoveryIndex.Source.LAN)!!.first as BLECommand.ChannelAnnounce
+        assertEquals("Aware", aware.channelName); assertNull(aware.audioHostIP)
+        val bluetooth = index.remove(value.channelID, RoomDiscoveryIndex.Source.AWARE)!!.first as BLECommand.ChannelAnnounce
+        assertEquals("Bluetooth", bluetooth.channelName); assertNull(bluetooth.audioHostIP)
+        assertTrue(index.remove(value.channelID, RoomDiscoveryIndex.Source.BLUETOOTH)!!.first is BLECommand.ChannelUnavailable)
+        assertTrue(index.peers.isEmpty())
+    }
     @Test fun unresolvedLANIsNotMislabelledAsBluetooth() {
         val index = RoomDiscoveryIndex()
         assertNull(index.update(value.copy(audioHostIP = null), peer, RoomDiscoveryIndex.Source.LAN))

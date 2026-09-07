@@ -61,7 +61,7 @@ fi
 
 echo "[4/4] Byte-exact Swift/Kotlin fixture parity"
 # Every argument-free subcommand both CLIs expose at HEAD; extend this list when a fixture is added.
-for command in fixture encrypted-fixture audio-fixture handshake realtime-fixture state auth faults playout recovery focus; do
+for command in fixture encrypted-fixture audio-fixture handshake realtime-fixture nearby-fixture state auth faults playout recovery focus; do
     SWIFT_OUT="$("$SWIFT_BIN" "$command")"
     KOTLIN_OUT="$(JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$command")"
     [[ -n "$SWIFT_OUT" && -n "$KOTLIN_OUT" ]] || { echo "error: $command produced no output" >&2; exit 1; }

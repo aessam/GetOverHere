@@ -1100,3 +1100,55 @@ bash scripts/capture_physical_test.sh start --ios-device F043EBB9-780F-5483-B0D1
 Result: only `emulator-5554` in adb; iPhone `passcodeRequired: true`; capture harness exits 1 with `error: Android device 66180DLKX006ND is unavailable` (`/tmp/GetOverHere-A2-preflight.log`). A2 is blocked, not passed. The user was asked to reconnect/authorize Pixel and unlock iPhone. A3–A5 remain pending behind the physical gates and guide-key bootstrap decision. The `stable-local-network` tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`; no tag promotion or push was performed.
 
 Final permission-denial UI check: after installation completed, launched `com.aessam.comeoverhere/.MainActivity`, tapped the discovery switch at emulator coordinates `(970,294)`, inspected the permission dialog with `adb shell uiautomator dump`, then tapped its deny button at `(540,1480)`. `/tmp/GetOverHere-A1-denied-final.xml` contains the app UI, `checked="false"`, and `Bluetooth permission denied. Enable it in Settings to try again.` An earlier probe overlapped APK reinstallation and was discarded; it is not used as denial or crash evidence. No physical phone settings were changed.
+
+## 2026-09-06 — Direct nearby implementation and physical fault isolation (ADR-056)
+
+Environment: branch `fix/deep-dive-2026-09-02`, baseline `492572e`; Xcode beta at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer`, iPhone 17 Pro simulator `A7202CAB-B085-4F1A-A7B5-8AE00A839E76`; Android Studio JBR; Pixel 11 Pro `66180DLKX006ND`, Pixel 7 `2A111FDH2007A1`, both reporting API 37. Physical evidence files remain under `/tmp`, outside the repository, because logcat can contain unrelated private data.
+
+Commands (roles reversed by swapping the two serial variables):
+
+```bash
+GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+GOH_NEARBY_WIFI_OFF=1 GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+```
+
+Each fixture uses real native radio connections, production locked admission (`2468`, test-only), hidden test media credential, native encoded audio, authenticated control and assets. Guide generates a 440 Hz PCM16 tone at 16 kHz and sends pointer/512-byte deterministic asset state every second. Guest must receive exact asset bytes and at least 100 non-silent native decoded callbacks. This is not microphone/playback, acoustic, locked-screen, endurance, or group testing.
+
+| Attempt | Evidence directory/log | Observed result |
+|---|---|---|
+| BLE initial | `/tmp/GetOverHereNearbyPhysical.5INHpI` | Admission/audio authentication and first frame, but pointer timeout. One of three concurrent L2CAP opens failed. |
+| BLE serialized opens | `/tmp/GetOverHereNearbyPhysical.nKu234` | Control and assets arrived; non-silent audio threshold failed. Retained as a real failure. |
+| BLE forward | `/tmp/GetOverHereNearbyPhysical.VwpZoD` | Both roles passed; guest 13.582 s. |
+| BLE reverse | `/tmp/GetOverHereNearbyPhysical.xK86PG` | Both roles passed; guest 17.413 s. |
+| Aware initial | `/tmp/GetOverHereNearbyPhysical.oddqdI` | Pixel 7 explicitly reported no native pairing support. No data-path pass. |
+| Aware secure legacy NAN | `/tmp/GetOverHereNearbyPhysical.Jctcxq` | Data-path timeout, not a pass. |
+| Aware advertised security/responder-first | `/tmp/GetOverHereNearbyPhysical.OmzMYO` | Both roles passed; guest 15.016 s. |
+| Aware reverse | `/tmp/GetOverHereNearbyPhysical.qgrHEB` | Both roles passed; guest 16.306 s. |
+| BLE repeated forward/reverse | `/tmp/GetOverHere-nearby-ble-repeat.log`, `/tmp/GetOverHereNearbyPhysical.dS6iUw` | Both directions passed; reverse guest 13.661 s. |
+| Wi-Fi disabled, before hop ACKs | `/tmp/GetOverHereNearbyPhysical.lAN8Wh` | Control/assets arrived; only 25/100 non-silent audio callbacks. Receiver logged frame 300 as EXPIRED. Wi-Fi restored to enabled on both phones. |
+| Wi-Fi disabled, four-frame ACK window | `/tmp/GetOverHereNearbyPhysical.go3KXD` | Both roles passed; guest 13.473 s. Both phones were verified disabled before instrumentation and restoration requested afterward. |
+
+The Wi-Fi-off failure isolated an unbounded native in-flight backlog beyond the application queue. `NearbyRealtimeConnection` now permits four unacknowledged framed records per native direction, strips zero-length hop ACKs before the application stream, serializes ACK/data writes, and closes a peer after one second without ACK. Swift and JVM tests check a blocked fifth frame, 500 exact bidirectional roundtrips, and missing-ACK closure. The first Kotlin timeout regression caught an accidental call to `OutputStream.close()` rather than the owning connection; explicit owner qualification fixed it, and all three focused JVM tests then passed (`/tmp/GetOverHere-nearby-ack-tests-2.log`). iOS focused ACK suite also passed (`/tmp/GetOverHere-nearby-ack-ios-tests.log`).
+
+The broad gate initially rejected new raw exception logging, then a missing API-29 guard inside the deferred Bluetooth connector. Both were corrected instead of suppressing the gates. Focused iOS integration runs passed, including failed-nearby-admission cleanup and three-source fallback. The real-device iOS target, including the opt-in mixed-platform physical fixture, compiled with signing disabled (`/tmp/GetOverHere-nearby-device-build-3.log`, exit 0); that is compiler evidence, not an installed iPhone result. `devicectl device info lockState` failed with CoreDevice 4000/control-channel reset on the iPhone, so no iPhone RF pass is claimed.
+
+Mixed-platform Aware remains incomplete: Android uses PIN-secured NDP, whereas Apple owns system-paired link security. The production UI and current docs state this. The direct implementation does not contain signed relaying or guide-key pinning. `stable-local-network` remains at `59b0402`.
+
+Wi-Fi-off reverse follow-up: `/tmp/GetOverHereNearbyPhysical.AKejZL` passed both roles, guest 13.660 s. The preceding reverse command stopped at an optional Aware display-name nullability compile error before changing any radio state; the nullable field was handled and the run repeated. `/tmp/GetOverHere-nearby-wifi-off-ack-reverse-2.log` contains the disabled-state checks, results and restore requests. Final `adb -s <serial> shell settings get global wifi_on` returned `1` on both phones. No Wi-Fi setting was left changed.
+
+Virtual-device follow-up: `verify_virtual_devices.sh` initially passed all nine host gates and iOS UI tests, then found a clipped pointer privacy label in Android's guide screen. Its failed navigation test left an application-owned tour running, causing the next deliberate bind-failure fixture to collide with that listener. Collapse nearby settings during an active tour, make pointer content scrollable, and release the tour in test teardown even after an assertion. The focused `TourNavigationTest` rerun passed 3/3 (`/tmp/GetOverHere-nearby-navigation-retest.log`). This preserves the intended application-owned runtime across Activity recreation instead of stopping production tours when a screen closes.
+
+Subsequent complete virtual run passed (`/tmp/GetOverHere-nearby-virtual-final-2.log`): all nine host gates; iOS unit/integration 102 passed, one physical-only skip; iOS UI suite passed; Android emulator XML reports 25 tests, zero failures/errors, three hardware-only skips. Fresh Android-encoded packets decoded by production iOS simulator code passed (`/tmp/GetOverHere-nearby-reverse-codec-final.log`). These results precede the availability tracker and diagnostic-message follow-ups below.
+
+Late Aware discovery attempts `/tmp/GetOverHereNearbyPhysical.W26iaa` and `.k1nYkz` failed before admission. Sleeping displays were observed; no single root cause was isolated. Duplicate availability broadcasts now leave ownership unchanged, real availability transitions retain the pairing PIN, the physical fixture owns a foreground Activity, and the script wakes displays without bypassing a keyguard. Optional display-name service data was removed. The next run `/tmp/GetOverHereNearbyPhysical.dZ91ed` passed both roles (guest 14.359 s). Because multiple changes preceded that pass, it does not isolate which change restored discovery; no current reverse rerun occurred before phones became unavailable.
+
+The signed iOS build passed (`/tmp/GetOverHere-nearby-signed-build.log`) and installation succeeded (`/tmp/GetOverHere-nearby-ios-install.log`), superseding the earlier CoreDevice connection failure. No physical iOS radio fixture completed. User then reported `Network.NWError -11992 WiFi Aware` and requested simulator/emulator work only while travelling. No further phone operations are authorized for this interval. `codesign -d --entitlements - /tmp/GetOverHereNearbySigned/Build/Products/Debug-iphoneos/GetOverHere.app` confirms Publish and Subscribe in the signed app. Apple public documentation does not establish a cause for this numeric error; do not label it a permissions, pairing, or OS defect without device evidence. Added operation/code-preserving error messages and mixed-platform limitations beside Apple's pairing controls. This is diagnostic/UX remediation, not a claimed native radio fix.
+
+Final virtual-only command:
+
+```bash
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereNearbyIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh
+```
+
+The first attempt caught missing iOS-26 availability annotations in the new native-error regression; fixed with an availability check and test annotation. Rerun `/tmp/GetOverHere-nearby-virtual-no-phones-2.log` exited 0: all nine host gates, 44 Swift core tests, eight real cross-language admission exchanges, Android lint, 98 JVM tests with zero failures/skips, iOS unit/integration 104 passed and one physical-only skip, iOS UI four distinct tests passed and one physical-only skip (seven parameterized executions passed), Android emulator XML 25 tests with zero failures/errors and three hardware-only skips. `xcresulttool get test-results summary` read the 20-33-45 and 20-34-25 simulator bundles; Ruby/REXML summed the JVM and connected-debug XML attributes. Existing Swift concurrency warnings remain in older asset-cache tests; the gate is not warning-free. No physical phones were contacted. Both new physical scripts pass `bash -n`; the Android script now captures only this app's PID, never unrelated apps' logcat. `git diff --cached --check` passed.

@@ -49,7 +49,19 @@ class LifecycleRoomAdmission : RoomAdmissionInterface {
 
 internal class LifecycleControlPlane(
     override val localPeer: PeerInfo = PeerInfo(id = UUID.randomUUID().toString(), displayName = "Local"),
-) : ControlPlane {
+) : ControlPlane, com.aessam.comeoverhere.core.NearbyRouteControl {
+    override var usesBluetoothGuestRoute = false
+    override val awareSettings: com.aessam.comeoverhere.core.NearbyAwareSettings? = null
+    var nearbyAvailable = false
+    var nearbyStopCalls = 0
+    var nearbyPrepareCalls = 0
+    override fun canConnectNearby(roomID: UUID) = nearbyAvailable
+    override suspend fun prepareNearbyGuest(roomID: UUID): String {
+        check(nearbyAvailable)
+        nearbyPrepareCalls++; usesBluetoothGuestRoute = true
+        return "127.0.0.1"
+    }
+    override fun stopNearbyGuest() { nearbyStopCalls++; usesBluetoothGuestRoute = false }
     var bluetoothMode = com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF
     override fun setBluetoothDiscoveryMode(mode: com.aessam.comeoverhere.core.BluetoothDiscoveryMode) { bluetoothMode = mode }
     private val mutableConnectedPeers = MutableStateFlow<List<PeerInfo>>(emptyList())

@@ -3,6 +3,8 @@
 **Status:** Authoritative implementation target
 **Date:** 2026-08-22
 
+**Implementation checkpoint (2026-09-06):** Direct Bluetooth admission/audio/control/assets and native Aware connection ownership are implemented experimentally (ADR-056). Android Aware and Apple Aware currently use different link-security setups; mixed-platform Aware is not complete. The signed relay, guide-key pinning, large-group, and locked-device requirements below remain targets, not delivered claims.
+
 ## Objective
 
 One guide speaks to a local group of iOS and Android guests without Internet access. A usable local LAN is the guaranteed full-capability floor. Supported groups may operate without external network hardware through validated Wi-Fi Aware and BLE routes. During the same live session the guide can present slides, drop a geographic target pin, or point along a compass bearing. Guests hear the guide, receive the current visual state, and recover it after joining late or reconnecting.
@@ -178,7 +180,7 @@ These defaults are active and do not block implementation:
 5. The isolated physical Wi-Fi Aware lab proves discovery, pairing, NDP establishment, socket traffic, disconnect, and reconnect in both iOS/Android role directions before production promotion.
 6. Physical iPhone and Android tests prove both guide directions while compressed audio, slide changes, target changes, and asset transfers run together across each supported route.
 7. BLE physical gates progress through 2/5/10 mixed iOS/Android devices and record direct and relayed control/voice latency, loss, queue depth, battery, thermal state, and locked/pocketed behavior. BLE voice is removed if its gate fails.
-8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets. Fresh discovery while locked and continued delivery after joining then locking are separate acceptance cases. The current Bluetooth discovery preview supports neither as a qualified background feature; it explicitly stops in background. Wi-Fi-radio-off BLE tests are separate from no-access-point Aware tests.
+8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets. Fresh discovery while locked and continued delivery after joining then locking are separate acceptance cases. Bluetooth background modes are declared on iOS and active-session radio ownership is retained, but neither case is physically qualified. Wi-Fi-radio-off BLE tests are separate from no-access-point Aware tests.
 9. Aware tests exercise capacity-minus-one, capacity, and capacity-plus-one. Overflow follows ADR-031 and never changes the existing Aware participant set.
 10. One guide runs Aware, BLE central, BLE peripheral, LAN, audio encode, and active traffic concurrently for 60 minutes while coexistence loss, thermal state, and battery delta are recorded.
 11. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, poor heading accuracy, and mixed transport availability are exercised.

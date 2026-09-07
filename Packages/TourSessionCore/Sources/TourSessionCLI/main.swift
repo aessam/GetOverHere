@@ -6,10 +6,20 @@ enum TourSessionCLI {
     static func main() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
+            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | nearby-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
         }
 
         switch command {
+        case "nearby-fixture":
+            for lane in NearbyLaneRequest.Lane.allCases {
+                let room = lane == .metadata ? NearbyLaneRequest.metadataRoomID : UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!
+                print(try NearbyLaneRequest(lane: lane, roomID: room).encode().lowercaseHex)
+            }
+            var queue = NearbyRealtimeQueue()
+            try queue.offer(Data([99]), audio: false, nowMilliseconds: 0)
+            for index in 0..<100 { try queue.offer(Data([UInt8(index)]), audio: true, nowMilliseconds: UInt64(index)) }
+            while let bytes = queue.next(nowMilliseconds: 245) { print(bytes.lowercaseHex) }
+            print("dropped=\(queue.dropped)")
         case "room-guide", "room-guest":
             guard arguments.count == 3 else { fail("room-guide/room-guest requires UUID CODE (use - for open)") }
             guard let id = UUID(uuidString: arguments[1]) else { fail("invalid session UUID") }
