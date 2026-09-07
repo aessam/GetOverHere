@@ -10,6 +10,19 @@ enum TourSessionCLI {
         }
 
         switch command {
+        case "sign-guide":
+            let frame = try TourSessionFixtures.encryptedRealtimeFixture()
+            let signer = GuideFrameSigner(sessionID: frame.sessionID, guideID: frame.senderID)
+            print(signer.publicKey.lowercaseHex)
+            print(try signer.sign(frame).encode().lowercaseHex)
+        case "verify-guide":
+            guard arguments.count == 3 else { fail("verify-guide requires PINNED_KEY_HEX PACKET_HEX") }
+            do {
+                let frame = try TourSessionFixtures.encryptedRealtimeFixture()
+                let verifier = try GuideFrameVerifier(pinnedPublicKey: Data(hex: arguments[1]),
+                    sessionID: frame.sessionID, guideID: frame.senderID)
+                print(try verifier.verify(Data(hex: arguments[2])).encode().lowercaseHex)
+            } catch { fail("guide signature rejected") }
         case "nearby-fixture":
             for lane in NearbyLaneRequest.Lane.allCases {
                 let room = lane == .metadata ? NearbyLaneRequest.metadataRoomID : UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!

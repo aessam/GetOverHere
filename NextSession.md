@@ -1,5 +1,11 @@
 # GetOverHere Execution Plan
 
+## September 7 signed-guide prerequisite
+
+The Swift/Kotlin cores now contain `GuideFrameSigner`, immutable `SignedGuideFrame`, and `GuideFrameVerifier`. GOS1 carries an unchanged GOH2 v4 sealed envelope and a canonical low-S P-256 signature. Verification requires an externally supplied pinned public key plus the expected session/guide IDs; a packet cannot choose its own trusted key. Host cross-language verification, byte-tamper/truncation tests, and native Android-provider tests are wired into the software gates.
+
+This is ADR-038's signed-frame prerequisite, **not completed app guide authentication or relay**. Next: specify and implement versioned direct-admission delivery of the guide key, bind its lifetime to the tour, reject key changes on reconnect, then wire sign-once/verify-before-open at every production guide lane. Do not accept a key solely from discovery, force codes on open rooms, enable unsigned relay, or claim the native `-11992`/mixed-Aware failure is fixed. Physical phones remain out of scope until the user makes them available again.
+
 ## September 6 implementation checkpoint
 
 Follow-up after `8c73fa9`: fatal iOS Aware operations now release cached routes, probes and listeners before reporting failure; the same requested mode can restart. Local cancellation cannot tear down a newer owner, while unexpected native cancellation/return is treated as failure. Android fatal attach/configuration/startup failures release the owner as well; individual peer failures do not disconnect other guests. Five iOS simulator lifecycle regressions exercise the operation boundary, not RF. This does not resolve native `-11992`, mixed-platform link security, or the signed relay roadmap below.

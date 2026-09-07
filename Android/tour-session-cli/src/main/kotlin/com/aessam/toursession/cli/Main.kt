@@ -6,6 +6,8 @@ import com.aessam.toursession.RoomAdmission
 import com.aessam.toursession.RoomAccessPolicy
 import com.aessam.toursession.NearbyLaneRequest
 import com.aessam.toursession.NearbyRealtimeQueue
+import com.aessam.toursession.GuideFrameSigner
+import com.aessam.toursession.GuideFrameVerifier
 import java.util.UUID
 import com.aessam.toursession.hexToByteArray
 import com.aessam.toursession.lowercaseHex
@@ -14,6 +16,18 @@ import kotlin.system.exitProcess
 fun main(arguments: Array<String>) {
     try {
         when (val command = arguments.firstOrNull()) {
+            "sign-guide" -> {
+                val frame = TourSessionFixtures.encryptedRealtimeFixture()
+                val signer = GuideFrameSigner(frame.sessionId, frame.senderId)
+                println(signer.publicKey.lowercaseHex())
+                println(signer.sign(frame).encode().lowercaseHex())
+            }
+            "verify-guide" -> {
+                require(arguments.size == 3) { "verify-guide requires PINNED_KEY_HEX PACKET_HEX" }
+                val frame = TourSessionFixtures.encryptedRealtimeFixture()
+                val verifier = GuideFrameVerifier(arguments[1].hexToByteArray(), frame.sessionId, frame.senderId)
+                println(verifier.verify(arguments[2].hexToByteArray()).encode().lowercaseHex())
+            }
             "nearby-fixture" -> {
                 NearbyLaneRequest.Lane.entries.forEach { lane ->
                     val room = if (lane == NearbyLaneRequest.Lane.METADATA) NearbyLaneRequest.METADATA_ROOM_ID

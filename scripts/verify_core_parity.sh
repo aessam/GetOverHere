@@ -60,7 +60,7 @@ if [[ ! -x "$KOTLIN_CLI" ]]; then
 fi
 
 echo "[4/4] Byte-exact Swift/Kotlin fixture parity"
-# Every argument-free subcommand both CLIs expose at HEAD; extend this list when a fixture is added.
+# Deterministic argument-free fixtures. sign-guide uses fresh keys/signatures and is checked below.
 for command in fixture encrypted-fixture audio-fixture handshake realtime-fixture nearby-fixture state auth faults playout recovery focus; do
     SWIFT_OUT="$("$SWIFT_BIN" "$command")"
     KOTLIN_OUT="$(JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$command")"
@@ -70,4 +70,5 @@ for command in fixture encrypted-fixture audio-fixture handshake realtime-fixtur
 done
 
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission.py" "$SWIFT_BIN" "$KOTLIN_CLI"
+JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_guide_signatures.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 echo "Core parity passed"

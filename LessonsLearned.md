@@ -444,3 +444,8 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **What happened**: iOS Aware caught an owner failure but retained its mode and route caches. A subsequent request for the same mode returned early. Android fatal startup/configuration callbacks similarly reported failure without releasing the owner.
 **Resolution**: Tear down the failed owner before reporting; distinguish whole-owner failure from individual peer failure and local cancellation. Cover restart after native failure, unexpected return/cancellation, stale cancelled operations and capability rechecks at the iOS operation boundary.
 **Decision**: A dead discovery owner must not leave joinable cached routes. This recovery fix is independent of the native radio failure that triggered teardown.
+
+## 79. Signature validity alone does not give immutable forwarding bytes
+**What happened**: Designing the signed relay prerequisite exposed ECDSA's equivalent high-S representation and different native signature encodings (CryptoKit raw versus Android DER).
+**Resolution**: Normalize signatures to low-S at creation, reject high-S at verification, use fixed-width `r || s` on the wire, and test DER leading-zero/high-bit handling separately. Compare real signatures in both language directions and against Android's native provider.
+**Decision**: A signature verifier still needs a securely obtained pin. Core cryptographic tests do not qualify app key bootstrap or relay behavior. CLI negative tests must reject cleanly; a crashed process is not successful validation.

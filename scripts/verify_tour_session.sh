@@ -53,6 +53,7 @@ echo "[2/9] Kotlin protocol and registry tests"
 SWIFT_BIN="$(swift build --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH" --show-bin-path)/tour-session-swift"
 
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission.py" "$SWIFT_BIN" "$KOTLIN_CLI"
+JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_guide_signatures.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 
 run_kotlin() {
     JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$@"

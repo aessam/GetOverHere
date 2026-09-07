@@ -42,4 +42,10 @@ echo "[3/3] Android emulator instrumentation (unavailable earpiece checks are ex
     ANDROID_SERIAL="$DEVICE_SERIAL" JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew connectedDebugAndroidTest
 )
 
+SWIFT_BIN="$(swift build --disable-sandbox --package-path "$PROJECT_ROOT/Packages/TourSessionCore" --scratch-path "${GOH_SWIFT_SCRATCH:-/tmp/GetOverHereTourSessionSwift}" --show-bin-path)/tour-session-swift"
+# Gradle can uninstall the instrumentation package after connected tests finish.
+"$ANDROID_SDK/platform-tools/adb" -s "$DEVICE_SERIAL" install -r "$PROJECT_ROOT/Android/app/build/outputs/apk/debug/app-debug.apk"
+"$ANDROID_SDK/platform-tools/adb" -s "$DEVICE_SERIAL" install -r "$PROJECT_ROOT/Android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+python3 "$PROJECT_ROOT/scripts/verify_guide_signatures_android.py" "$SWIFT_BIN" "$ANDROID_SDK/platform-tools/adb" "$DEVICE_SERIAL"
+
 echo "Virtual-device verification passed; physical audio and radio gates remain separate"
