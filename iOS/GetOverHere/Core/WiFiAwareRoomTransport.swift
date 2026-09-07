@@ -70,6 +70,14 @@ final class WiFiAwareRoomTransport: NearbyRoomTransport {
     private var probes: [WAEndpoint: Task<Void, Never>] = [:]
     private var records: [WAEndpoint: BluetoothRoomRecord] = [:]
     private var endpoints: [UUID: WAEndpoint] = [:]
+    private let supportsAware: () -> Bool
+    private let operationOverride: ((BluetoothDiscoveryMode) async throws -> Void)?
+
+    init(supportsAware: @escaping () -> Bool = { WACapabilities.supportedFeatures.contains(.wifiAware) },
+         operation: ((BluetoothDiscoveryMode) async throws -> Void)? = nil) {
+        self.supportsAware = supportsAware
+        self.operationOverride = operation
+    }
 
     func publish(_ record: BluetoothRoomRecord?) { self.record = record }
 
@@ -78,7 +86,8 @@ final class WiFiAwareRoomTransport: NearbyRoomTransport {
         stop()
         self.mode = mode
         guard mode != .off else { return }
-        guard WACapabilities.supportedFeatures.contains(.wifiAware) else {
+        guard supportsAware() else {
+            stop()
             report("Wi-Fi Aware is unsupported on this device.")
             return
         }
@@ -86,11 +95,15 @@ final class WiFiAwareRoomTransport: NearbyRoomTransport {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                if mode == .advertising { try await runGuide() }
+                if let operationOverride { try await operationOverride(mode) }
+                else if mode == .advertising { try await runGuide() }
                 else { try await runBrowser() }
-            } catch is CancellationError { }
-            catch {
                 guard !Task.isCancelled else { return }
+                // A native owner ending without cancellation is no longer a usable route.
+                throw NearbyConnectionError.closed
+            } catch {
+                guard !Task.isCancelled else { return }
+                stop()
                 report(NearbyAwareFailure.message(for: error,
                     during: mode == .advertising ? .advertising : .browsing))
             }

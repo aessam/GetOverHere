@@ -166,9 +166,9 @@ class WiFiAwareRoomTransport(
                     else attached.subscribe(SubscribeConfig.Builder().setServiceName(SERVICE_NAME)
                         .setSubscribeType(SubscribeConfig.SUBSCRIBE_TYPE_PASSIVE).apply { if (pairingSupported) setPairingConfig(config) }.build(),
                         discoveryCallback(attempt, false), handler)
-                } catch (error: Exception) { fail("Aware startup failed (${error.javaClass.simpleName})") }
+                } catch (error: Exception) { terminateDiscovery("Aware startup failed (${error.javaClass.simpleName})") }
             }
-            override fun onAttachFailed() { if (generation == attempt) fail("Wi-Fi Aware attach failed") }
+            override fun onAttachFailed() { if (generation == attempt) terminateDiscovery("Wi-Fi Aware attach failed") }
         }, handler)
     }
 
@@ -266,8 +266,8 @@ class WiFiAwareRoomTransport(
         override fun onPairingSetupFailed(peer: PeerHandle) { if (generation == attempt) fail("Aware pairing failed. Check the device PIN.") }
         override fun onBootstrappingFailed(peer: PeerHandle) { if (generation == attempt) fail("Aware bootstrapping failed") }
         override fun onPairingVerificationFailed(peer: PeerHandle) { if (generation == attempt) fail("Aware pairing verification failed") }
-        override fun onSessionConfigFailed() { if (generation == attempt) fail("Aware discovery configuration failed") }
-        override fun onSessionTerminated() { if (generation == attempt) { stop(); fail("Aware discovery terminated; enable it again to reconnect") } }
+        override fun onSessionConfigFailed() { if (generation == attempt) terminateDiscovery("Aware discovery configuration failed") }
+        override fun onSessionTerminated() { if (generation == attempt) terminateDiscovery("Aware discovery terminated; enable it again to reconnect") }
     }
 
     private fun initiatePairing(candidate: Candidate) {
@@ -375,6 +375,12 @@ class WiFiAwareRoomTransport(
         catch (error: Exception) { socket.close(); throw error }
     }
     private fun updatePeers() { mutableState.value = mutableState.value.copy(peers = candidates.values.map { NearbyAwarePeer(it.id, it.name) }) }
+    private fun terminateDiscovery(message: String) {
+        // A dead native owner must not retain its listener, routes, or an enabled UI switch.
+        // Per-peer failures still use fail() and leave other guests connected.
+        stop()
+        fail(message)
+    }
     private fun fail(message: String) {
         Log.w(TAG, message)
         mutableState.value = mutableState.value.copy(error = message)

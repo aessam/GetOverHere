@@ -439,3 +439,8 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **What happened**: The user reported iOS Wi-Fi Aware `-11992` after successful installation. The signed app contains both required Aware entitlement values; no physical diagnostic capture was available before the user left.
 **Resolution**: Preserve the operation and native code, show retry guidance and the mixed-platform limitation, and regression-test message handling in the simulator. The native root cause remains unresolved.
 **Decision**: Do not assign an undocumented code to permissions, unsupported hardware or an OS defect without evidence. A passing simulator error-handling test is not a radio fix.
+
+## 78. Reporting a failed native owner is not sufficient cleanup
+**What happened**: iOS Aware caught an owner failure but retained its mode and route caches. A subsequent request for the same mode returned early. Android fatal startup/configuration callbacks similarly reported failure without releasing the owner.
+**Resolution**: Tear down the failed owner before reporting; distinguish whole-owner failure from individual peer failure and local cancellation. Cover restart after native failure, unexpected return/cancellation, stale cancelled operations and capability rechecks at the iOS operation boundary.
+**Decision**: A dead discovery owner must not leave joinable cached routes. This recovery fix is independent of the native radio failure that triggered teardown.

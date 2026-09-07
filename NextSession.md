@@ -2,6 +2,8 @@
 
 ## September 6 implementation checkpoint
 
+Follow-up after `8c73fa9`: fatal iOS Aware operations now release cached routes, probes and listeners before reporting failure; the same requested mode can restart. Local cancellation cannot tear down a newer owner, while unexpected native cancellation/return is treated as failure. Android fatal attach/configuration/startup failures release the owner as well; individual peer failures do not disconnect other guests. Five iOS simulator lifecycle regressions exercise the operation boundary, not RF. This does not resolve native `-11992`, mixed-platform link security, or the signed relay roadmap below.
+
 Direct BLE admission, encrypted native voice, control, and assets are implemented through native L2CAP byte connections on both platforms. Native Aware owners are connected to the room UI and the same application lanes. This is a direct-session milestone, not completion of the signed relay/guide-key work below.
 
 Wi-Fi-disabled Android acceptance passed in both directions after adding a four-frame native ACK window. Application queue bounds alone did not prevent stale audio inside the native socket; the strict test reproduced that failure before the fix. Both original Wi-Fi settings were restored and read back as enabled. Reusable harnesses: `verify_nearby_physical_android.sh` (`GOH_NEARBY_WIFI_OFF=1`) and the compiled-but-not-physically-run `verify_nearby_cross_platform.sh` for the unavailable iPhone.
