@@ -7,6 +7,11 @@ import com.aessam.toursession.ParticipantRegistry
 import com.aessam.toursession.PresentationSnapshotPayload
 import com.aessam.toursession.SessionCredential
 import com.aessam.toursession.RoomAccessPolicy
+import com.aessam.toursession.GuideFrameSigner
+import com.aessam.toursession.GuideFrameVerifier
+import com.aessam.toursession.AdmittedGuideIdentity
+import com.aessam.toursession.SessionGuidePin
+import com.aessam.toursession.AudioReadinessStatus
 import com.aessam.toursession.TourAssetDescriptor
 import com.aessam.toursession.TargetSnapshotPayload
 import com.aessam.toursession.BearingSnapshotPayload
@@ -31,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 enum class ListenState { IDLE, LISTENING, BROADCASTING }
 enum class SessionConnectionState { IDLE, CONNECTING, CONNECTED, RECONNECTING, FAILED }
+enum class AudioRuntimeState { IDLE, STARTING, RUNNING, INTERRUPTED, FAILED }
+enum class RoomJoinStage { IDLE, CONNECTING_DEVICE, ADMITTING, STARTING_AUDIO }
 sealed interface OfflineMapStatus {
     data object Unavailable : OfflineMapStatus
     data object Transferring : OfflineMapStatus
@@ -50,6 +57,10 @@ interface ChannelServiceProtocol {
     val listenerCount: StateFlow<Int>
     /** Guests admitted on the control lane; independent of audio readiness (FND-13). */
     val connectedGuestCount: StateFlow<Int>
+    val audioReadyGuestCount: StateFlow<Int>
+    val guideKeyFingerprint: StateFlow<String?>
+    /** Actual selected data carrier; a loopback adapter is never itself a LAN route. */
+    val activeTransportRoute: StateFlow<SessionTransportRoute?>
     /** Non-null only while listening on the loudspeaker in a non-failed session (FND-13). */
     val speakerFeedbackWarning: StateFlow<String?>
     val readyParticipantCount: StateFlow<Int>
@@ -70,6 +81,11 @@ interface ChannelServiceProtocol {
     fun updateRoomAccess(locked: Boolean, code: String)
     val connectionState: StateFlow<SessionConnectionState>
     val reconnectAttempt: StateFlow<Int>
+    val audioRuntimeState: StateFlow<AudioRuntimeState>
+    val audioRuntimeError: StateFlow<String?>
+    val joinStage: StateFlow<RoomJoinStage>
+    fun restartMicrophone()
+    fun retryAudio()
     val targetSnapshot: StateFlow<TargetSnapshotPayload?>
     val bearingSnapshot: StateFlow<BearingSnapshotPayload?>
     val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?>
@@ -114,7 +130,10 @@ class ChannelService(
     private val roomAdmission: RoomAdmissionInterface = RoomAdmissionTransport(),
 ) : ChannelServiceProtocol {
     override val awareSettings get() = (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.awareSettings
-    private var resolvedGuestHost: String? = null
+    internal var resolvedGuestRoute: NearbyGuestRoute? = null
+        private set
+    private val mutableActiveTransportRoute = MutableStateFlow<SessionTransportRoute?>(null)
+    override val activeTransportRoute = mutableActiveTransportRoute.asStateFlow()
     override fun canJoin(channel: Channel): Boolean {
         if (channel.audioHostIP != null || channel.createdBy == localPeerID) return true
         val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return false }
@@ -185,8 +204,18 @@ class ChannelService(
 
     private val _reconnectAttempt = MutableStateFlow(0)
     override val reconnectAttempt: StateFlow<Int> = _reconnectAttempt.asStateFlow()
+    private val _audioRuntimeState = MutableStateFlow(AudioRuntimeState.IDLE)
+    override val audioRuntimeState = _audioRuntimeState.asStateFlow()
+    private val _audioRuntimeError = MutableStateFlow<String?>(null)
+    override val audioRuntimeError = _audioRuntimeError.asStateFlow()
+    private val _joinStage = MutableStateFlow(RoomJoinStage.IDLE)
+    override val joinStage = _joinStage.asStateFlow()
+    private var microphoneRestartJob: Job? = null
+    private var guestAudioGeneration = 0L
 
     override val connectedGuestCount: StateFlow<Int> = tourControlService.connectedGuestCount
+    override val audioReadyGuestCount: StateFlow<Int> = tourControlService.audioReadyGuestCount
+    private var audioReadinessRevision = 0uL
 
     override val speakerFeedbackWarning: StateFlow<String?> =
         combine(_listenState, _listenerOutput, _connectionState) { state, output, connection ->
@@ -208,6 +237,9 @@ class ChannelService(
     private var captureJob: Job? = null
     private var reconnectJob: Job? = null
     private var guestCredential: SessionCredential? = null
+    private val guidePin = SessionGuidePin()
+    private val mutableGuideKeyFingerprint = MutableStateFlow<String?>(null)
+    override val guideKeyFingerprint = mutableGuideKeyFingerprint.asStateFlow()
     /** Monotonic guard for continuations that resume after the off-main credential stretch (DSCN-20). */
     private var sessionAttempt = 0L
     /**
@@ -219,7 +251,9 @@ class ChannelService(
     /** Audio-lane losses since the last delivered PCM buffer; terminal at 5 (DSCN-19). */
     private val consecutiveAudioLaneFailures = AtomicInteger(0)
     private var participantRegistry = ParticipantRegistry()
-    private var activeGuestRoute: SessionTransportRoute? = null
+    private var activeGuestRoute: SessionTransportRoute?
+        get() = mutableActiveTransportRoute.value
+        set(value) { mutableActiveTransportRoute.value = value }
     private var attemptedGuestRoutes = mutableSetOf<SessionTransportRoute>()
     private var routeLease = SessionRouteLease()
 
@@ -237,16 +271,62 @@ class ChannelService(
         /** Single source of the user-facing version-mismatch text for every guest and guide path. */
         fun versionMismatchMessage(remoteMajor: Int, localMajor: Int): String =
             "Tour protocol version mismatch (remote $remoteMajor, local $localMajor). Update the older app."
+
+        private fun nearbyMetadataFailureMessage(error: NearbyRoomMetadataMismatch): String = when (error.reason) {
+            NearbyRoomMetadataMismatch.Reason.GUIDE_CHANGED -> "The guide identity changed. Leave this room and find the guide again."
+            NearbyRoomMetadataMismatch.Reason.ROOM_CHANGED -> "The nearby room changed. Leave this room and select the guide's current room."
+            NearbyRoomMetadataMismatch.Reason.ADMISSION_VERSION_UNSUPPORTED -> "The nearby app uses an incompatible room protocol. Update it before joining."
+        }
     }
 
     init {
+        scope.launch {
+            combine(_listenState, _connectionState, _audioRuntimeState) { role, connection, audio ->
+                if (role == ListenState.LISTENING && connection == SessionConnectionState.CONNECTED) audio else null
+            }.collect { audio ->
+                if (audio != null) {
+                    check(audioReadinessRevision != ULong.MAX_VALUE) { "Audio readiness revision exhausted" }
+                    val status = when (audio) {
+                        AudioRuntimeState.RUNNING -> AudioReadinessStatus.PLAYING
+                        AudioRuntimeState.INTERRUPTED -> AudioReadinessStatus.INTERRUPTED
+                        AudioRuntimeState.FAILED -> AudioReadinessStatus.FAILED
+                        AudioRuntimeState.IDLE, AudioRuntimeState.STARTING -> AudioReadinessStatus.WAITING
+                    }
+                    tourControlService.reportGuestAudio(status, ++audioReadinessRevision)
+                }
+            }
+        }
         audioEngine.playbackFailureHandler = { code ->
-            _tourFeatureError.value = "Tour audio playback failed ($code)"
+            val generation = guestAudioGeneration
+            scope.launch {
+                if (generation == guestAudioGeneration && _listenState.value == ListenState.LISTENING) {
+                    setAudioFailure("Tour audio playback failed ($code)")
+                    audioEngine.stopPlayback()
+                }
+            }
         }
         audioEngine.onOutputForcedPrivate = { _listenerOutput.value = ListenerOutput.PRIVATE_AUDIO }
-        audioEngine.onAudioFocusLost = { _tourFeatureError.value = "Another app took over audio" }
+        audioEngine.onAudioFocusLost = {
+            val generation = sessionGeneration
+            scope.launch {
+                if (generation == sessionGeneration && _listenState.value != ListenState.IDLE) {
+                    _audioRuntimeState.value = AudioRuntimeState.INTERRUPTED
+                    _audioRuntimeError.value = "Another app took over audio"
+                    if (_listenState.value == ListenState.BROADCASTING) {
+                        audioEngine.stopCapture()
+                        captureJob?.cancel()
+                    } else audioEngine.stopPlayback()
+                }
+            }
+        }
         assetTransferService.setEventHandler { event ->
             when (event) {
+                is TourAssetTransferEvent.AuthenticationFailed -> {
+                    val generation = sessionGeneration
+                    scope.launch {
+                        if (generation == sessionGeneration && _listenState.value == ListenState.LISTENING) failGuestSession(event.message)
+                    }
+                }
                 is TourAssetTransferEvent.ManifestReceived -> {
                     tourControlService.acceptTourPack(event.manifest)
                     refreshOfflineMap()
@@ -266,7 +346,14 @@ class ChannelService(
             }
         }
         tourControlService.setConnectionEventHandler { event ->
-            scope.launch { handleControlConnectionEvent(event) }
+            val generation = sessionGeneration
+            scope.launch { if (generation == sessionGeneration) handleControlConnectionEvent(event) }
+        }
+        scope.launch {
+            combine(tourControlService.snapshot, tourControlService.slides) { snapshot, slides ->
+                val currentIndex = slides.indexOfFirst { it.assetID == snapshot?.currentSlideID }.coerceAtLeast(0)
+                slides.getOrNull(currentIndex)?.sha256 to slides.getOrNull(currentIndex + 1)?.sha256
+            }.distinctUntilChanged().collect { (current, next) -> assetTransferService.prioritizeAssets(current, next) }
         }
     }
 
@@ -295,6 +382,8 @@ class ChannelService(
     override fun stop() {
         setDiscoveryForeground(false)
         stopCurrentActivity()
+        guidePin.endSession()
+        mutableGuideKeyFingerprint.value = null
     }
 
     // MARK: - Channel Management
@@ -307,7 +396,7 @@ class ChannelService(
             name = name,
             createdAt = nowAsSwiftRef(),
             createdBy = coordinator.controlPlane.localPeer.id,
-            roomAdmissionVersion = 1,
+            roomAdmissionVersion = 2,
             isRoomLocked = false,
         )
         val sessionID = UUID.fromString(channel.id)
@@ -336,9 +425,14 @@ class ChannelService(
         credential: SessionCredential,
     ) {
         try {
+            guidePin.endSession()
+            val signer = GuideFrameSigner(sessionID, participantID)
+            mutableGuideKeyFingerprint.value = fingerprint(signer.publicKey)
+            val authentication = SessionGuideAuthentication.Guide(signer)
             contentStore.beginPack(sessionID, channel.name)
             val emptyManifest = contentStore.manifestPayload()
             sessionGeneration += 1
+            tourControlService.configureGuideAuthentication(authentication)
             tourControlService.configureSession(
                 sessionID,
                 participantID,
@@ -346,6 +440,7 @@ class ChannelService(
                 ParticipantPlatform.ANDROID,
                 credential,
             )
+            assetTransferService.configureGuideAuthentication(authentication)
             assetTransferService.configureSession(
                 sessionID,
                 participantID,
@@ -359,6 +454,7 @@ class ChannelService(
             assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
 
             val plane = coordinator.selectAudioPlane()
+            plane.configureGuideAuthentication(authentication)
             participantRegistry = ParticipantRegistry()
             _listenerCount.value = 0
             _readyParticipantCount.value = 0
@@ -374,7 +470,7 @@ class ChannelService(
             }
             plane.startBroadcasting(channelID = channel.id, quality = audioQuality)
             startCapturing(plane, channel.id)
-            roomAdmission.start(sessionID, code)
+            roomAdmission.start(sessionID, code, signer)
 
             _readySlideFiles.value = emptyMap()
             _offlineMapConfiguration.value = null
@@ -403,6 +499,7 @@ class ChannelService(
 
     /** Mirrors the iOS rollback: every lane is cleared and the NSD record is withdrawn (FND-2). */
     private fun rollbackFailedGuideSession(channelID: String) {
+        mutableGuideKeyFingerprint.value = null
         roomAdmission.stop()
         audioEngine.stopCapture()
         captureJob?.cancel()
@@ -425,6 +522,15 @@ class ChannelService(
 
     override fun joinChannel(channel: Channel, tourCode: String) {
         if (_activeChannelID.value == null && _connectionState.value == SessionConnectionState.CONNECTING) return
+        if (channel.roomAdmissionVersion != 2) {
+            _tourFeatureError.value = "This room requires a compatible app version. Update the older app and try again."
+            if (_activeChannelID.value == null) _connectionState.value = SessionConnectionState.FAILED
+            return
+        }
+        if (_activeChannelID.value != null && _activeChannelID.value != channel.id) {
+            _tourFeatureError.value = "Leave the current room before joining another."
+            return
+        }
         sessionAttempt += 1
         val sessionID = runCatching { UUID.fromString(channel.id) }
             .getOrElse {
@@ -440,24 +546,32 @@ class ChannelService(
         val attempt = sessionAttempt
         scope.launch {
             val host: String
+            var nearbyRoute: NearbyGuestRoute? = null
+            val admittedIdentity: AdmittedGuideIdentity
             val credential = try {
-                if (_activeChannelID.value == null && channel.roomAdmissionVersion == 1) {
+                if (_activeChannelID.value == null) {
                     _connectionState.value = SessionConnectionState.CONNECTING
                 }
-                host = channel.audioHostIP ?: requireNotNull(
-                    coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl,
-                ) { "No nearby connection is available" }.prepareNearbyGuest(sessionID)
-                withContext(Dispatchers.IO) {
-                    if (channel.roomAdmissionVersion != null && channel.roomAdmissionVersion != 0) {
-                        require(channel.roomAdmissionVersion == 1) { "Unsupported room admission version." }
-                        val secret = roomAdmission.join(host, sessionID, tourCode.ifEmpty { null })
-                        SessionCredential.derive(secret, sessionID)
-                    } else SessionCredential.derive(normalizedCode, sessionID)
+                _joinStage.value = RoomJoinStage.CONNECTING_DEVICE
+                _tourFeatureError.value = null
+                host = channel.audioHostIP ?: run {
+                    nearbyRoute = requireNotNull(coordinator.controlPlane as? NearbyRouteControl) {
+                        "No nearby connection is available"
+                    }.prepareNearbyGuest(sessionID, UUID.fromString(channel.createdBy)).also { require(it.roomID == sessionID) { "Nearby room changed" } }
+                    requireNotNull(nearbyRoute).adapterHost
                 }
+                _joinStage.value = RoomJoinStage.ADMITTING
+                val admitted = withContext(Dispatchers.IO) {
+                    roomAdmission.join(host, sessionID, UUID.fromString(channel.createdBy), tourCode.ifEmpty { null })
+                }
+                admittedIdentity = admitted.guideIdentity
+                withContext(Dispatchers.Default) { SessionCredential.derive(admitted.mediaSecret, sessionID) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (attempt == sessionAttempt) {
-                    _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                    _tourFeatureError.value = if (error is NearbyRoomMetadataMismatch) nearbyMetadataFailureMessage(error)
+                        else error.message ?: error.javaClass.simpleName
+                    _joinStage.value = RoomJoinStage.IDLE
                     if (_activeChannelID.value == null) {
                         (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
                         _connectionState.value = SessionConnectionState.FAILED
@@ -471,7 +585,17 @@ class ChannelService(
                 Log.i(TAG, "Discarding a stale guest credential; the session was replaced during the stretch")
                 return@launch
             }
-            startGuestSession(channel, sessionID, participantID, normalizedCode, credential, host)
+            try {
+                guidePin.accept(admittedIdentity)
+                mutableGuideKeyFingerprint.value = fingerprint(admittedIdentity.publicKey)
+            } catch (error: Exception) {
+                _tourFeatureError.value = error.message
+                _connectionState.value = SessionConnectionState.FAILED
+                _joinStage.value = RoomJoinStage.IDLE
+                (coordinator.controlPlane as? NearbyRouteControl)?.stopNearbyGuest()
+                return@launch
+            }
+            startGuestSession(channel, sessionID, participantID, normalizedCode, credential, nearbyRoute)
         }
     }
 
@@ -481,11 +605,11 @@ class ChannelService(
         participantID: UUID,
         normalizedCode: String,
         credential: SessionCredential,
-        host: String,
+        nearbyRoute: NearbyGuestRoute?,
     ) {
         stopCurrentActivity(preservingNearbyRoute = true)
         if (channel.audioHostIP != null) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
-        resolvedGuestHost = if (channel.audioHostIP == null) host else null
+        resolvedGuestRoute = nearbyRoute
         _readySlideFiles.value = emptyMap()
         _readyParticipantCount.value = 0
         _offlineMapConfiguration.value = null
@@ -493,10 +617,12 @@ class ChannelService(
         _tourFeatureError.value = null
         _tourCode.value = normalizedCode
         guestCredential = credential
+        audioReadinessRevision = 0u
         _reconnectAttempt.value = 0
         _activeChannelID.value = channel.id
         _listenState.value = ListenState.LISTENING
         _connectionState.value = SessionConnectionState.CONNECTING
+        _joinStage.value = RoomJoinStage.STARTING_AUDIO
         setListenerOutput(ListenerOutput.PRIVATE_AUDIO)
         attemptedGuestRoutes.clear()
         routeLease.reset()
@@ -615,10 +741,15 @@ class ChannelService(
     }
 
     override fun leaveChannel() {
+        guidePin.endSession()
+        mutableGuideKeyFingerprint.value = null
         roomAdmission.stop()
         roomAccessAttempt++
         _isUpdatingRoomAccess.value = false
         sessionAttempt += 1
+        _joinStage.value = RoomJoinStage.IDLE
+        _audioRuntimeState.value = AudioRuntimeState.IDLE
+        _audioRuntimeError.value = null
         val ch = activeChannel ?: run {
             (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
             _connectionState.value = SessionConnectionState.IDLE
@@ -672,23 +803,87 @@ class ChannelService(
     // MARK: - Private
 
     private fun startCapturing(plane: AudioPlane, channelID: String) {
+        val generation = sessionGeneration
+        _audioRuntimeState.value = AudioRuntimeState.STARTING
+        _audioRuntimeError.value = null
         // The microphone preflight throws synchronously here, into startGuideSession's catch (FND-2).
         val pcm = audioEngine.startCapture()
+        check(audioEngine.isCapturing) { "Microphone did not start recording" }
+        _audioRuntimeState.value = AudioRuntimeState.RUNNING
         captureJob = scope.launch {
             try {
                 pcm.collect { pcmData ->
-                    if (!isActive) return@collect
+                    if (!isActive || generation != sessionGeneration || _activeChannelID.value != channelID) return@collect
                     plane.sendAudio(pcmData)
+                }
+                if (generation == sessionGeneration && _activeChannelID.value == channelID && _listenState.value == ListenState.BROADCASTING) {
+                    setAudioFailure("Microphone capture stopped")
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 Log.e(TAG, "Capture stream failed (${error.javaClass.simpleName})")
-                if (_listenState.value == ListenState.BROADCASTING) {
+                if (generation == sessionGeneration && _activeChannelID.value == channelID && _listenState.value == ListenState.BROADCASTING) {
                     // DSCN-12: control and asset lanes stay up; the guide decides whether to end the tour.
-                    _tourFeatureError.value = "Microphone capture stopped"
+                    setAudioFailure("Microphone capture stopped")
                 }
             }
+        }
+    }
+
+    private fun setAudioFailure(message: String) {
+        _audioRuntimeState.value = AudioRuntimeState.FAILED
+        _audioRuntimeError.value = message
+    }
+
+    override fun restartMicrophone() {
+        if (!isCreator || _listenState.value != ListenState.BROADCASTING || microphoneRestartJob?.isActive == true) return
+        val channel = activeChannel ?: return
+        val plane = coordinator.activeAudioPlane ?: return
+        val generation = sessionGeneration
+        _audioRuntimeState.value = AudioRuntimeState.STARTING
+        microphoneRestartJob = scope.launch {
+            audioEngine.stopCapture()
+            captureJob?.cancelAndJoin()
+            captureJob = null
+            if (generation != sessionGeneration || _activeChannelID.value != channel.id) return@launch
+            try {
+                startCapturing(plane, channel.id)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                setAudioFailure(error.message ?: "Microphone could not restart")
+                Log.e(TAG, "Microphone restart failed (${error.javaClass.simpleName})")
+            }
+        }
+    }
+
+    override fun retryAudio() {
+        if (_listenState.value != ListenState.LISTENING) return
+        val channel = activeChannel ?: return
+        if (guestCredential == null) {
+            _tourFeatureError.value = "Leave and rejoin this room to restore admission."
+            return
+        }
+        _audioRuntimeError.value = null
+        if (_connectionState.value == SessionConnectionState.CONNECTED) {
+            startGuestPlayback()
+        } else {
+            _reconnectAttempt.value = 0
+            restartGuestTransports(channel)
+        }
+    }
+
+    private fun startGuestPlayback() {
+        _audioRuntimeState.value = AudioRuntimeState.STARTING
+        _audioRuntimeError.value = null
+        try {
+            audioEngine.stopPlayback()
+            audioEngine.startPlayback()
+            check(audioEngine.isPlaying) { "Audio output did not start" }
+        } catch (error: Exception) {
+            setAudioFailure(error.message ?: "Audio output could not start")
+            audioEngine.stopPlayback()
+            Log.e(TAG, "Guest playback startup failed (${error.javaClass.simpleName})")
         }
     }
 
@@ -729,12 +924,18 @@ class ChannelService(
 
     private fun stopCurrentActivity(discardingPendingStretch: Boolean = true, preservingNearbyRoute: Boolean = false) {
         if (!preservingNearbyRoute) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
-        resolvedGuestHost = null
+        resolvedGuestRoute = null
         roomAdmission.stop()
         roomAccessAttempt++
         _isUpdatingRoomAccess.value = false
         if (discardingPendingStretch) sessionAttempt += 1
         sessionGeneration += 1
+        guestAudioGeneration += 1
+        microphoneRestartJob?.cancel()
+        microphoneRestartJob = null
+        _audioRuntimeState.value = AudioRuntimeState.IDLE
+        _audioRuntimeError.value = null
+        _joinStage.value = RoomJoinStage.IDLE
         reconnectJob?.cancel()
         reconnectJob = null
         _reconnectAttempt.value = 0
@@ -920,6 +1121,7 @@ class ChannelService(
 
     private fun handleAudioSessionEvent(event: AudioSessionEvent) {
         when (event) {
+            is AudioSessionEvent.AuthenticationFailed -> _tourFeatureError.value = event.message
             is AudioSessionEvent.Joined -> participantRegistry.register(event.participant)
             is AudioSessionEvent.Disconnected -> participantRegistry.disconnect(event.connectionID)
             is AudioSessionEvent.VersionMismatch -> {
@@ -943,20 +1145,20 @@ class ChannelService(
         participantID: UUID,
         credential: SessionCredential,
     ) {
-        val hostIP = resolvedGuestHost ?: channel.audioHostIP
+        val hostIP = resolvedGuestRoute?.adapterHost ?: channel.audioHostIP
         if (hostIP == null) {
             _connectionState.value = SessionConnectionState.FAILED
-            _tourFeatureError.value = "No local LAN route is available"
+            _tourFeatureError.value = "No room connection is available. Find the guide nearby or reconnect to their local Wi-Fi."
             return
         }
-        val route = SessionTransportRoute.LOCAL_LAN
+        val route = resolvedGuestRoute?.transport ?: SessionTransportRoute.LOCAL_LAN
         if (route in attemptedGuestRoutes) {
             activeGuestRoute = null
-            scheduleReconnect("Could not authenticate the local LAN route to the guide")
+            scheduleReconnect("Could not connect to the guide over ${route.name.lowercase().replace('_', ' ')}")
             return
         }
-        attemptedGuestRoutes += SessionTransportRoute.LOCAL_LAN
-        activeGuestRoute = SessionTransportRoute.LOCAL_LAN
+        attemptedGuestRoutes += route
+        activeGuestRoute = route
         _connectionState.value = SessionConnectionState.CONNECTING
         startGuestTransports(channel, hostIP, sessionID, participantID, credential)
     }
@@ -968,6 +1170,9 @@ class ChannelService(
         participantID: UUID,
         credential: SessionCredential,
     ) {
+        val identity = requireNotNull(guidePin.identity) { "Admitted guide identity is missing" }
+        val authentication = SessionGuideAuthentication.Guest(GuideFrameVerifier(identity.publicKey, identity.sessionId, identity.guideId))
+        tourControlService.configureGuideAuthentication(authentication)
         tourControlService.configureSession(
             sessionID,
             participantID,
@@ -975,6 +1180,7 @@ class ChannelService(
             ParticipantPlatform.ANDROID,
             credential,
         )
+        assetTransferService.configureGuideAuthentication(authentication)
         assetTransferService.configureSession(
             sessionID,
             participantID,
@@ -988,6 +1194,7 @@ class ChannelService(
         assetTransferService.joinTour(hostIP)
 
         val plane = coordinator.selectAudioPlane()
+        plane.configureGuideAuthentication(authentication)
         plane.configureSession(
             sessionID = sessionID,
             participantID = participantID,
@@ -995,14 +1202,26 @@ class ChannelService(
             platform = ParticipantPlatform.ANDROID,
             credential = credential,
         )
+        val audioGeneration = ++guestAudioGeneration
         plane.setSessionEventHandler { event ->
-            scope.launch { handleGuestAudioSessionEvent(event) }
+            scope.launch { if (audioGeneration == guestAudioGeneration) handleGuestAudioSessionEvent(event) }
         }
         if (plane is UDPAudioPlane) plane.hostIP = hostIP
-        audioEngine.startPlayback()
+        audioEngine.onPlaybackBufferAccepted = {
+            scope.launch {
+                if (audioGeneration == guestAudioGeneration && _listenState.value == ListenState.LISTENING &&
+                    _audioRuntimeState.value == AudioRuntimeState.STARTING) {
+                    _audioRuntimeState.value = AudioRuntimeState.RUNNING
+                    _audioRuntimeError.value = null
+                    _joinStage.value = RoomJoinStage.IDLE
+                }
+            }
+        }
+        startGuestPlayback()
         // The first delivered PCM buffer of this run proves the audio lane works again (DSCN-19).
         val awaitingFirstBuffer = AtomicBoolean(true)
         plane.startListening(channelID = channel.id) { pcm ->
+            if (audioGeneration != guestAudioGeneration) return@startListening
             if (awaitingFirstBuffer.compareAndSet(true, false)) consecutiveAudioLaneFailures.set(0)
             audioEngine.enqueuePlayback(pcm)
         }
@@ -1015,6 +1234,7 @@ class ChannelService(
     private fun handleGuestAudioSessionEvent(event: AudioSessionEvent) {
         if (_listenState.value != ListenState.LISTENING) return
         when (event) {
+            is AudioSessionEvent.AuthenticationFailed -> failGuestSession(event.message)
             is AudioSessionEvent.Joined, is AudioSessionEvent.Disconnected -> Unit // guide-side membership
             is AudioSessionEvent.VersionMismatch -> handleControlConnectionEvent(
                 TourControlConnectionEvent.VersionMismatch(event.remoteMajor, event.localMajor),
@@ -1041,6 +1261,7 @@ class ChannelService(
     private fun handleControlConnectionEvent(event: TourControlConnectionEvent) {
         if (_listenState.value != ListenState.LISTENING) return
         when (event) {
+            is TourControlConnectionEvent.AuthenticationFailed -> failGuestSession(event.message)
             TourControlConnectionEvent.Connected -> {
                 val route = activeGuestRoute ?: return
                 if (!routeLease.select(route)) {
@@ -1107,6 +1328,7 @@ class ChannelService(
         if (guestCredential == null) return
         _reconnectAttempt.value += 1
         _connectionState.value = SessionConnectionState.RECONNECTING
+        _audioRuntimeState.value = AudioRuntimeState.STARTING
         _tourFeatureError.value = reason
         Log.e(TAG, "Session reconnect attempt ${_reconnectAttempt.value}")
         val delayMilliseconds = (1L shl (_reconnectAttempt.value - 1)) * reconnectBaseDelayMillis
@@ -1126,19 +1348,22 @@ class ChannelService(
     private suspend fun refreshGuestRouteForReconnect(channel: Channel) {
         val nearby = coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl ?: return
         val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return }
-        if (resolvedGuestHost != null && channel.audioHostIP != null) {
-            nearby.stopNearbyGuest(); resolvedGuestHost = null
+        if (resolvedGuestRoute != null && channel.audioHostIP != null) {
+            nearby.stopNearbyGuest(); resolvedGuestRoute = null
             coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.OFF)
         } else if (nearby.canConnectNearby(room)) {
             coordinator.activeAudioPlane?.stop(); tourControlService.stop(); assetTransferService.stop()
-            nearby.stopNearbyGuest()
             try {
-                resolvedGuestHost = nearby.prepareNearbyGuest(room)
+                resolvedGuestRoute = nearby.prepareNearbyGuest(room, UUID.fromString(channel.createdBy)).also { require(it.roomID == room) { "Nearby room changed" } }
                 if (_bluetoothDiscoveryEnabled.value && nearby.usesBluetoothGuestRoute) {
                     coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.BROWSING)
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                if (error is NearbyRoomMetadataMismatch) {
+                    failGuestSession(nearbyMetadataFailureMessage(error))
+                    return
+                }
                 Log.w(TAG, "Nearby route recovery failed (${error.javaClass.simpleName})")
             }
         }
@@ -1183,6 +1408,8 @@ class ChannelService(
     }
 
     private fun endGuestSessionFromGuide() {
+        guidePin.endSession()
+        mutableGuideKeyFingerprint.value = null
         val channelID = _activeChannelID.value ?: return
         stopCurrentActivity()
         _channels.value = _channels.value.filter { it.id != channelID }
@@ -1202,4 +1429,7 @@ class ChannelService(
             _tourFeatureError.value = error.message ?: error.javaClass.simpleName
         }
     }
+
+    private fun fingerprint(publicKey: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(publicKey).take(6).joinToString("") { "%02X".format(it.toInt() and 255) }.chunked(4).joinToString(" ")
 }

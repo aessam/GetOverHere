@@ -5,6 +5,19 @@ import TourSessionCore
 
 @Suite("Hybrid session transports", .serialized)
 struct HybridSessionTransportsTests {
+    @Test("Unused dual-owner hybrid path refuses to independently seal signed guide frames")
+    @MainActor
+    func signedGuideRequiresSharedProducer() throws {
+        let routes = HybridSessionRouteController()
+        let local = RecordingHybridControlTransport()
+        let aware = RecordingHybridControlTransport()
+        let control = HybridSessionControlTransport(local: local, aware: aware, routeController: routes)
+        control.configureGuideAuthentication(.guide(GuideFrameSigner(sessionID: UUID(), guideID: UUID())))
+        #expect(throws: SessionGuideAuthenticationError.self) { try control.startGuide() }
+        #expect(local.guideStarts == 0)
+        #expect(aware.guideStarts == 0)
+    }
+
     @Test("Guest route lease keeps audio, control, and assets on one route")
     @MainActor
     func guestUsesOneRouteAcrossEveryLane() async {
@@ -35,6 +48,9 @@ struct HybridSessionTransportsTests {
             routeController: routes
         )
 
+        audio.configureGuideAuthentication(.legacyFixture)
+        control.configureGuideAuthentication(.legacyFixture)
+        asset.configureGuideAuthentication(.legacyFixture)
         var connectedEvents = 0
         control.setEventHandler { event in
             if case .connected = event { connectedEvents += 1 }
@@ -113,6 +129,9 @@ struct HybridSessionTransportsTests {
             routeController: routes
         )
 
+        audio.configureGuideAuthentication(.legacyFixture)
+        control.configureGuideAuthentication(.legacyFixture)
+        asset.configureGuideAuthentication(.legacyFixture)
         try audio.startBroadcasting(channelID: UUID().uuidString, quality: .standard)
         try control.startGuide()
         try asset.startGuide()
@@ -137,6 +156,7 @@ struct HybridSessionTransportsTests {
 
 @MainActor
 private final class RecordingAudioPlane: AudioPlane {
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {}
     var isActive = false
     var guideStarts = 0
     var guestStarts = 0
@@ -165,6 +185,7 @@ private final class RecordingAudioPlane: AudioPlane {
 
 @MainActor
 private final class RecordingHybridControlTransport: SessionControlTransport {
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {}
     var isActive = false
     var hostIP: String?
     var guideStarts = 0
@@ -215,6 +236,7 @@ private final class RecordingHybridControlTransport: SessionControlTransport {
 
 @MainActor
 private final class RecordingHybridAssetTransport: SessionAssetTransport {
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {}
     var isActive = false
     var hostIP: String?
     var guideStarts = 0

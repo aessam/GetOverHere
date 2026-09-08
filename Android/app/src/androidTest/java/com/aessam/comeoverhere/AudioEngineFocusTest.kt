@@ -7,6 +7,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.service.AudioEngine
@@ -29,9 +30,11 @@ import java.util.concurrent.TimeUnit
 class AudioEngineFocusTest {
     private lateinit var audioEngine: AudioEngine
     private lateinit var audioManager: AudioManager
+    private lateinit var activity: ActivityScenario<MainActivity>
 
     @Before
     fun setUp() {
+        activity = ActivityScenario.launch(MainActivity::class.java)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         audioEngine = AudioEngine(context)
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -40,6 +43,7 @@ class AudioEngineFocusTest {
     @After
     fun tearDown() {
         audioEngine.stopPlayback()
+        activity.close()
     }
 
     @Test

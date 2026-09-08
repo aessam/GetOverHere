@@ -21,6 +21,8 @@ class RoomAdmissionTest {
         val result = RoomAdmission.derive(key, peer, ByteArray(32), byteArrayOf())
         assertEquals("1652d7207df35c849397c233a68b03323308bd4dcd2f50e20ab8323fea0bd015",
             result.joinToString("") { "%02x".format(it.toInt() and 255) })
+        val v2 = RoomAdmission.derive(key, peer, ByteArray(32), byteArrayOf(), "GetOverHere/room-admission/v2")
+        assertEquals("e6c7820134e8240ee5ab4f70d589cc9a4e29531739e7301a50e24057f06a53fd", v2.lowercaseHex())
     }
 
     @Test fun roundtripAndTamper() {

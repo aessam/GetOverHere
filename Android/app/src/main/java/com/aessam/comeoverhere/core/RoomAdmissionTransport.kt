@@ -2,7 +2,9 @@ package com.aessam.comeoverhere.core
 
 import android.util.Log
 import com.aessam.toursession.RoomAccessPolicy
-import com.aessam.toursession.RoomAdmission
+import com.aessam.toursession.RoomAdmissionV2
+import com.aessam.toursession.GuideFrameSigner
+import com.aessam.toursession.AdmittedRoomCredentials
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -14,13 +16,13 @@ import java.util.concurrent.Semaphore
 import kotlin.concurrent.thread
 
 interface RoomAdmissionInterface {
-    fun start(sessionID: UUID, sessionCode: String)
+    fun start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner)
     fun update(policy: RoomAccessPolicy)
     fun stop()
-    fun join(host: String, sessionID: UUID, code: String?): String
+    fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): AdmittedRoomCredentials
 }
 
-class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomAdmissionInterface {
+class RoomAdmissionTransport(private val port: Int = RoomAdmissionV2.PORT) : RoomAdmissionInterface {
     private val lock = Any()
     private val slots = Semaphore(8)
     private var listener: ServerSocket? = null
@@ -28,7 +30,7 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
     private var policy: RoomAccessPolicy? = null
     private var revision = 0L
 
-    override fun start(sessionID: UUID, sessionCode: String) {
+    override fun start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) {
         stop()
         val open = RoomAccessPolicy(sessionID, null)
         val server = ServerSocketChannel.open().socket()
@@ -58,9 +60,9 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
                     try {
                         client.use {
                             client.soTimeout = 5_000
-                            val guide = RoomAdmission.Guide(sessionID, snapshot.first)
+                            val guide = RoomAdmissionV2.Guide(sessionID, snapshot.first, signer)
                             client.getOutputStream().write(guide.challenge)
-                            val request = read(client, RoomAdmission.REQUEST_SIZE)
+                            val request = read(client, RoomAdmissionV2.REQUEST_SIZE)
                             val reply = guide.reply(request, sessionCode)
                             val channel = requireNotNull(client.channel)
                             channel.configureBlocking(false)
@@ -95,13 +97,13 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
         pending.forEach { it.close() }
     }
 
-    override fun join(host: String, sessionID: UUID, code: String?): String = Socket().use { socket ->
+    override fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): AdmittedRoomCredentials = Socket().use { socket ->
         socket.soTimeout = 5_000
         socket.connect(InetSocketAddress(host, port), 5_000)
-        val challenge = read(socket, RoomAdmission.CHALLENGE_SIZE)
-        val guest = RoomAdmission.Guest(challenge, sessionID, code)
+        val challenge = read(socket, RoomAdmissionV2.CHALLENGE_SIZE)
+        val guest = RoomAdmissionV2.Guest(challenge, sessionID, expectedGuideID, code)
         socket.getOutputStream().write(guest.request)
-        guest.open(read(socket, RoomAdmission.REPLY_SIZE))
+        guest.open(read(socket, RoomAdmissionV2.REPLY_SIZE))
     }
 
     private fun read(socket: Socket, count: Int): ByteArray {
@@ -123,7 +125,7 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmission.PORT) : RoomA
     companion object {
         /** A partial AEAD reply fails closed; never wait for socket writability under the policy lock. */
         internal fun writeReplyOnce(channel: SocketChannel, reply: ByteArray) {
-            check(!channel.isBlocking && reply.size == RoomAdmission.REPLY_SIZE)
+            check(!channel.isBlocking && reply.size == RoomAdmissionV2.REPLY_SIZE)
             check(channel.write(ByteBuffer.wrap(reply)) == reply.size) { "Room admission reply backpressured." }
         }
     }

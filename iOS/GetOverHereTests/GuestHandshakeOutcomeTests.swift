@@ -39,6 +39,7 @@ struct GuestHandshakeOutcomeTests {
             continuation.finish()
         }
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),

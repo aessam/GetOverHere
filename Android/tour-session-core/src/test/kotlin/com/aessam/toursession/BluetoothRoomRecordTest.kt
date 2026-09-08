@@ -12,8 +12,13 @@ class BluetoothRoomRecordTest {
         val fixture = BluetoothRoomRecord(room, guide, "Tour", true, true)
         assertEquals("474f52310300112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000004546f7572",
             fixture.encode().joinToString("") { "%02x".format(it) })
+        val v2 = fixture.copy(admissionVersion = 2)
+        assertEquals("474f52320300112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000004546f7572",
+            v2.encode().lowercaseHex())
+        assertEquals(v2, BluetoothRoomRecord.decode(v2.encode()))
         for (index in 1..100) {
-            val value = BluetoothRoomRecord(room, guide, "ج🌍".repeat(index % 50 + 1), index % 2 == 0, index % 3 == 0)
+            val value = BluetoothRoomRecord(room, guide, "ج🌍".repeat(index % 50 + 1), index % 2 == 0, index % 3 == 0,
+                admissionVersion = index % 2 + 1)
             assertEquals(value, BluetoothRoomRecord.decode(value.encode()))
         }
         val maximum = BluetoothRoomRecord(room, guide, "x".repeat(400), false, false)
@@ -28,5 +33,11 @@ class BluetoothRoomRecordTest {
         assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(bytes.copyOf().also { it[4] = 4 }) }
         assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(bytes.copyOf().also { it[39] = 255.toByte() }) }
         assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(bytes + byteArrayOf(0)) }
+        listOf(0, 3, 255).forEach { version ->
+            assertThrows(Exception::class.java) {
+                BluetoothRoomRecord(UUID.randomUUID(), UUID.randomUUID(), "Tour", false, false, version).encode()
+            }
+            assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(bytes.copyOf().also { it[3] = version.toByte() }) }
+        }
     }
 }

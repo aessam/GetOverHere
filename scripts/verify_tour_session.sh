@@ -53,6 +53,7 @@ echo "[2/9] Kotlin protocol and registry tests"
 SWIFT_BIN="$(swift build --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH" --show-bin-path)/tour-session-swift"
 
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission.py" "$SWIFT_BIN" "$KOTLIN_CLI"
+JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission_v2.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_guide_signatures.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 
 run_kotlin() {
@@ -63,6 +64,12 @@ echo "[3/9] Exact Swift/Kotlin wire bytes"
 SWIFT_NEARBY="$($SWIFT_BIN nearby-fixture)"
 KOTLIN_NEARBY="$(run_kotlin nearby-fixture)"
 [[ -n "$SWIFT_NEARBY" && "$SWIFT_NEARBY" == "$KOTLIN_NEARBY" ]] || { echo 'error: nearby selector/expiry parity failed' >&2; exit 1; }
+SWIFT_DISCOVERY_V2="$($SWIFT_BIN bluetooth-v2-fixture)"
+KOTLIN_DISCOVERY_V2="$(run_kotlin bluetooth-v2-fixture)"
+[[ -n "$SWIFT_DISCOVERY_V2" && "$SWIFT_DISCOVERY_V2" == "$KOTLIN_DISCOVERY_V2" ]] || { echo 'error: nearby admission v2 discovery parity failed' >&2; exit 1; }
+SWIFT_READINESS="$($SWIFT_BIN audio-readiness-fixture)"
+KOTLIN_READINESS="$(run_kotlin audio-readiness-fixture)"
+[[ "$SWIFT_READINESS" == '01020102030405060708' && "$SWIFT_READINESS" == "$KOTLIN_READINESS" ]] || { echo 'error: renderer readiness parity failed' >&2; exit 1; }
 SWIFT_HEX="$($SWIFT_BIN fixture)"
 KOTLIN_HEX="$(run_kotlin fixture)"
 if [[ "$SWIFT_HEX" != "$KOTLIN_HEX" ]]; then
@@ -337,6 +344,7 @@ echo "[7/9] Android API-floor and permission lint"
 )
 
 echo "[8/9] Android app integration, TCP loopback, and APK"
+PYTHONDONTWRITEBYTECODE=1 python3 "$PROJECT_ROOT/scripts/test_benchmark_android_aware.py"
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew testDebugUnitTest assembleDebug
@@ -351,6 +359,7 @@ SWIFT_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
     -scheme GetOverHere \
     -destination "${GOH_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}" \
     -parallel-testing-enabled NO \
+    -collect-test-diagnostics never \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     test \
     -only-testing:GetOverHereTests

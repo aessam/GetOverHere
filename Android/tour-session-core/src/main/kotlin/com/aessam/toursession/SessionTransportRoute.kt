@@ -3,16 +3,19 @@ package com.aessam.toursession
 enum class SessionTransportRoute(val rawValue: Int) {
     LOCAL_LAN(1),
     WIFI_AWARE(2),
+    BLUETOOTH(3),
 }
 
 data class SessionRouteAvailability(
     val hasLANHost: Boolean,
     val hasWiFiAwareSession: Boolean,
+    val hasBluetooth: Boolean = false,
 ) {
     val orderedRoutes: List<SessionTransportRoute>
         get() = buildList {
             if (hasLANHost) add(SessionTransportRoute.LOCAL_LAN)
             if (hasWiFiAwareSession) add(SessionTransportRoute.WIFI_AWARE)
+            if (hasBluetooth) add(SessionTransportRoute.BLUETOOTH)
         }
 }
 

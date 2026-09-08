@@ -27,12 +27,80 @@ import org.junit.Test
 import java.util.UUID
 
 class PresentationServiceTest {
+    @Test fun supersededControlCallbackAndWrongRoomLeaveCannotEndReplacementRoom() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val firstRoom = UUID.randomUUID()
+        val secondRoom = UUID.randomUUID()
+        val events = mutableListOf<TourControlConnectionEvent>()
+        service.setConnectionEventHandler { events += it }
+        service.configureSession(firstRoom, UUID.randomUUID(), "Guest", ParticipantPlatform.ANDROID, presentationCredential(firstRoom))
+        service.startGuest("127.0.0.1")
+        val oldHandler = requireNotNull(transport.handler)
+        service.configureSession(secondRoom, UUID.randomUUID(), "Guest", ParticipantPlatform.ANDROID, presentationCredential(secondRoom))
+        service.startGuest("127.0.0.1")
+        val leave = SessionControlEvent.EnvelopeReceived(SessionEnvelope(
+            lane = SessionLane.CONTROL, kind = SessionMessageKind.LEAVE, sequence = 1,
+            sessionId = firstRoom, senderId = UUID.randomUUID(), payload = byteArrayOf(),
+        ))
+        oldHandler(SessionControlEvent.AuthenticationFailed("Old run"))
+        oldHandler(SessionControlEvent.Connected)
+        oldHandler(leave)
+        transport.emit(leave)
+        assertTrue(events.isEmpty())
+        assertTrue(transport.isActive)
+        transport.emit(SessionControlEvent.Connected)
+        assertEquals(listOf(TourControlConnectionEvent.Connected), events)
+        service.stop()
+    }
+
+    @Test fun audioReadyCountRequiresConnectedGuestAndIncreasingRendererReports() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val room = UUID.randomUUID()
+        val guest = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
+        service.configureSession(room, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, presentationCredential(room))
+        service.startGuide(room)
+        fun report(sender: UUID, revision: ULong, status: com.aessam.toursession.AudioReadinessStatus) {
+            transport.emit(SessionControlEvent.EnvelopeReceived(SessionEnvelope(
+                lane = SessionLane.CONTROL, kind = SessionMessageKind.AUDIO_STATUS, sequence = revision.toLong(),
+                sessionId = room, senderId = sender,
+                payload = com.aessam.toursession.AudioReadinessPayload(status, revision).encode(),
+            )))
+        }
+        val playing = com.aessam.toursession.AudioReadinessStatus.PLAYING
+        val failed = com.aessam.toursession.AudioReadinessStatus.FAILED
+        report(guest, 1u, playing)
+        assertEquals(0, service.audioReadyGuestCount.value)
+        transport.emit(SessionControlEvent.GuestJoined(com.aessam.toursession.ParticipantSession(
+            guest, "connection", "Guest", com.aessam.toursession.SessionRole.GUEST, ParticipantPlatform.ANDROID)))
+        assertEquals(0, service.audioReadyGuestCount.value)
+        report(guest, 2u, playing)
+        assertEquals(1, service.audioReadyGuestCount.value)
+        report(guest, 1u, failed)
+        assertEquals(1, service.audioReadyGuestCount.value)
+        report(UUID.randomUUID(), 3u, playing)
+        assertEquals(1, service.audioReadyGuestCount.value)
+        report(guest, 3u, failed)
+        assertEquals(0, service.audioReadyGuestCount.value)
+        report(guest, 4u, playing)
+        assertEquals(1, service.audioReadyGuestCount.value)
+        transport.emit(SessionControlEvent.GuestDisconnected(guest))
+        assertEquals(0, service.audioReadyGuestCount.value)
+        report(guest, 5u, playing)
+        assertEquals(0, service.audioReadyGuestCount.value)
+        service.stop()
+        assertEquals(0, service.audioReadyGuestCount.value)
+    }
+
     @Test
     fun guideLateJoinRestoresPresentationTargetPinAndPointerSnapshots() {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)
         val sessionID = UUID.randomUUID()
         val deckID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         service.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -101,6 +169,7 @@ class PresentationServiceTest {
         val sessionID = UUID.randomUUID()
         val guideID = UUID.randomUUID()
         val deckID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         service.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -164,6 +233,7 @@ class PresentationServiceTest {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)
         val sessionID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         service.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -193,6 +263,7 @@ class PresentationServiceTest {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)
         val sessionID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         service.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -231,6 +302,7 @@ class PresentationServiceTest {
         val sessionID = UUID.randomUUID()
         val guideTransport = RecordingControlTransport()
         val guide = TourControlService(guideTransport)
+        guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         guide.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -247,6 +319,7 @@ class PresentationServiceTest {
         val guestTransport = RecordingControlTransport()
         val guest = TourControlService(guestTransport)
         val events = mutableListOf<TourControlConnectionEvent>()
+        guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         guest.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -279,6 +352,7 @@ class PresentationServiceTest {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)
         val sessionID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         service.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -334,6 +408,7 @@ class PresentationServiceTest {
 }
 
 private class RecordingControlTransport : SessionControlTransport {
+    override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) = Unit
     override var isActive = false
         private set
     override var hostIP: String? = null

@@ -1,15 +1,18 @@
 public enum SessionTransportRoute: UInt8, CaseIterable, Sendable {
     case localLAN = 1
     case wifiAware = 2
+    case bluetooth = 3
 }
 
 public struct SessionRouteAvailability: Equatable, Sendable {
     public let hasLANHost: Bool
     public let hasWiFiAwareSession: Bool
+    public let hasBluetooth: Bool
 
-    public init(hasLANHost: Bool, hasWiFiAwareSession: Bool) {
+    public init(hasLANHost: Bool, hasWiFiAwareSession: Bool, hasBluetooth: Bool = false) {
         self.hasLANHost = hasLANHost
         self.hasWiFiAwareSession = hasWiFiAwareSession
+        self.hasBluetooth = hasBluetooth
     }
 
     /// LAN is preferred because it works on the widest device/OS range. Aware is
@@ -19,6 +22,7 @@ public struct SessionRouteAvailability: Equatable, Sendable {
         var routes: [SessionTransportRoute] = []
         if hasLANHost { routes.append(.localLAN) }
         if hasWiFiAwareSession { routes.append(.wifiAware) }
+        if hasBluetooth { routes.append(.bluetooth) }
         return routes
     }
 }

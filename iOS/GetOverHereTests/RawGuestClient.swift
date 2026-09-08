@@ -55,13 +55,21 @@ nonisolated final class RawGuestClient: @unchecked Sendable {
         displayName: String,
         platform: ParticipantPlatform,
         credential: SessionCredential,
-        lane: SessionLane
+        lane: SessionLane,
+        guideVerifier: GuideFrameVerifier? = nil,
+        capabilities: UInt32 = 0
     ) throws -> UUID {
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        defer {
+            timeout = timeval(tv_sec: 0, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        }
         let guideOpener = SessionFrameOpener(credential: credential)
         guard let challengeFrame = readFrame() else {
             throw ClientError.handshake("no authentication challenge")
         }
-        guard let challengeEnvelope = try Self.openFrame(challengeFrame, using: guideOpener) else {
+        guard let challengeEnvelope = try Self.openFrame(challengeFrame, using: guideOpener, verifier: guideVerifier) else {
             throw ClientError.handshake("duplicate authentication challenge")
         }
         guard challengeEnvelope.sessionID == sessionID,
@@ -85,13 +93,13 @@ nonisolated final class RawGuestClient: @unchecked Sendable {
             clientNonce: clientNonce,
             role: .guest,
             platform: platform,
-            capabilities: 0,
+            capabilities: capabilities,
             displayName: displayName
         )
         let hello = try HelloPayload(
             role: .guest,
             platform: platform,
-            capabilities: 0,
+            capabilities: capabilities,
             displayName: displayName,
             requestedLane: lane,
             clientNonce: clientNonce,
@@ -109,7 +117,7 @@ nonisolated final class RawGuestClient: @unchecked Sendable {
         guard let welcomeFrame = readFrame() else {
             throw ClientError.handshake("no welcome")
         }
-        guard let welcomeEnvelope = try Self.openFrame(welcomeFrame, using: guideOpener) else {
+        guard let welcomeEnvelope = try Self.openFrame(welcomeFrame, using: guideOpener, verifier: guideVerifier) else {
             throw ClientError.handshake("duplicate welcome")
         }
         guard welcomeEnvelope.sessionID == sessionID,
@@ -194,8 +202,10 @@ nonisolated final class RawGuestClient: @unchecked Sendable {
         return true
     }
 
-    private static func openFrame(_ frame: Data, using opener: SessionFrameOpener) throws -> SessionEnvelope? {
-        let sealed = try SealedSessionEnvelope.decode(frame)
+    private static func openFrame(_ frame: Data, using opener: SessionFrameOpener, verifier: GuideFrameVerifier?) throws -> SessionEnvelope? {
+        let sealed: SealedSessionEnvelope
+        if let verifier { sealed = try verifier.verify(frame) }
+        else { sealed = try SealedSessionEnvelope.decode(frame) }
         switch try opener.open(sealed) {
         case let .opened(envelope):
             return envelope

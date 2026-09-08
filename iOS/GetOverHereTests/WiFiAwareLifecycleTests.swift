@@ -13,7 +13,7 @@ struct WiFiAwareLifecycleTests {
         guard #available(iOS 26.4, *) else { return }
         var starts = 0
         var failures: [String] = []
-        let transport = WiFiAwareRoomTransport(supportsAware: { true }) { _ in
+        let transport = WiFiAwareRoomTransport(supportsAware: { true }, maximumConnectableDevices: { nil }) { _ in
             starts += 1
             throw NWError.wifiAware(-11992)
         }
@@ -33,7 +33,7 @@ struct WiFiAwareLifecycleTests {
         guard #available(iOS 26.4, *) else { return }
         var continuations: [CheckedContinuation<Void, Never>] = []
         var failures: [String] = []
-        let transport = WiFiAwareRoomTransport(supportsAware: { true }) { _ in
+        let transport = WiFiAwareRoomTransport(supportsAware: { true }, maximumConnectableDevices: { nil }) { _ in
             await withCheckedContinuation { continuations.append($0) }
             throw NWError.wifiAware(-11992)
         }
@@ -59,7 +59,7 @@ struct WiFiAwareLifecycleTests {
         guard #available(iOS 26.4, *) else { return }
         var starts = 0
         var failures = 0
-        let transport = WiFiAwareRoomTransport(supportsAware: { true }) { _ in starts += 1 }
+        let transport = WiFiAwareRoomTransport(supportsAware: { true }, maximumConnectableDevices: { nil }) { _ in starts += 1 }
         transport.onError = { _ in failures += 1 }
         defer { transport.stop() }
         transport.setMode(.browsing)
@@ -74,7 +74,7 @@ struct WiFiAwareLifecycleTests {
         guard #available(iOS 26.4, *) else { return }
         var starts = 0
         var failures = 0
-        let transport = WiFiAwareRoomTransport(supportsAware: { true }) { _ in
+        let transport = WiFiAwareRoomTransport(supportsAware: { true }, maximumConnectableDevices: { nil }) { _ in
             starts += 1
             throw CancellationError()
         }
@@ -92,7 +92,7 @@ struct WiFiAwareLifecycleTests {
         guard #available(iOS 26.4, *) else { return }
         var supported = false
         var starts = 0
-        let transport = WiFiAwareRoomTransport(supportsAware: { supported }) { _ in starts += 1 }
+        let transport = WiFiAwareRoomTransport(supportsAware: { supported }, maximumConnectableDevices: { nil }) { _ in starts += 1 }
         defer { transport.stop() }
         transport.setMode(.browsing)
         for _ in 0..<20 { await Task.yield() }
@@ -101,5 +101,19 @@ struct WiFiAwareLifecycleTests {
         transport.setMode(.browsing)
         for _ in 0..<20 { await Task.yield() }
         #expect(starts == 1)
+    }
+
+    @Test(.enabled(if: supported), arguments: [nil, -1, 0, 2, 30])
+    func nativePeerCapabilityIsReportedWithoutInventingAThirtyPeerGuarantee(maximum: Int?) async {
+        guard #available(iOS 26.4, *) else { return }
+        var starts = 0
+        let transport = WiFiAwareRoomTransport(supportsAware: { true }, maximumConnectableDevices: { maximum }) { _ in
+            starts += 1
+        }
+        defer { transport.stop() }
+        transport.setMode(.advertising)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(transport.maximumPeerCapacity == maximum.flatMap { $0 >= 0 ? $0 : nil })
+        #expect(starts == (maximum == 0 ? 0 : 1))
     }
 }

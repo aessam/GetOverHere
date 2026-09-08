@@ -42,6 +42,7 @@ class GuestHandshakeOutcomeTest {
         val message = AtomicReference<String>()
         try {
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),

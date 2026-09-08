@@ -94,11 +94,11 @@ object RoomAdmission {
         }
     }
 
-    private fun newKey(): KeyPair = KeyPairGenerator.getInstance("EC").apply {
+    internal fun newKey(): KeyPair = KeyPairGenerator.getInstance("EC").apply {
         initialize(ECGenParameterSpec("secp256r1"))
     }.generateKeyPair()
 
-    private fun publicBytes(key: KeyPair): ByteArray {
+    internal fun publicBytes(key: KeyPair): ByteArray {
         val publicKey = key.public as ECPublicKey
         fun coordinate(value: BigInteger): ByteArray = value.toByteArray().let {
             if (it.size >= 32) it.copyOfRange(it.size - 32, it.size) else ByteArray(32 - it.size) + it
@@ -106,7 +106,8 @@ object RoomAdmission {
         return byteArrayOf(4) + coordinate(publicKey.w.affineX) + coordinate(publicKey.w.affineY)
     }
 
-    internal fun derive(key: KeyPair, peer: ByteArray, salt: ByteArray, transcript: ByteArray): ByteArray {
+    internal fun derive(key: KeyPair, peer: ByteArray, salt: ByteArray, transcript: ByteArray,
+        domain: String = "GetOverHere/room-admission/v1"): ByteArray {
         require(peer.size == 65 && peer[0].toInt() == 4)
         val parameters = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
             .getParameterSpec(ECParameterSpec::class.java)
@@ -115,6 +116,6 @@ object RoomAdmission {
         val shared = KeyAgreement.getInstance("ECDH").apply { init(key.private); doPhase(publicKey, true) }.generateSecret()
         require(shared.size == 32) { "ECDH provider must return a fixed-width P-256 secret" }
         val extracted = SessionAuthenticator.hmac(salt, shared)
-        return SessionAuthenticator.hmac(extracted, "GetOverHere/room-admission/v1".toByteArray() + transcript + byteArrayOf(1))
+        return SessionAuthenticator.hmac(extracted, domain.toByteArray(Charsets.US_ASCII) + transcript + byteArrayOf(1))
     }
 }

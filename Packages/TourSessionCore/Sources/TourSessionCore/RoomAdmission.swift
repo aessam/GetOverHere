@@ -17,7 +17,7 @@ public enum RoomAdmissionError: Error, LocalizedError {
 /// Admission is independent of the immutable GOH4 media credential. Codes are case-sensitive.
 public struct RoomAccessPolicy: Sendable {
     public let isLocked: Bool
-    fileprivate let secret: Data
+    let secret: Data
 
     public static func isValidCode(_ code: String) -> Bool {
         (4...64).contains(code.utf8.count) && code.utf8.allSatisfy { (33...126).contains($0) }
@@ -47,7 +47,7 @@ public enum RoomAdmission {
     public static let replySize = 38
     private static let magic = Data([0x47, 0x4f, 0x48, 0x52, 1])
 
-    fileprivate static func identity(_ id: UUID) -> Data {
+    static func identity(_ id: UUID) -> Data {
         var uuid = id.uuid
         return withUnsafeBytes(of: &uuid) { Data($0) }
     }
@@ -114,10 +114,11 @@ public enum RoomAdmission {
         }
     }
 
-    static func derive(_ key: P256.KeyAgreement.PrivateKey, _ peer: Data, _ salt: Data, _ transcript: Data) throws -> SymmetricKey {
+    static func derive(_ key: P256.KeyAgreement.PrivateKey, _ peer: Data, _ salt: Data, _ transcript: Data,
+                       domain: String = "GetOverHere/room-admission/v1") throws -> SymmetricKey {
         let publicKey = try P256.KeyAgreement.PublicKey(x963Representation: peer)
         let shared = try key.sharedSecretFromKeyAgreement(with: publicKey)
         return shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt,
-            sharedInfo: Data("GetOverHere/room-admission/v1".utf8) + transcript, outputByteCount: 32)
+            sharedInfo: Data(domain.utf8) + transcript, outputByteCount: 32)
     }
 }

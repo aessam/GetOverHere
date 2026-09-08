@@ -120,6 +120,10 @@ object TourSessionFixtures {
                     "visible=${target.isVisible}",
                 )
             }
+            SessionMessageKind.AUDIO_STATUS -> {
+                val status = AudioReadinessPayload.decode(envelope.payload)
+                fields += listOf("status=${status.status.rawValue}", "revision=${status.revision}")
+            }
             SessionMessageKind.VISUAL_FOCUS_SNAPSHOT -> {
                 val focus = VisualFocusSnapshotPayload.decode(envelope.payload)
                 fields += listOf("stateVersion=${focus.stateVersion}", "mode=${focus.mode.rawValue}")

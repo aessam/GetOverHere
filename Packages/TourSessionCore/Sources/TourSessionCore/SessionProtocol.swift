@@ -17,6 +17,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
     case bearingSnapshot = 0x21
     case targetSnapshot = 0x22
     case visualFocusSnapshot = 0x23
+    case audioStatus = 0x24
     case assetManifest = 0x30
     case assetChunk = 0x31
     case tourPackManifest = 0x32
@@ -28,7 +29,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
         case .audioFrame:
             .realtime
         case .hello, .welcome, .heartbeat, .leave, .authChallenge, .presentationSnapshot, .bearingSnapshot,
-             .targetSnapshot, .visualFocusSnapshot:
+             .targetSnapshot, .visualFocusSnapshot, .audioStatus:
             .control
         case .assetManifest, .assetChunk, .tourPackManifest, .assetRequest, .assetStatus:
             .asset

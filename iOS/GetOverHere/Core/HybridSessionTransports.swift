@@ -36,6 +36,7 @@ final class HybridAudioPlane: AudioPlane {
     private let routeController: HybridSessionRouteController
     private let setLocalHostIP: (String?) -> Void
     private var role: Role?
+    private var authentication: SessionGuideAuthentication = .unconfigured
     private var eventHandler: (@Sendable (AudioSessionEvent) -> Void)?
 
     var isActive: Bool {
@@ -46,7 +47,7 @@ final class HybridAudioPlane: AudioPlane {
             switch routeController.selectedRoute {
             case .localLAN: local.isActive
             case .wifiAware: aware?.isActive == true
-            case nil: false
+            case .bluetooth, nil: false
             }
         case nil:
             false
@@ -79,6 +80,13 @@ final class HybridAudioPlane: AudioPlane {
         setLocalHostIP(hostIP)
     }
 
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {
+        stop()
+        self.authentication = authentication
+        local.configureGuideAuthentication(authentication)
+        aware?.configureGuideAuthentication(authentication)
+    }
+
     func configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -107,6 +115,7 @@ final class HybridAudioPlane: AudioPlane {
     }
 
     func startBroadcasting(channelID: String, quality: AudioQuality) throws {
+        try authentication.requireSharedGuideProducer(hasMultipleOwners: aware != nil)
         role = .guide
         try local.startBroadcasting(channelID: channelID, quality: quality)
         try aware?.startBroadcasting(channelID: channelID, quality: quality)
@@ -128,8 +137,13 @@ final class HybridAudioPlane: AudioPlane {
         channelID: String,
         onAudio: @escaping @Sendable (Data) -> Void
     ) {
+        do { try authentication.requireGuest() }
+        catch { eventHandler?(.failed(error.localizedDescription)); return }
         role = .guest
-        guard let selectedTransport else { return }
+        guard let selectedTransport else {
+            eventHandler?(.failed("The selected route is unsupported by this audio transport"))
+            return
+        }
         selectedTransport.startListening(channelID: channelID, onAudio: onAudio)
     }
 
@@ -143,13 +157,14 @@ final class HybridAudioPlane: AudioPlane {
         local.clearSession()
         aware?.clearSession()
         role = nil
+        authentication = .unconfigured
     }
 
     private var selectedTransport: AudioPlane? {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case nil: nil
+        case .bluetooth, nil: nil
         }
     }
 
@@ -176,6 +191,7 @@ final class HybridSessionControlTransport: SessionControlTransport {
     private let aware: SessionControlTransport?
     private let routeController: HybridSessionRouteController
     private var role: Role?
+    private var authentication: SessionGuideAuthentication = .unconfigured
     private var handler: (@Sendable (SessionControlEvent) -> Void)?
 
     var isActive: Bool {
@@ -214,6 +230,13 @@ final class HybridSessionControlTransport: SessionControlTransport {
         }
     }
 
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {
+        stop()
+        self.authentication = authentication
+        local.configureGuideAuthentication(authentication)
+        aware?.configureGuideAuthentication(authentication)
+    }
+
     func configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -242,14 +265,21 @@ final class HybridSessionControlTransport: SessionControlTransport {
     }
 
     func startGuide() throws {
+        try authentication.requireSharedGuideProducer(hasMultipleOwners: aware != nil)
         role = .guide
         try local.startGuide()
         try aware?.startGuide()
     }
 
     func startGuest() {
+        do { try authentication.requireGuest() }
+        catch { handler?(.failed(error.localizedDescription)); return }
         role = .guest
-        selectedTransport?.startGuest()
+        guard let selectedTransport else {
+            handler?(.failed("The selected route is unsupported by this control transport"))
+            return
+        }
+        selectedTransport.startGuest()
     }
 
     func send(kind: SessionMessageKind, payload: Data) {
@@ -286,13 +316,14 @@ final class HybridSessionControlTransport: SessionControlTransport {
         local.clearSession()
         aware?.clearSession()
         role = nil
+        authentication = .unconfigured
     }
 
     private var selectedTransport: SessionControlTransport? {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case nil: nil
+        case .bluetooth, nil: nil
         }
     }
 
@@ -319,6 +350,7 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     private let aware: SessionAssetTransport?
     private let routeController: HybridSessionRouteController
     private var role: Role?
+    private var authentication: SessionGuideAuthentication = .unconfigured
     private var handler: (@Sendable (SessionAssetEvent) -> Void)?
 
     var isActive: Bool {
@@ -357,6 +389,13 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
         }
     }
 
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {
+        stop()
+        self.authentication = authentication
+        local.configureGuideAuthentication(authentication)
+        aware?.configureGuideAuthentication(authentication)
+    }
+
     func configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -385,14 +424,21 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     }
 
     func startGuide() throws {
+        try authentication.requireSharedGuideProducer(hasMultipleOwners: aware != nil)
         role = .guide
         try local.startGuide()
         try aware?.startGuide()
     }
 
     func startGuest() {
+        do { try authentication.requireGuest() }
+        catch { handler?(.failed(error.localizedDescription)); return }
         role = .guest
-        selectedTransport?.startGuest()
+        guard let selectedTransport else {
+            handler?(.failed("The selected route is unsupported by this asset transport"))
+            return
+        }
+        selectedTransport.startGuest()
     }
 
     func send(kind: SessionMessageKind, payload: Data, to participantID: UUID?) {
@@ -417,13 +463,14 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
         local.clearSession()
         aware?.clearSession()
         role = nil
+        authentication = .unconfigured
     }
 
     private var selectedTransport: SessionAssetTransport? {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case nil: nil
+        case .bluetooth, nil: nil
         }
     }
 

@@ -48,12 +48,18 @@ final class TourControlService {
     private(set) var lastError: String?
     /// Guests admitted on the control lane, keyed by participant (FND-13); independent of audio readiness.
     private(set) var connectedGuestCount = 0
+    private(set) var audioReadyGuestCount = 0
+    @ObservationIgnored private var guestAudioReports: [UUID: AudioReadinessPayload] = [:]
+    @ObservationIgnored private var localAudioReport = AudioReadinessPayload(status: .waiting, revision: 0)
+    @ObservationIgnored private var guestControlConnected = false
 
     @ObservationIgnored private let transport: SessionControlTransport
     @ObservationIgnored private var connectedGuestIDs: Set<UUID> = []
     @ObservationIgnored private var role: PresentationServiceRole?
     @ObservationIgnored private var sessionID: UUID?
-    @ObservationIgnored private var connectionEventHandler: (@Sendable (TourControlConnectionEvent) -> Void)?
+    @ObservationIgnored private var connectionEventHandler: (@MainActor @Sendable (TourControlConnectionEvent) -> Void)?
+    @ObservationIgnored private var sessionGeneration: UInt64 = 0
+    @ObservationIgnored private var currentSlideHandler: (@MainActor (String?) -> Void)?
 
     var currentSlideID: String? { snapshot?.currentSlideID }
     var isVisible: Bool { snapshot?.isVisible == true }
@@ -76,17 +82,28 @@ final class TourControlService {
     init(transport: SessionControlTransport? = nil) {
         let resolvedTransport = transport ?? LocalSessionControlTransport()
         self.transport = resolvedTransport
-        resolvedTransport.setEventHandler { [weak self] event in
+        installTransportHandler()
+    }
+
+    private func installTransportHandler() {
+        let generation = sessionGeneration
+        transport.setEventHandler { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.handle(event)
+                guard let self, self.sessionGeneration == generation else { return }
+                self.handle(event)
             }
         }
     }
 
     func setConnectionEventHandler(
-        _ handler: (@Sendable (TourControlConnectionEvent) -> Void)?
+        _ handler: (@MainActor @Sendable (TourControlConnectionEvent) -> Void)?
     ) {
         connectionEventHandler = handler
+    }
+
+    func setCurrentSlideHandler(_ handler: (@MainActor (String?) -> Void)?) {
+        currentSlideHandler = handler
+        handler?(currentSlideID)
     }
 
     func configureSession(
@@ -107,8 +124,29 @@ final class TourControlService {
         )
     }
 
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {
+        transport.configureGuideAuthentication(authentication)
+    }
+
+    func reportAudioReadiness(_ status: AudioReadinessStatus) {
+        guard role == .guest, localAudioReport.status != status else { return }
+        guard localAudioReport.revision < .max else {
+            report("Audio readiness revision exhausted. Leave and rejoin the room.")
+            return
+        }
+        localAudioReport = AudioReadinessPayload(status: status, revision: localAudioReport.revision + 1)
+        sendAudioReadiness()
+    }
+
+    private func sendAudioReadiness() {
+        guard role == .guest, guestControlConnected else { return }
+        transport.send(kind: .audioStatus, payload: localAudioReport.encode())
+    }
+
     /// Synchronous and throwing (FND-2): a lane that cannot listen fails the guide's startup here.
     func startGuide(deckID: UUID, slides: [TourAssetDescriptor] = []) throws {
+        sessionGeneration &+= 1
+        installTransportHandler()
         role = .guide
         self.slides = Self.orderedSlides(slides)
         snapshot = PresentationSnapshotPayload(
@@ -119,10 +157,13 @@ final class TourControlService {
             effectiveAtMilliseconds: Self.nowMilliseconds()
         )
         visualFocusSnapshot = VisualFocusSnapshotPayload(stateVersion: 0, mode: .slides)
+        currentSlideHandler?(currentSlideID)
         try transport.startGuide()
     }
 
     func startGuest(hostIP: String) {
+        sessionGeneration &+= 1
+        installTransportHandler()
         role = .guest
         transport.hostIP = hostIP
         transport.startGuest()
@@ -155,6 +196,7 @@ final class TourControlService {
     func acceptTourPack(_ manifest: TourPackManifestPayload) {
         guard role == .guest else { return }
         slides = Self.orderedSlides(manifest.assets)
+        currentSlideHandler?(currentSlideID)
     }
 
     func showSlide(assetID: String? = nil) throws {
@@ -249,7 +291,11 @@ final class TourControlService {
     }
 
     func stop() {
+        sessionGeneration &+= 1
         transport.stop()
+        guestControlConnected = false
+        guestAudioReports.removeAll()
+        audioReadyGuestCount = 0
         role = nil
         sessionID = nil
         snapshot = nil
@@ -257,13 +303,16 @@ final class TourControlService {
         bearingSnapshot = nil
         visualFocusSnapshot = nil
         slides = []
+        currentSlideHandler?(nil)
         lastError = nil
         connectedGuestIDs.removeAll()
         connectedGuestCount = 0
+        installTransportHandler()
     }
 
     func clearSession() {
         stop()
+        localAudioReport = AudioReadinessPayload(status: .waiting, revision: 0)
         transport.clearSession()
     }
 
@@ -289,6 +338,7 @@ final class TourControlService {
             effectiveAtMilliseconds: Self.nowMilliseconds()
         )
         snapshot = next
+        currentSlideHandler?(currentSlideID)
         transport.send(kind: .presentationSnapshot, payload: try next.encode())
     }
 
@@ -307,15 +357,21 @@ final class TourControlService {
     }
 
     private func handle(_ event: SessionControlEvent) {
+        guard role != nil else { return }
         switch event {
         case .connected:
+            guestControlConnected = true
             connectionEventHandler?(.connected)
+            sendAudioReadiness()
         case .disconnected:
+            guestControlConnected = false
             connectionEventHandler?(.disconnected)
         case let .guestJoined(participant):
             guard role == .guide else { return }
             // Set semantics: a re-registering participant arrives as disconnect + join and counts once.
             connectedGuestIDs.insert(participant.participantID)
+            guestAudioReports.removeValue(forKey: participant.participantID)
+            audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
             connectedGuestCount = connectedGuestIDs.count
             do {
                 if let snapshot {
@@ -334,6 +390,17 @@ final class TourControlService {
                 report(error)
             }
         case let .envelopeReceived(envelope):
+            guard envelope.sessionID == sessionID else { return }
+            if role == .guide, envelope.kind == .audioStatus {
+                guard connectedGuestIDs.contains(envelope.senderID) else { return }
+                do {
+                    let report = try AudioReadinessPayload.decode(envelope.payload)
+                    if let previous = guestAudioReports[envelope.senderID], report.revision <= previous.revision { return }
+                    guestAudioReports[envelope.senderID] = report
+                    audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
+                } catch { self.report(error) }
+                return
+            }
             guard role == .guest else { return }
             do {
                 switch envelope.kind {
@@ -343,6 +410,7 @@ final class TourControlService {
                     let incoming = try PresentationSnapshotPayload.decode(envelope.payload)
                     guard snapshot == nil || incoming.stateVersion > snapshot!.stateVersion else { return }
                     snapshot = incoming
+                    currentSlideHandler?(currentSlideID)
                 case .targetSnapshot:
                     let incoming = try TargetSnapshotPayload.decode(envelope.payload)
                     guard targetSnapshot == nil || incoming.stateVersion > targetSnapshot!.stateVersion else { return }
@@ -365,6 +433,8 @@ final class TourControlService {
             }
         case let .guestDisconnected(participantID):
             connectedGuestIDs.remove(participantID)
+            guestAudioReports.removeValue(forKey: participantID)
+            audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
             connectedGuestCount = connectedGuestIDs.count
         case let .versionMismatch(remoteMajor, localMajor):
             let message = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)

@@ -101,23 +101,31 @@ struct ChannelDetailView: View {
 
     private func guideView(_ channel: Channel) -> some View {
         VStack(spacing: 0) {
-            sessionHeader(channel, accent: .red, status: "LIVE")
-            roomAccessControls
-            Divider()
-            featurePicker
-                .padding(.horizontal)
-                .padding(.top, 8)
-            Group {
-                switch selectedFeature {
-                case .slides: guideSlideStage
-                case .map: guideMapStage
-                case .pointer: guidePointerStage
+            ScrollView {
+                VStack(spacing: 0) {
+                    sessionHeader(channel, accent: .red, status: audioStatusText)
+                    audioRecoveryControls
+                    guideIdentityDetails
+                    roomAccessControls
+                    Divider()
+                    featurePicker
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    Group {
+                        switch selectedFeature {
+                        case .slides: guideSlideStage
+                        case .map: guideMapStage
+                        case .pointer: guidePointerStage
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 280)
                 }
             }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("guideTourControls")
             Divider()
             HStack {
-                Label("\(service.connectedGuestCount) connected · \(service.listenerCount) audio", systemImage: "person.2.fill")
+                Label("\(service.connectedGuestCount) connected · \(service.tourControlService.audioReadyGuestCount) audio ready", systemImage: "person.2.fill")
                     .foregroundStyle(.secondary)
                 if !presentation.slides.isEmpty {
                     Text("\(service.assetTransferService.readyParticipantIDs.count) ready")
@@ -157,6 +165,7 @@ struct ChannelDetailView: View {
             } else {
                 if let url = guideCurrentSlideURL {
                     SlideImage(url: url)
+                        .frame(height: 280)
                         .padding(.horizontal)
                 }
 
@@ -280,6 +289,8 @@ struct ChannelDetailView: View {
     private func guestView(_ channel: Channel) -> some View {
         VStack(spacing: 0) {
             sessionHeader(channel, accent: .blue, status: guestConnectionStatus)
+            audioRecoveryControls
+            guideIdentityDetails
             Divider()
             featurePicker
                 .padding(.horizontal)
@@ -312,7 +323,7 @@ struct ChannelDetailView: View {
                     }
                 } else {
                     ContentUnavailableView(
-                        "Listening to the guide",
+                        service.audioRuntimeState == .running ? "Listening to the guide" : "Connected to the tour",
                         systemImage: "headphones",
                         description: Text("Slides and the shared destination appear here when the guide presents them.")
                     )
@@ -361,13 +372,18 @@ struct ChannelDetailView: View {
             Image(systemName: service.isCreator ? "megaphone.fill" : "speaker.wave.3.fill")
                 .font(.title2)
                 .foregroundStyle(accent)
-                .symbolEffect(.variableColor, isActive: service.listenState != .idle)
+                .symbolEffect(.variableColor, isActive: service.audioRuntimeState == .running)
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name).font(.headline)
                 Text(status)
                     .font(.caption.bold())
                     .foregroundStyle(service.connectionState == .failed ? Color.red : accent)
                     .fixedSize(horizontal: false, vertical: true)
+                if !service.isCreator {
+                    Text(guestRouteLabel)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("guestTransportRoute")
+                }
             }
             Spacer()
             if !service.isCreator {
@@ -385,7 +401,62 @@ struct ChannelDetailView: View {
     }
 
     private var guestConnectionStatus: String {
-        service.connectionState.guestStatusText(error: service.tourFeatureError)
+        service.connectionState == .connected ? audioStatusText
+            : service.connectionState.guestStatusText(error: service.tourFeatureError)
+    }
+
+    private var guestRouteLabel: String {
+        switch service.guestRoute?.transport {
+        case .bluetooth: "Bluetooth"
+        case .wifiAware: "Wi-Fi Aware"
+        case .localLAN, nil: "Local network"
+        }
+    }
+
+    private var audioStatusText: String {
+        switch service.audioRuntimeState {
+        case .idle: "AUDIO OFF"
+        case .starting: service.isCreator ? "STARTING MICROPHONE" : "WAITING FOR AUDIO"
+        case .running: service.isCreator ? "LIVE" : "LISTENING"
+        case .interrupted: "AUDIO INTERRUPTED"
+        case .failed: "AUDIO UNAVAILABLE"
+        }
+    }
+
+    @ViewBuilder
+    private var guideIdentityDetails: some View {
+        if let fingerprint = service.guideKeyFingerprint {
+            DisclosureGroup("Guide identity") {
+                Text(fingerprint).font(.caption.monospaced())
+                    .accessibilityIdentifier("guideKeyFingerprint")
+                Text(service.isCreator ? "Guests can compare this session fingerprint with you."
+                     : "The session key is pinned. The guide’s identity is unverified until you compare this fingerprint with them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var audioRecoveryControls: some View {
+        if service.audioRuntimeState == .failed || service.audioRuntimeState == .interrupted {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(service.audioRuntimeError ?? "Audio was interrupted. Return to the tour to resume.")
+                    .font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("audioRuntimeError")
+                Button(service.isCreator ? "Restart Microphone" : "Retry Audio") {
+                    if service.isCreator { service.restartMicrophone() }
+                    else { service.retryAudio() }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("retryTourAudio")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
     }
 
     private var featurePicker: some View {
@@ -419,6 +490,7 @@ struct ChannelDetailView: View {
                     pendingTargetCoordinate = coordinate
                 }
                 .id(configuration.styleJSON)
+                .frame(minHeight: 300)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal)
                 Text("Long-press the map to place or move the guest target.")

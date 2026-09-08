@@ -51,22 +51,28 @@ private class LocalAuthenticatedSessionTransport(
         val displayName: String,
         val platform: ParticipantPlatform,
         val credential: SessionCredential,
+        val authentication: SessionGuideAuthentication,
     )
 
     private data class ClientConnection(
         val socket: Socket,
         val writer: BoundedSocketFrameWriter,
         val participant: ParticipantSession,
+        val participantLease: ParticipantConnectionBudget.Lease,
+        val eventTarget: ((SessionControlEvent) -> Unit)?,
     )
 
     private val active = AtomicBoolean(false)
     private val sequence = AtomicLong(1)
     private val runEpoch = AtomicLong(0)
     private val clients = CopyOnWriteArrayList<ClientConnection>()
+    private val participantBudget = ParticipantConnectionBudget()
     /** Accepted-but-unauthenticated connections held at once (RSK-1, ADR-047). */
     private val handshakeSlots = Semaphore(MAXIMUM_PENDING_HANDSHAKES)
 
     @Volatile private var configuration: Configuration? = null
+    private var authentication: SessionGuideAuthentication = SessionGuideAuthentication.Unconfigured
+    fun configureGuideAuthentication(value: SessionGuideAuthentication) { authentication = value }
     @Volatile private var eventHandler: ((SessionControlEvent) -> Unit)? = null
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var clientSocket: Socket? = null
@@ -85,7 +91,7 @@ private class LocalAuthenticatedSessionTransport(
         platform: ParticipantPlatform,
         credential: SessionCredential,
     ) {
-        configuration = Configuration(sessionID, participantID, displayName, platform, credential)
+        configuration = Configuration(sessionID, participantID, displayName, platform, credential, authentication)
     }
 
     fun setEventHandler(handler: ((SessionControlEvent) -> Unit)?) {
@@ -100,6 +106,7 @@ private class LocalAuthenticatedSessionTransport(
     fun startGuide() {
         val configured = configuration
             ?: throw IllegalStateException("Session: session is not configured")
+        configured.authentication.requireGuide()
 
         active.set(false)
         closeSockets()
@@ -118,6 +125,7 @@ private class LocalAuthenticatedSessionTransport(
         val inboundOpener = SessionFrameOpener(configured.credential)
         val epoch = runEpoch.incrementAndGet()
         active.set(true)
+        val runEventHandler = eventHandler
 
         daemonThread("session-control-accept") {
             while (isRunActive(epoch)) {
@@ -125,7 +133,7 @@ private class LocalAuthenticatedSessionTransport(
                     server.accept().apply { tcpNoDelay = true }
                 } catch (error: Exception) {
                     if (isRunActive(epoch)) {
-                        emit(SessionControlEvent.Failed("Session: accept failed: ${error.message}"))
+                        runEventHandler?.invoke(SessionControlEvent.Failed("Session: accept failed: ${error.message}"))
                     }
                     break
                 }
@@ -135,7 +143,7 @@ private class LocalAuthenticatedSessionTransport(
                     continue
                 }
                 daemonThread("session-control-guest") {
-                    handleGuest(socket, configured, epoch, inboundOpener)
+                    handleGuest(socket, configured, epoch, inboundOpener, runEventHandler)
                 }
             }
         }
@@ -147,6 +155,7 @@ private class LocalAuthenticatedSessionTransport(
             emit(SessionControlEvent.Failed("Session: session is not configured"))
             return
         }
+        configured.authentication.requireGuest()
         val host = hostIP
         if (host == null) {
             emit(SessionControlEvent.Failed("Session: guide host IP is missing"))
@@ -161,13 +170,19 @@ private class LocalAuthenticatedSessionTransport(
         val inboundOpener = SessionFrameOpener(configured.credential)
         val epoch = runEpoch.incrementAndGet()
         active.set(true)
+        val runEventHandler = eventHandler
+        val runSocketFactory = guestSocketFactory
+        fun emit(event: SessionControlEvent) { if (isRunActive(epoch)) runEventHandler?.invoke(event) }
         daemonThread("session-control-guide") {
-            val socket = guestSocketFactory.createSocket()
+            var openedSocket: Socket? = null
             var authenticated = false
             try {
+                val socket = runSocketFactory.createSocket()
+                openedSocket = socket
+                if (!installGuestSocket(socket, epoch)) return@daemonThread
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 5_000)
-                clientSocket = socket
+                if (!isRunActive(epoch)) return@daemonThread
                 val output = socket.getOutputStream()
 
                 socket.soTimeout = 5_000
@@ -186,13 +201,13 @@ private class LocalAuthenticatedSessionTransport(
                         emit(SessionControlEvent.Disconnected)
                     }
                 }
-                guestWriter = writer
+                if (!installGuestWriter(socket, writer, epoch)) return@daemonThread
                 authenticated = true
                 emit(SessionControlEvent.Connected)
 
                 val input = socket.getInputStream()
                 while (isRunActive(epoch)) {
-                    val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener) ?: continue
+                    val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener, configured.authentication) ?: continue
                     if (
                         envelope.sessionId != configured.sessionID ||
                         envelope.senderId != guideID ||
@@ -215,6 +230,8 @@ private class LocalAuthenticatedSessionTransport(
                         ),
                     )
                 }
+            } catch (error: GuideAuthenticationException) {
+                if (isRunActive(epoch)) emit(SessionControlEvent.AuthenticationFailed(requireNotNull(error.message)))
             } catch (error: CredentialRejectedException) {
                 if (isRunActive(epoch)) {
                     emit(SessionControlEvent.CredentialRejected("Session: the tour code was rejected by the guide"))
@@ -224,9 +241,8 @@ private class LocalAuthenticatedSessionTransport(
                     emit(SessionControlEvent.Failed("Session: guide connection failed: ${error.message}"))
                 }
             } finally {
-                val wasActive = isRunActive(epoch) && clientSocket === socket
-                clearClient(socket)
-                socket.closeQuietly()
+                val wasActive = openedSocket != null && isRunActive(epoch) && clientSocket === openedSocket
+                openedSocket?.let { socket -> clearClient(socket); socket.closeQuietly() }
                 if (wasActive && authenticated) emit(SessionControlEvent.Disconnected)
             }
         }
@@ -298,7 +314,9 @@ private class LocalAuthenticatedSessionTransport(
             return null
         }
         val envelope = try {
-            sealer.seal(logicalEnvelope, outboundStreamID).encode()
+            val sealed = sealer.seal(logicalEnvelope, outboundStreamID)
+            if (configured.authentication is SessionGuideAuthentication.Guest) sealed.encode()
+            else configured.authentication.encodeGuide(sealed)
         } catch (error: Exception) {
             emit(SessionControlEvent.Failed("Session: envelope failed: ${error.message}"))
             return null
@@ -321,6 +339,7 @@ private class LocalAuthenticatedSessionTransport(
     fun clearSession() {
         stop()
         configuration = null
+        authentication = SessionGuideAuthentication.Unconfigured
         outboundSealer = null
         outboundStreamID = UUID.randomUUID()
         sequence.set(1)
@@ -331,14 +350,19 @@ private class LocalAuthenticatedSessionTransport(
         configured: Configuration,
         epoch: Long,
         inboundOpener: SessionFrameOpener,
+        runEventHandler: ((SessionControlEvent) -> Unit)?,
     ) {
+        fun emit(event: SessionControlEvent) { if (isRunActive(epoch)) runEventHandler?.invoke(event) }
         var client: ClientConnection? = null
+        var participantLease: ParticipantConnectionBudget.Lease? = null
         try {
             // The slot is held only while the handshake is pending: released exactly once on every
             // exit after the accept loop's tryAcquire, including a socket already closed here.
             val authenticated = try {
                 socket.soTimeout = 5_000
-                authenticateGuest(socket, configured)
+                authenticateGuest(socket, configured) { participantID ->
+                    participantLease = reserveParticipant(participantID, epoch)
+                }
             } finally {
                 handshakeSlots.release()
             }
@@ -353,9 +377,6 @@ private class LocalAuthenticatedSessionTransport(
                 role = SessionRole.GUEST,
                 platform = hello.platform,
             )
-            clients.firstOrNull { it.participant.participantId == participant.participantId }?.let {
-                removeClient(it)
-            }
             val writer = BoundedSocketFrameWriter(
                 socket = socket,
                 generation = epoch,
@@ -368,13 +389,13 @@ private class LocalAuthenticatedSessionTransport(
                     it.socket === failedSocket && it.writer.generation == failedEpoch
                 }?.let(::removeClient)
             }
-            client = ClientConnection(socket, writer, participant)
-            clients += client
-            emit(SessionControlEvent.GuestJoined(participant))
+            client = ClientConnection(socket, writer, participant, requireNotNull(participantLease), runEventHandler)
+            registerClient(client, epoch)
 
             val input = socket.getInputStream()
             while (isRunActive(epoch)) {
                 val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener) ?: continue
+                if (!isRunActive(epoch)) return
                 if (
                     envelope.sessionId != configured.sessionID ||
                     envelope.senderId != participant.participantId ||
@@ -407,16 +428,48 @@ private class LocalAuthenticatedSessionTransport(
             } else {
                 socket.closeQuietly()
             }
+            participantLease?.close()
         }
     }
 
-    private fun removeClient(client: ClientConnection) {
-        if (!clients.remove(client)) return
-        client.writer.close()
-        emit(SessionControlEvent.GuestDisconnected(client.participant.participantId))
+    @Synchronized private fun reserveParticipant(participantID: UUID, epoch: Long): ParticipantConnectionBudget.Lease {
+        check(isRunActive(epoch)) { "Session ended" }
+        return checkNotNull(participantBudget.reserve(participantID)) { "Session participant capacity reached (30)" }
     }
 
-    private fun clearClient(socket: Socket) {
+    @Synchronized private fun registerClient(client: ClientConnection, epoch: Long) {
+        if (!isRunActive(epoch)) {
+            client.writer.close()
+            client.participantLease.close()
+            return
+        }
+        clients.firstOrNull { it.participant.participantId == client.participant.participantId }?.let(::removeClient)
+        clients += client
+        client.eventTarget?.invoke(SessionControlEvent.GuestJoined(client.participant))
+    }
+
+    @Synchronized private fun removeClient(client: ClientConnection) {
+        if (!clients.remove(client)) return
+        client.writer.close()
+        client.participantLease.close()
+        if (isRunActive(client.writer.generation)) {
+            client.eventTarget?.invoke(SessionControlEvent.GuestDisconnected(client.participant.participantId))
+        }
+    }
+
+    @Synchronized private fun installGuestSocket(socket: Socket, epoch: Long): Boolean {
+        if (!isRunActive(epoch)) { socket.closeQuietly(); return false }
+        clientSocket = socket
+        return true
+    }
+
+    @Synchronized private fun installGuestWriter(socket: Socket, writer: BoundedSocketFrameWriter, epoch: Long): Boolean {
+        if (!isRunActive(epoch) || clientSocket !== socket) { writer.close(); return false }
+        guestWriter = writer
+        return true
+    }
+
+    @Synchronized private fun clearClient(socket: Socket) {
         if (clientSocket === socket) {
             guestWriter?.close()
             guestWriter = null
@@ -424,7 +477,7 @@ private class LocalAuthenticatedSessionTransport(
         }
     }
 
-    private fun closeSockets() {
+    @Synchronized private fun closeSockets() {
         serverSocket?.closeQuietly()
         serverSocket = null
         clientSocket?.closeQuietly()
@@ -433,6 +486,7 @@ private class LocalAuthenticatedSessionTransport(
         guestWriter = null
         clients.forEach { it.writer.close() }
         clients.clear()
+        participantBudget.clear()
     }
 
     private fun emit(event: SessionControlEvent) {
@@ -444,6 +498,7 @@ private class LocalAuthenticatedSessionTransport(
     private fun authenticateGuest(
         socket: Socket,
         configured: Configuration,
+        reserveParticipant: (UUID) -> Unit,
     ): Pair<SessionEnvelope, HelloPayload> {
         val output = socket.getOutputStream()
         val challengeNonce = SessionAuthenticator.randomNonce()
@@ -459,7 +514,7 @@ private class LocalAuthenticatedSessionTransport(
         val guideSealer = SessionFrameSealer(configured.credential)
         val guestOpener = SessionFrameOpener(configured.credential)
         val guideStreamID = UUID.randomUUID()
-        writeFrame(output, guideSealer.seal(challengeEnvelope, guideStreamID).encode())
+        writeFrame(output, configured.authentication.encodeGuide(guideSealer.seal(challengeEnvelope, guideStreamID)))
         val envelope = openFrame(
             readFrame(socket.getInputStream(), HELLO_MAXIMUM_SIZE),
             guestOpener,
@@ -491,6 +546,7 @@ private class LocalAuthenticatedSessionTransport(
         if (!SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof)) {
             throw IllegalArgumentException("tour code proof was rejected")
         }
+        reserveParticipant(envelope.senderId)
         val guideNonce = SessionAuthenticator.randomNonce()
         val guideProof = SessionAuthenticator.guideProof(
             configured.credential,
@@ -510,7 +566,7 @@ private class LocalAuthenticatedSessionTransport(
             senderId = configured.participantID,
             payload = WelcomePayload(applicationLane, guideNonce, guideProof).encode(),
         )
-        writeFrame(output, guideSealer.seal(welcome, guideStreamID).encode())
+        writeFrame(output, configured.authentication.encodeGuide(guideSealer.seal(welcome, guideStreamID)))
         return envelope to hello
     }
 
@@ -525,6 +581,7 @@ private class LocalAuthenticatedSessionTransport(
         val challengeEnvelope = openHandshakeFrame(
             readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
             guideOpener,
+            configured.authentication,
         ) ?: throw IllegalArgumentException("duplicate authentication challenge")
         if (
             challengeEnvelope.sessionId != configured.sessionID ||
@@ -574,6 +631,7 @@ private class LocalAuthenticatedSessionTransport(
         val welcomeEnvelope = openHandshakeFrame(
             readFrame(socket.getInputStream(), MAXIMUM_FRAME_SIZE),
             guideOpener,
+            configured.authentication,
         ) ?: throw IllegalArgumentException("duplicate welcome envelope")
         if (
             welcomeEnvelope.sessionId != configured.sessionID ||
@@ -603,16 +661,16 @@ private class LocalAuthenticatedSessionTransport(
         return challengeEnvelope.senderId
     }
 
-    private fun openFrame(frame: ByteArray, opener: SessionFrameOpener): SessionEnvelope? =
-        when (val result = opener.open(SealedSessionEnvelope.decode(frame))) {
+    private fun openFrame(frame: ByteArray, opener: SessionFrameOpener, guide: SessionGuideAuthentication? = null): SessionEnvelope? =
+        when (val result = opener.open(guide?.decodeGuide(frame) ?: SealedSessionEnvelope.decode(frame))) {
             is SessionFrameOpenResult.Opened -> result.envelope
             is SessionFrameOpenResult.Duplicate -> null
         }
 
     /** Guest-side handshake open: a wrong tour code fails the AEAD tag on the guide's sealed frame. */
-    private fun openHandshakeFrame(frame: ByteArray, opener: SessionFrameOpener): SessionEnvelope? =
+    private fun openHandshakeFrame(frame: ByteArray, opener: SessionFrameOpener, guide: SessionGuideAuthentication): SessionEnvelope? =
         try {
-            openFrame(frame, opener)
+            openFrame(frame, opener, guide)
         } catch (error: SessionFrameAuthenticationException) {
             throw CredentialRejectedException("tour code was rejected: ${error.message}")
         }
@@ -672,6 +730,7 @@ class LocalSessionControlTransport(
     port: Int = 50_001,
 ) : SessionControlTransport {
     private val transport = LocalAuthenticatedSessionTransport(port, SessionLane.CONTROL)
+    override fun configureGuideAuthentication(authentication: SessionGuideAuthentication) = transport.configureGuideAuthentication(authentication)
 
     override val isActive: Boolean get() = transport.isActive
     override var hostIP: String?
@@ -706,6 +765,7 @@ class LocalSessionAssetTransport(
     port: Int = 50_002,
 ) : SessionAssetTransport {
     private val transport = LocalAuthenticatedSessionTransport(port, SessionLane.ASSET)
+    override fun configureGuideAuthentication(authentication: SessionGuideAuthentication) = transport.configureGuideAuthentication(authentication)
 
     override val isActive: Boolean get() = transport.isActive
     override var hostIP: String?
@@ -737,6 +797,7 @@ class LocalSessionAssetTransport(
 }
 
 private fun SessionControlEvent.toAssetEvent(): SessionAssetEvent = when (this) {
+    is SessionControlEvent.AuthenticationFailed -> SessionAssetEvent.AuthenticationFailed(message)
     SessionControlEvent.Connected -> SessionAssetEvent.Connected
     is SessionControlEvent.GuestJoined -> SessionAssetEvent.GuestJoined(participant)
     is SessionControlEvent.EnvelopeReceived -> SessionAssetEvent.EnvelopeReceived(envelope)

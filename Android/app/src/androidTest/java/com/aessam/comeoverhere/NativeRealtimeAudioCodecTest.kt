@@ -135,6 +135,7 @@ class NativeRealtimeAudioCodecTest {
         val joined = CountDownLatch(1)
         val audioReceived = CountDownLatch(1)
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -148,6 +149,7 @@ class NativeRealtimeAudioCodecTest {
             guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
 
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),

@@ -24,7 +24,7 @@ class SignedGuideFrame internal constructor(bytes: ByteArray) {
     }
 }
 
-class GuideFrameSigner(private val sessionId: UUID, private val guideId: UUID) {
+class GuideFrameSigner(val sessionId: UUID, val guideId: UUID) {
     private val key = KeyPairGenerator.getInstance("EC").apply {
         initialize(ECGenParameterSpec("secp256r1"))
     }.generateKeyPair()
@@ -45,6 +45,13 @@ class GuideFrameSigner(private val sessionId: UUID, private val guideId: UUID) {
             initSign(key.private); update(SignedGuideFrame.DOMAIN + body); sign()
         }
         return SignedGuideFrame(body + GuideSignatureEncoding.canonical(GuideSignatureEncoding.raw(der)))
+    }
+
+    internal fun admissionProof(transcript: ByteArray, credentials: ByteArray): ByteArray {
+        val der = Signature.getInstance("SHA256withECDSA").run {
+            initSign(key.private); update(RoomAdmissionV2.PROOF_DOMAIN + transcript + credentials); sign()
+        }
+        return GuideSignatureEncoding.canonical(GuideSignatureEncoding.raw(der))
     }
 }
 
@@ -71,6 +78,14 @@ class GuideFrameVerifier(pinnedPublicKey: ByteArray, private val sessionId: UUID
         val sealed = SealedSessionEnvelope.decode(body.copyOfRange(8, body.size))
         require(sealed.sessionId == sessionId && sealed.senderId == guideId) { "Wrong guide/session" }
         return sealed
+    }
+
+    internal fun verifyAdmissionProof(raw: ByteArray, transcript: ByteArray, credentials: ByteArray) {
+        require(GuideSignatureEncoding.canonical(raw).contentEquals(raw)) { "Noncanonical admission signature" }
+        require(Signature.getInstance("SHA256withECDSA").run {
+            initVerify(key); update(RoomAdmissionV2.PROOF_DOMAIN + transcript + credentials)
+            verify(GuideSignatureEncoding.der(raw))
+        }) { "Invalid admission signature" }
     }
 }
 

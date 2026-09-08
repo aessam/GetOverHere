@@ -120,6 +120,9 @@ public enum TourSessionFixtures {
         case .visualFocusSnapshot:
             let focus = try VisualFocusSnapshotPayload.decode(envelope.payload)
             fields += ["stateVersion=\(focus.stateVersion)", "mode=\(focus.mode.rawValue)"]
+        case .audioStatus:
+            let status = try AudioReadinessPayload.decode(envelope.payload)
+            fields += ["status=\(status.status.rawValue)", "revision=\(status.revision)"]
         case .assetManifest:
             let manifest = try AssetManifestPayload.decode(envelope.payload)
             let assets = manifest.assets.map {

@@ -1,13 +1,14 @@
 package com.aessam.comeoverhere
 
 import com.aessam.comeoverhere.core.NearbyByteConnection
+import com.aessam.comeoverhere.core.NearbyConnectionBudget
 import com.aessam.comeoverhere.core.NearbySocketBridge
 import com.aessam.comeoverhere.core.NearbyTCPConnection
 import com.aessam.comeoverhere.core.RoomAdmissionTransport
 import com.aessam.toursession.BluetoothRoomRecord
 import com.aessam.toursession.NearbyLaneRequest
 import com.aessam.toursession.RoomAccessPolicy
-import com.aessam.toursession.RoomAdmission
+import com.aessam.toursession.RoomAdmissionV2 as RoomAdmission
 import java.io.DataInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -32,6 +33,7 @@ class NearbySocketBridgeTest {
     @Test(timeout = 10_000) fun abandonedAdmissionDrainHasABoundedLifetime() = checkAdmissionDrain(false)
 
     private fun checkAdmissionDrain(peerCloses: Boolean) {
+        val budget = NearbyConnectionBudget()
         val localEOF = CountDownLatch(1)
         val remoteClosed = CountDownLatch(1)
         val reply = ByteArray(RoomAdmission.CHALLENGE_SIZE + RoomAdmission.REPLY_SIZE) { 42 }
@@ -56,16 +58,19 @@ class NearbySocketBridgeTest {
             override val output = ByteArrayOutputStream()
             override fun close() { remoteClosed.countDown() }
         }
-        NearbySocketBridge(localConnect = { local }).use { bridge ->
+        NearbySocketBridge(budget, localConnect = { local }).use { bridge ->
             bridge.accept(remote) { record }
             assertTrue(localEOF.await(2, TimeUnit.SECONDS))
             // Native writes can be queued, unlike TCP's graceful FIN. Local EOF must not
             // cancel the native socket while the guest is still consuming its final reply.
             assertFalse("Local EOF discarded the pending native reply", remoteClosed.await(200, TimeUnit.MILLISECONDS))
             assertEquals(reply.size + 1, remote.output.size())
+            assertEquals(1, budget.snapshot().bootstrap)
+            assertEquals(0, budget.snapshot().persistent)
             if (peerCloses) remote.close()
             else assertTrue("Abandoned admission retained a native socket", remoteClosed.await(6, TimeUnit.SECONDS))
         }
+        assertEquals(0, budget.snapshot().bootstrap)
     }
 
     /** Actual TCP pair stands in only for the radio byte connection, not the protocol or admission. */
@@ -91,7 +96,7 @@ class NearbySocketBridgeTest {
             NearbyTCPConnection(Socket("127.0.0.1", 56013))
         })
         try {
-            admission.start(room, "23456789AB")
+            admission.start(room, "23456789AB", com.aessam.toursession.GuideFrameSigner(room, record.guideID))
             fun join(code: String?): String {
                 val (guest, guide) = pair()
                 bridge.accept(guide) { record }
@@ -100,9 +105,9 @@ class NearbySocketBridgeTest {
                     assertEquals(0, guest.input.read())
                     val input = DataInputStream(guest.input)
                     val challenge = ByteArray(RoomAdmission.CHALLENGE_SIZE).also(input::readFully)
-                    val handshake = RoomAdmission.Guest(challenge, room, code)
+                    val handshake = RoomAdmission.Guest(challenge, room, record.guideID, code)
                     guest.output.write(handshake.request)
-                    return handshake.open(ByteArray(RoomAdmission.REPLY_SIZE).also(input::readFully))
+                    return handshake.open(ByteArray(RoomAdmission.REPLY_SIZE).also(input::readFully)).mediaSecret
                 }
             }
             assertEquals("23456789AB", join(null))

@@ -5,6 +5,31 @@ import TourSessionCore
 
 @Suite("Presentation service", .serialized)
 struct PresentationServiceTests {
+    @Test("Queued old control failure and foreign-room snapshots cannot affect a replacement run")
+    @MainActor
+    func queuedControlEventsCannotCrossSessions() async throws {
+        let transport = RecordingControlTransport()
+        let service = TourControlService(transport: transport)
+        var failures: [String] = []
+        service.setConnectionEventHandler { if case let .credentialRejected(message) = $0 { failures.append(message) } }
+        let oldSession = UUID(), newSession = UUID()
+        service.configureSession(sessionID: oldSession, participantID: UUID(), displayName: "Guest", platform: .iOS,
+            credential: try presentationCredential(oldSession))
+        service.startGuest(hostIP: "127.0.0.1")
+        transport.emitWithoutYield(.credentialRejected("old run"))
+        service.configureSession(sessionID: newSession, participantID: UUID(), displayName: "Guest", platform: .iOS,
+            credential: try presentationCredential(newSession))
+        service.startGuest(hostIP: "127.0.0.1")
+        for _ in 0..<100 { await Task.yield() }
+        #expect(failures.isEmpty)
+        try await transport.emitSnapshot(PresentationSnapshotPayload(stateVersion: 999, deckID: UUID(),
+            currentSlideID: "foreign", isVisible: true, effectiveAtMilliseconds: 0), sessionID: oldSession, guideID: UUID())
+        #expect(service.snapshot == nil)
+        await transport.emit(.credentialRejected("current run"))
+        #expect(failures == ["current run"])
+        service.stop()
+    }
+
     @Test("Guide late join restores presentation, target pin, and pointer snapshots")
     @MainActor
     func guideNavigationAndLateJoin() async throws {
@@ -75,6 +100,7 @@ struct PresentationServiceTests {
     func guestRejectsStaleSnapshot() async throws {
         let transport = RecordingControlTransport()
         let service = TourControlService(transport: transport)
+        var slidePriorities: [String?] = []
         let sessionID = UUID()
         let guideID = UUID()
         let deckID = UUID()
@@ -87,6 +113,7 @@ struct PresentationServiceTests {
             credential: try presentationCredential(sessionID)
         )
         service.startGuest(hostIP: "127.0.0.1")
+        service.setCurrentSlideHandler { slidePriorities.append($0) }
 
         try await transport.emitSnapshot(
             PresentationSnapshotPayload(
@@ -114,6 +141,7 @@ struct PresentationServiceTests {
         #expect(service.snapshot?.stateVersion == 4)
         #expect(service.currentSlideID == "court")
         #expect(service.isVisible)
+        #expect(slidePriorities == [nil, "court"], "A snapshot must prioritize the selected slide before its manifest arrives; stale snapshots must not reprioritize.")
 
         try await transport.emitTarget(
             try TargetSnapshotPayload(
@@ -154,6 +182,8 @@ struct PresentationServiceTests {
         )
         #expect(service.visualFocusSnapshot?.stateVersion == 6)
         #expect(service.visualFocusSnapshot?.mode == .pointer)
+        service.stop()
+        #expect(slidePriorities == [nil, "court", nil])
     }
 
     @Test("Guide publishes only selected target coordinates")
@@ -334,6 +364,7 @@ struct PresentationServiceTests {
 }
 
 private final class RecordingControlTransport: SessionControlTransport {
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) {}
     struct SentMessage {
         let kind: SessionMessageKind
         let payload: Data
@@ -376,6 +407,8 @@ private final class RecordingControlTransport: SessionControlTransport {
         eventHandler?(event)
         await Task.yield()
     }
+
+    func emitWithoutYield(_ event: SessionControlEvent) { eventHandler?(event) }
 
     func emitSnapshot(
         _ snapshot: PresentationSnapshotPayload,

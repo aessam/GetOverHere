@@ -15,14 +15,21 @@ import org.junit.Test
 
 class BluetoothRoomDiscoveryUITest {
     @get:Rule val compose = createComposeRule()
-    @Test fun discoveryOnlyRoomIsVisibleButCannotJoinUntilLANResolves() {
+    @Test fun discoveryOnlyRoomOffersConnectionActionThenJoinsWhenRouteResolves() {
         val room = mutableStateOf(Channel("room", "Nearby room", 0.0, "remote", roomAdmissionVersion = 1, isRoomLocked = false))
         var joined = false
-        compose.setContent { MaterialTheme { ChannelListView(listOf(room.value), "local") { joined = true } } }
+        var requestedConnection = false
+        compose.setContent { MaterialTheme {
+            ChannelListView(listOf(room.value), "local", onUnavailable = { requestedConnection = true }) { joined = true }
+        } }
         compose.onNodeWithText("Nearby room").assertIsDisplayed()
-        compose.onNodeWithText("Nearby via Bluetooth · Audio unavailable").assertIsDisplayed()
+        compose.onNodeWithText("Connection needed · Tap to connect").assertIsDisplayed()
         compose.onNodeWithText("Nearby room").performClick()
-        compose.runOnIdle { assertFalse(joined); room.value = room.value.copy(audioHostIP = "192.0.2.1") }
+        compose.runOnIdle {
+            assertFalse(joined)
+            assertTrue(requestedConnection)
+            room.value = room.value.copy(audioHostIP = "192.0.2.1")
+        }
         compose.onNodeWithText("Open room").assertIsDisplayed()
         compose.onNodeWithText("Nearby room").performClick()
         compose.runOnIdle { assertTrue(joined) }

@@ -1238,8 +1238,112 @@ Final frozen software gate passed all included stages, ending `Virtual-device ve
 
 User supplied complete Claude and ChatGPT reports self-dated 8 September 2026, then requested both reports/references and all completed/planned work in NextSession.md. Preserve the author dates as attribution, not new local experiment timestamps. Archived [Claude](Research-Claude-2026-09-08.md) and [ChatGPT](Research-ChatGPT-2026-09-08.md) report bodies and source lists, with provenance warnings. Replaced the active handoff with current C1–C13 completion inventory, verified benchmark/software/physical evidence, F1–F6 corrections, ordered A1–A4 plan, pending scope decisions, device/SDK paths and exact resume commands. Preserved every prior checkpoint and P0–P8 gate in [NextSession-History.md](NextSession-History.md). ADR-058 and lesson 84 record the research adjudication.
 
+## 2026-09-08 — A1/A2 implementation and software gates (ADR-059)
+
+User unavailable for physical testing; no physical phones accessed. Branch `fix/deep-dive-2026-09-02`, starting HEAD `aab2c1060c026fd628f44f12de50097ff50742f3`. Stable tag unchanged. Native sources were frozen during each compiling gate; UI `test-without-building` uses the frozen simulator artifact while later source work continues.
+
+```bash
+# Focused iOS audio/lifecycle: final pass, 37/37. Initial build-driver exit0/no-output diagnostic,
+# then one old Create-Tour Bluetooth opt-in expectation failed; updated to approved intent flow.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+# Logs: /tmp/GetOverHere-ios-audio-journey{,-retry,-final}.log
+
+# Complete iOS unit/native-socket suite: 129 tests /150 parameterized runs passed,1 physical-only skip.
+# Initial missing audioStatus enum case in asset diagnostic was fixed; retry result passed.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests
+# Logs: /tmp/GetOverHere-ios-signed-tour{,-retry}.log
+# Result: /tmp/GetOverHereSignatureIOS/Logs/Test/Test-GetOverHere-2026.09.08_08-59-18--0700.xcresult
+
+# Android from Android/: JVM tests + compile instrumentation APK; no instrumentation/device run yet.
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest
+# /tmp/GetOverHere-android-a2-readiness.log: BUILD SUCCESSFUL28s.
+# Lifecycle26/26, presentation8/8, signed native socket4/4; all suite failures0.
+
+# Final shared core gate (native CryptoKit/JVM, not simulated crypto): PASS.
+bash scripts/verify_core_parity.sh
+# /tmp/GetOverHere-capacity-topology-core-parity-final.log: Swift61/JVM64 tests,
+# GOR2+readiness parity, v1 admissions8, v2 admissions8+explicit rejection8, signatures16.
+
+# Public SDK catalogue check and SDK platform installation, no target/min runtime change:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' /Users/aessam/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --list --channel=3
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' /Users/aessam/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager 'platforms;android-37.2'
+# /tmp/GetOverHere-android-public-sdk-list.log; /tmp/GetOverHere-android-sdk37-install.log.
+# compileSdk release37/minor2 builds with existing AGP8.13.2; target36/min26 retained.
+```
+
+Compiler findings retained: readiness needed explicit cases in both CLI fixture descriptions and the Swift asset hash diagnostic; a new mutating-policy assertion needed a temporary outside the Swift Testing macro; one Android test used positional envelope parameters incorrectly. Corrected before the passing gates. The pure 30-listener topology tests qualify planning bounds only, not native relay forwarding or radio scale. System pairing, typed route/global-budget integration and full virtual-device acceptance are still in progress.
+
 Read-only evidence checks: `git status --short`, `git log -8 --oneline`, `git rev-parse HEAD 'stable-local-network^{}'`; `tail -n 10 /tmp/GetOverHere-aware-benchmark-final.log`; `tail -n 3 /tmp/GetOverHere-aware-benchmark-virtual-final.log`; source inspection of `NearbyTCPConnection` and `NearbySocketBridge`. Baseline implementation remains `7dca55f`, stable tag `59b0402`. Prior synthesis opened Apple DTS 787570, Android PublishConfig.Builder and Apple WWDC25 session 228, confirming background execution/suspension distinction, documented version-37.2 offloaded pairing, and realtime/voice performance controls. It did not rerun every external report citation or test device availability for the newer pairing API.
 
 No app/test/build-script changes, device/radio operations, new benchmarks, SDK installation, service restart, paid resources or physical qualification were performed for the documentation request. An initial combined move-and-add patch for NextSession.md was rejected because it targeted the same path twice; split into separate successful patches without discarding history. Documentation integrity checks and checkpoint result follow below.
 
 Documentation checks passed: local Markdown targets in the handoff/history/reports resolve; `git show HEAD:NextSession.md | tail -n +3 | diff - <(tail -n +5 NextSession-History.md)` returned no differences (all historical content retained after the replaced title/provenance header). Section checks found C1–C13, F1–F6 and A1–A4 in the active handoff and all report top-level sections. Scoped `awk` checks counted all 24 ChatGPT source entries and 14 Claude source-list entries. Re-read socket source confirms TCP_NODELAY and the 32-connection default. Existing tracked-file `git diff --check` passed. Archive Markdown hard-break whitespace is intentionally retained; the staged Markdown whitespace check ignores end-of-line spaces only. No new app test run is claimed for this documentation-only change.
+
+## 2026-09-08 — A3/A5 integrated routes, assets, linkage and virtual gate
+
+The documentation-only statements immediately above describe the prior archival request, not this implementation run. This run changes both apps and uses only host, iOS Simulator and Android emulator; physical devices are unavailable and were not accessed.
+
+Core asset scheduling gates: `/tmp/GetOverHere-assets-core-swift-all.log` passed 68 Swift tests in 11 suites; `/tmp/GetOverHere-assets-core-jvm.log` passed 71 JVM tests. Native integration adds typed route preflight/reuse/fallback, shared connection budgets, participant caps, asset round-robin/current-slide priority, chunk-boundary yielding, and generation ownership around queued reads, decoders and callbacks.
+
+Failures retained: `/tmp/GetOverHere-ios-a3-capacity-retry.log` and result `Test-GetOverHere-2026.09.08_09-19-35--0700.xcresult` ran 138 tests with two route-fixture port collisions after correcting an initial missing MainActor factory annotation. Fixed isolated fixture ports plus the real listener-cancellation/rebind barrier. Xcode's automatic simulator diagnostic child continued for minutes after tests; only identified collector PID82173 was terminated, not CoreSimulator services. The simulator scripts now use the documented `-collect-test-diagnostics never`; xcresult and normal test logs are retained.
+
+The first A5 compile required the optional MainActor callback property to be explicitly Observation-ignored and the actor-owned default connection budget to be initialized in its actor. `/tmp/GetOverHere-ios-a5-integrated-retry.log`, result `Test-GetOverHere-2026.09.08_10-11-29--0700.xcresult`, then passed150 of155 tests with four failures and one skip (181 passing/7 failing parameterized runs). Three failure categories were duplicate hosted-test core type identity; the remaining asset-failure fixture needed an active session because stale unconfigured failures are intentionally ignored. These are not physical radio results.
+
+```bash
+# Symbol diagnosis: both app and test originally defined the core error metadata/conformance.
+nm /tmp/GetOverHereSignatureIOS/Build/Products/Debug-iphonesimulator/GetOverHere.app/GetOverHere.debug.dylib | rg 'RoomAdmissionV2ErrorON|RoomAdmissionV2ErrorOs0G0AAMc'
+nm /tmp/GetOverHereSignatureIOS/Build/Products/Debug-iphonesimulator/GetOverHere.app/PlugIns/GetOverHereTests.xctest/GetOverHereTests | rg 'RoomAdmissionV2ErrorON|RoomAdmissionV2ErrorOs0G0AAMc'
+# After removing test-only package linkage, test symbols are undefined imports (U), resolved by the host.
+plutil -lint iOS/GetOverHere.xcodeproj/project.pbxproj
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -collect-test-diagnostics never -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/ChannelServiceLifecycleTests -only-testing:GetOverHereTests/NearbySocketBridgeTests -only-testing:GetOverHereTests/TourAssetTransferServiceTests
+# /tmp/GetOverHere-ios-single-core-linkage.log: 55 tests/64 runs passed, no failure or skip.
+# Result: Test-GetOverHere-2026.09.08_10-16-53--0700.xcresult.
+
+# Full frozen host/core/native/UI gate, simulator/emulator only.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereSignatureIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh
+# Attempts: /tmp/GetOverHere-final-virtual-20260908.log,
+# /tmp/GetOverHere-final-virtual-20260908-retry.log,
+# /tmp/GetOverHere-final-virtual-20260908-final.log.
+```
+
+The first two full attempts stopped at the unchanged static privacy gate: two iOS raw error descriptions, then three Android raw Throwable log arguments. Replaced them with type-only logs; actionable details remain in the UI. The third full gate passed all9 host stages, iOS UI, Android emulator and100 native CryptoKit↔Android signature/key/tamper checks. Swift core68/JVM core71; Android app JVM144 before later focused red tests replaced its XML; emulator35 cases =30 passes/5 capability or physical skips. iOS unit/native result `Test-GetOverHere-2026.09.08_10-56-10--0700.xcresult`:155 passes/1 physical skip,189 passing parameterized runs. UI result `Test-GetOverHere-2026.09.08_10-57-03--0700.xcresult`:4 passes/1 physical skip,7 passing runs. Final line: `Virtual-device verification passed; physical audio and radio gates remain separate`.
+
+Android A5's earlier integrated JVM/build command (`JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`, from Android/) passed144 tests; `/tmp/GetOverHere-android-a5-integrated.log`. Initial emulator navigation exposed a clipped empty-map import action; the scroll fix passed the three-case focused rerun `/tmp/GetOverHere-android-a5-navigation.log`, then the full gate above. Read-only iOS layout review found the analogous plain-VStack overflow; guide controls now scroll with useful minimum map/media heights and a persistent End Tour footer. The real guide navigation case remains physical-only because simulator capture intentionally fails; no screenshot of a running simulator guide is claimed.
+
+Read-only lint: SwiftFormat0.60.1 `--lint --rules trailingSpace,consecutiveBlankLines --cache ignore` on five edited Swift files reported0 formatting changes (`/tmp/GetOverHere-whitespace-lint.log`). SwiftLint0.63.2 defaults on the same files returned exit2 with existing and new length/complexity/style findings (`/tmp/GetOverHere-swiftlint.json`); no project config exists, no mass formatting/refactor or clean-SwiftLint claim. `git diff --check` and bash syntax checks passed. AGP8.13.2 warns its tested compileSdk maximum is36.1 while this candidate uses public37.2; builds and Android API-floor lint pass. The warning is not suppressed.
+
+Subsequent read-only review found old Android capture cleanup could affect a replacement session and unbounded pre-encode PCM queues existed on both platforms. Those producer/lifecycle refinements started **after** the passing frozen gate and require another gate; the pass above must not be applied to their untested source.
+
+## 2026-09-08 — Producer freshness, capture ownership and tiny-packet preparation
+
+ADR-063 scopes these changes. No phones accessed. Existing500ms wire TTL remains; new150ms monotonic producer-age admission is separate. Core worker independently read the two queue implementations and found no concrete safety violation. That is code review, not physical validation.
+
+Android red reproductions: `/tmp/GetOverHere-android-capture-red.log`, two failures exposing stale capture completion and a socket factory exception outside its try boundary. Per-run capture ownership/newest-one handoff, generation-checked service completion, bounded pre-encode queue and conservative buffered-input timestamps were added. An initial green attempt failed compilation and a subsequent freshness assertion exposed confusion between the old500ms wire lifetime and new150ms producer bound; both failed attempts remain in `/tmp/GetOverHere-android-capture-green.log` and `/tmp/GetOverHere-android-capture-focused.log`. Final focused regressions pass at `/tmp/GetOverHere-android-capture-focused-final.log`.
+
+```bash
+# Android/, full frozen app JVM + both APKs (includes new benchmark instrumentation source).
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+# /tmp/GetOverHere-android-capture-full.log: PASS34s;158 tests/33suites,0failures/errors/skips.
+
+# iOS focused producer/capture/playout/native socket/service lifecycle gate.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -collect-test-diagnostics never -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/AudioEncodeAdmissionTests -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/PlayoutClockTests -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+# /tmp/GetOverHere-ios-preencode-focused.log:75 tests/97runs passed,0failures/skips.
+# Result: Test-GetOverHere-2026.09.08_11-23-17--0700.xcresult.
+# Initial sandboxed simulator launch lacked service/cache access and exited143; elevated rerun passed.
+# Generic iOS compilation also passed with CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO:
+# /tmp/GetOverHere-ios-preencode-device-build.log; no device or provisioning operation.
+
+# Host-only argument/report regression; never invokes adb or contacts a phone.
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_android_aware.py
+#12 tests pass; expected invalid-argument cases print argparse errors then the suite finishes OK.
+```
+
+The benchmark extension keeps bulk as default and adds `--profile tiny`. Its independent writer/echo reader offers50pps; synthetic50-byte codec-sized payloads are wrapped by real GOH2v4 AEAD/GOS1, and serialized byte size is measured. Idle and512KiB/s paced-asset phases retain raw RTT/send-lag, p50/p95/p99/max, offered/sent/received/local scheduling drops and echoes≥150ms. Missing echoes/timeouts fail the run rather than reporting zero loss. This is the guide-side **asset adapter over Aware TCP**, not the production realtime ACK lane, native direct UDP, real codec output or acoustic measurement. New default emulator test `AwarePhysicalBenchmarkTest#tinyPacketLoopbackAndCorruptionSmoke` is included in the final aggregate. `--smoke-only` now preflights only the explicit emulator, even if phone serial arguments are supplied. The12-test Python validation enters host gate stage8.
+
+Final frozen aggregate launched with the established `verify_virtual_devices.sh` environment above, log `/tmp/GetOverHere-integrated-candidate-20260908.log`. Outcome and artifact hashes follow after completion; do not mark it passed from launch alone.
+
+**Final outcome: PASS, exit0.** All9 host stages, iOS UI, Android emulator and100 native signature/key/tamper checks completed. Counts: Swift core68, JVM core71, Android app JVM158/33suites, Python12; Android emulator36 cases =31 passes/5 capability or physical skips,0 failures/errors. Tiny smoke passed in2.965s; complete emulator task56s. iOS unit result `Test-GetOverHere-2026.09.08_11-32-23--0700.xcresult`:166 passes/203 parameterized passing runs,1 physical-only skip. UI `Test-GetOverHere-2026.09.08_11-33-16--0700.xcresult`:4 passes/7 runs,1 physical-only skip. Read via `xcrun xcresulttool get test-results summary --path ...`; tool required elevated access to its report cache, not a new simulator/device operation. Native provider final line and aggregate final line both pass.
+
+Artifact SHA-256 from `shasum -a256`: app APK `9566fb7a8bcbbea4ccfc7c12972f040c32a4aff2a94f021674bff33e4eb75b9e`; instrumentation APK `e8308fdfd67f040d7976182e35d5062203628eae2aa750d47ed1d37b1ae22bb6`; simulator `GetOverHere.app/GetOverHere.debug.dylib` `a12a22b19899f9986fbd559c67a75b46909dd580fe3532a83a9d5e8bfa3f1ee2`. Sources remained frozen from the final gate through this verification; only living documentation was updated afterward. Starting HEAD was `aab2c10`; the following implementation checkpoint commit records the tested changes. Stable tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`. No push or new tag, paid resources, service restart, physical-device operation or acoustic/group qualification.
+
+**Remaining coding is explicit:** Android system-paired publisher/reverse-dial endpoint integration, native relay member enrollment/grants/possession/freshness/dual-role forwarding, direct UDP/bypass comparison support and radio-pressure scheduling. The current core topology planner, adapter tiny benchmark and asset scheduler do not close those items. FieldAcceptance.md consolidates the later physical round; it is not a request for intermediate user feedback.

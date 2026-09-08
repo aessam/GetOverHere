@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.service.AudioEngine
@@ -15,6 +16,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
@@ -22,11 +24,33 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AudioEngineRoutingTest {
+    @Test fun playbackReadinessRequiresAcceptedPCMAndResetsForEachRun() {
+        var acceptedRuns = 0
+        audioEngine.onPlaybackBufferAccepted = { acceptedRuns++ }
+        audioEngine.startPlayback()
+        assertTrue(audioEngine.isPlaying)
+        assertEquals(0, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(0))
+        assertEquals(0, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(1, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(1, acceptedRuns)
+        audioEngine.stopPlayback()
+        audioEngine.stopPlayback()
+        assertFalse(audioEngine.isPlaying)
+        audioEngine.startPlayback()
+        assertEquals(1, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(2, acceptedRuns)
+    }
     private lateinit var audioEngine: AudioEngine
     private lateinit var audioManager: AudioManager
+    private lateinit var activity: ActivityScenario<MainActivity>
 
     @Before
     fun setUp() {
+        activity = ActivityScenario.launch(MainActivity::class.java)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         audioEngine = AudioEngine(context)
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -36,6 +60,7 @@ class AudioEngineRoutingTest {
     fun tearDown() {
         audioEngine.stopCapture()
         audioEngine.stopPlayback()
+        activity.close()
     }
 
     @Test

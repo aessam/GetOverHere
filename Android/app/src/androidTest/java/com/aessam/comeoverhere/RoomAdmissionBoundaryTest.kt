@@ -37,16 +37,16 @@ class RoomAdmissionBoundaryTest {
         val id = UUID.randomUUID()
         val transport = RoomAdmissionTransport(56003)
         try {
-            transport.start(id, "23456789AB")
-            assertEquals("23456789AB", transport.join("127.0.0.1", id, null))
+            transport.start(id, "23456789AB", com.aessam.toursession.GuideFrameSigner(id, id))
+            assertEquals("23456789AB", transport.join("127.0.0.1", id, id, null).mediaSecret)
             transport.update(RoomAccessPolicy(id, "1234"))
-            assertThrows(Exception::class.java) { transport.join("127.0.0.1", id, "wrong") }
-            assertEquals("23456789AB", transport.join("127.0.0.1", id, "1234"))
+            assertThrows(Exception::class.java) { transport.join("127.0.0.1", id, id, "wrong").mediaSecret }
+            assertEquals("23456789AB", transport.join("127.0.0.1", id, id, "1234").mediaSecret)
             transport.update(RoomAccessPolicy(id, "Edited!"))
-            assertThrows(Exception::class.java) { transport.join("127.0.0.1", id, "1234") }
-            assertEquals("23456789AB", transport.join("127.0.0.1", id, "Edited!"))
+            assertThrows(Exception::class.java) { transport.join("127.0.0.1", id, id, "1234").mediaSecret }
+            assertEquals("23456789AB", transport.join("127.0.0.1", id, id, "Edited!").mediaSecret)
             transport.update(RoomAccessPolicy(id, null))
-            assertEquals("23456789AB", transport.join("127.0.0.1", id, null))
+            assertEquals("23456789AB", transport.join("127.0.0.1", id, id, null).mediaSecret)
         } finally { transport.stop() }
     }
 }

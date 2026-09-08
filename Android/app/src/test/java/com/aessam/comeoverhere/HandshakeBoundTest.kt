@@ -31,6 +31,7 @@ class HandshakeBoundTest {
         val guide = LocalSessionControlTransport(port)
         val sessionID = UUID.randomUUID()
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -51,6 +52,7 @@ class HandshakeBoundTest {
         val guide = UDPAudioPlane(BoundTestCodecProvider(), port)
         val sessionID = UUID.randomUUID()
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),

@@ -18,8 +18,8 @@ public struct SignedGuideFrame: Sendable {
 
 public struct GuideFrameSigner: Sendable {
     private let key = P256.Signing.PrivateKey()
-    private let sessionID: UUID
-    private let guideID: UUID
+    public let sessionID: UUID
+    public let guideID: UUID
     public var publicKey: Data { key.publicKey.x963Representation }
 
     public init(sessionID: UUID, guideID: UUID) {
@@ -39,6 +39,13 @@ public struct GuideFrameSigner: Sendable {
         let body = header + sealed
         let signature = try GuideSignatureEncoding.canonical(key.signature(for: SignedGuideFrame.domain + body).rawRepresentation)
         return SignedGuideFrame(bytes: body + signature)
+    }
+
+    /// Same session signing identity, separate domain from media-frame signatures.
+    func admissionProof(transcript: Data, credentials: Data) throws -> Data {
+        try GuideSignatureEncoding.canonical(key.signature(
+            for: RoomAdmissionV2.proofDomain + transcript + credentials
+        ).rawRepresentation)
     }
 }
 
@@ -72,6 +79,14 @@ public struct GuideFrameVerifier: Sendable {
         let sealed = try SealedSessionEnvelope.decode(Data(body.dropFirst(8)))
         guard sealed.sessionID == sessionID, sealed.senderID == guideID else { throw GuideSignatureError.wrongGuide }
         return sealed
+    }
+
+    func verifyAdmissionProof(_ raw: Data, transcript: Data, credentials: Data) throws {
+        guard try GuideSignatureEncoding.canonical(raw) == raw else { throw GuideSignatureError.invalidSignature }
+        let signature = try P256.Signing.ECDSASignature(rawRepresentation: raw)
+        guard key.isValidSignature(signature, for: RoomAdmissionV2.proofDomain + transcript + credentials) else {
+            throw GuideSignatureError.invalidSignature
+        }
     }
 }
 

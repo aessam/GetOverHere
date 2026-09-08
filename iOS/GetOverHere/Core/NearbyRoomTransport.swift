@@ -1,6 +1,24 @@
 import Foundation
 import TourSessionCore
 
+/// An adapter owned by the native route, not a LAN endpoint. Preparation binds the
+/// local lanes; admission and signed lane handshakes must still prove the remote peer.
+nonisolated struct NearbyGuestRoute: Equatable, Sendable {
+    let adapterHost: String
+    let transport: SessionTransportRoute
+    let roomID: UUID
+    let routeID: UUID
+
+    init(adapterHost: String, transport: SessionTransportRoute, roomID: UUID, routeID: UUID) {
+        precondition(adapterHost == "127.0.0.1")
+        precondition(transport == .bluetooth || transport == .wifiAware)
+        self.adapterHost = adapterHost
+        self.transport = transport
+        self.roomID = roomID
+        self.routeID = routeID
+    }
+}
+
 /// Discovery owns radio endpoints. Public records never manufacture a LAN address.
 @MainActor
 protocol NearbyRoomTransport: AnyObject {
@@ -19,6 +37,6 @@ protocol NearbyRouteControl: AnyObject {
     var usesBluetoothGuestRoute: Bool { get }
     func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode)
     func canConnectNearby(roomID: UUID) -> Bool
-    func prepareNearbyGuest(roomID: UUID) async throws -> String
+    func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute
     func stopNearbyGuest()
 }

@@ -18,11 +18,19 @@ enum LifecycleLaneError: LocalizedError {
 }
 
 nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, Sendable {
-    func start(sessionID: UUID, sessionCode: String) throws {}
+    private let allowNearby: Bool
+    init(allowNearby: Bool = false) { self.allowNearby = allowNearby }
+    func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws {}
     func update(policy: RoomAccessPolicy) throws {}
     func stop() {}
-    func join(host: String, sessionID: UUID, code: String?) throws -> String {
-        throw RoomAdmissionError.invalidMessage
+    func join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?) throws -> AdmittedRoomCredentials {
+        if host == "127.0.0.1", !allowNearby { throw RoomAdmissionError.invalidMessage }
+        let policy = try RoomAccessPolicy(sessionID: sessionID, code: nil)
+        let guide = try RoomAdmissionV2.Guide(sessionID: sessionID, policy: policy,
+            signer: GuideFrameSigner(sessionID: sessionID, guideID: expectedGuideID))
+        let guest = try RoomAdmissionV2.Guest(challenge: guide.challenge, sessionID: sessionID,
+            expectedGuideID: expectedGuideID, code: nil)
+        return try guest.open(guide.reply(to: guest.request, mediaSecret: "23456789AB"))
     }
 }
 
@@ -33,14 +41,22 @@ final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
     var nearbyAvailable = false
     var nearbyStopCalls = 0
     var nearbyPrepareCalls = 0
+    var nearbyPrepareError: (any Error)?
+    private var guestRoute: NearbyGuestRoute?
     func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) {}
     func canConnectNearby(roomID: UUID) -> Bool { nearbyAvailable }
-    func prepareNearbyGuest(roomID: UUID) async throws -> String {
+    func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute {
+        nearbyPrepareCalls += 1
+        if let nearbyPrepareError { throw nearbyPrepareError }
         guard nearbyAvailable else { throw NearbyConnectionError.unavailable }
-        nearbyPrepareCalls += 1; usesBluetoothGuestRoute = true
-        return "127.0.0.1"
+        usesBluetoothGuestRoute = true
+        if let guestRoute, guestRoute.roomID == roomID { return guestRoute }
+        let route = NearbyGuestRoute(adapterHost: "127.0.0.1", transport: .bluetooth,
+            roomID: roomID, routeID: UUID())
+        guestRoute = route
+        return route
     }
-    func stopNearbyGuest() { nearbyStopCalls += 1; usesBluetoothGuestRoute = false }
+    func stopNearbyGuest() { nearbyStopCalls += 1; usesBluetoothGuestRoute = false; guestRoute = nil }
     private(set) var bluetoothMode: BluetoothDiscoveryMode = .off
     func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) { bluetoothMode = mode }
     let localPeer: PeerInfo
@@ -85,6 +101,8 @@ final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
 
 @MainActor
 final class LifecycleAudioPlane: AudioPlane {
+    private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var isActive = false
     private(set) var startBroadcastingCalls = 0
     private(set) var startListeningCalls = 0
@@ -93,7 +111,8 @@ final class LifecycleAudioPlane: AudioPlane {
     private(set) var configureCalls = 0
     private(set) var sent: [Data] = []
     var startBroadcastingError: (any Error)?
-    private var handler: (@Sendable (AudioSessionEvent) -> Void)?
+    private(set) var handler: (@Sendable (AudioSessionEvent) -> Void)?
+    private(set) var audioHandler: (@Sendable (Data) -> Void)?
 
     func startBroadcasting(channelID: String, quality: AudioQuality) throws {
         startBroadcastingCalls += 1
@@ -105,6 +124,7 @@ final class LifecycleAudioPlane: AudioPlane {
 
     func startListening(channelID: String, onAudio: @escaping @Sendable (Data) -> Void) {
         startListeningCalls += 1
+        audioHandler = onAudio
         isActive = true
     }
 
@@ -142,6 +162,8 @@ final class LifecycleAudioPlane: AudioPlane {
 
 @MainActor
 final class LifecycleControlTransport: SessionControlTransport {
+    private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var configureCalls = 0
     var isActive = false
     var hostIP: String?
@@ -227,6 +249,8 @@ final class LifecycleControlTransport: SessionControlTransport {
 
 @MainActor
 final class LifecycleAssetTransport: SessionAssetTransport {
+    private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var configureCalls = 0
     struct Sent {
         let kind: SessionMessageKind
@@ -292,10 +316,14 @@ final class LifecycleAssetTransport: SessionAssetTransport {
 @MainActor
 final class FakeAudioEngine: AudioEngineInterface {
     var listenerOutput: ListenerOutput = .privateAudio
+    var onRuntimeEvent: ((AudioRuntimeEvent) -> Void)?
     private(set) var isCapturing = false
     private(set) var isPlaying = false
     private(set) var startCaptureCalls = 0
     var startCaptureError: (any Error)?
+    var startPlaybackError: (any Error)?
+    private(set) var startPlaybackCalls = 0
+    private var awaitingFirstPlaybackBuffer = true
     var onStartCapture: (() -> Void)?
     /// Continuation of the live capture stream; a test finishes it to simulate the engine tearing
     /// the pipeline down (interruption or a failed converter rebuild).
@@ -309,6 +337,7 @@ final class FakeAudioEngine: AudioEngineInterface {
         let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
         captureContinuation = continuation
         isCapturing = true
+        onRuntimeEvent?(.started(.capture))
         return stream
     }
 
@@ -318,7 +347,20 @@ final class FakeAudioEngine: AudioEngineInterface {
         isCapturing = false
     }
 
-    func startPlayback() { isPlaying = true }
-    func enqueuePlayback(_ data: Data) { played.append(data) }
+    func startPlayback() throws {
+        startPlaybackCalls += 1
+        if let startPlaybackError { throw startPlaybackError }
+        isPlaying = true
+        awaitingFirstPlaybackBuffer = true
+        onRuntimeEvent?(.started(.playback))
+    }
+    func enqueuePlayback(_ data: Data) {
+        guard isPlaying, !data.isEmpty else { return }
+        played.append(data)
+        if awaitingFirstPlaybackBuffer {
+            awaitingFirstPlaybackBuffer = false
+            onRuntimeEvent?(.firstPlaybackBufferAccepted)
+        }
+    }
     func stopPlayback() { isPlaying = false }
 }

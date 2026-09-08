@@ -12,9 +12,16 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.net.NetworkInterface
 import java.util.UUID
 import com.aessam.toursession.BluetoothRoomRecord
+import com.aessam.toursession.SessionTransportRoute
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * NSD plus read-only Bluetooth room discovery. Only NSD supplies a join address.
@@ -24,8 +31,10 @@ import com.aessam.toursession.BluetoothRoomRecord
 class LocalControlPlane(
     context: Context,
     displayName: String,
-    private val bluetooth: BluetoothRoomDiscoveryInterface = BluetoothRoomDiscovery(context),
+    bluetooth: BluetoothRoomDiscoveryInterface? = null,
+    connectionBudget: NearbyConnectionBudget = NearbyConnectionBudget.sharedApp,
 ) : ControlPlane, NearbyRouteControl {
+    private val bluetooth = bluetooth ?: BluetoothRoomDiscovery(context, connectionBudget)
 
     override val localPeer = PeerInfo(
         id = UUID.randomUUID().toString(),
@@ -68,14 +77,19 @@ class LocalControlPlane(
     private val publishedServices = mutableMapOf<String, Pair<NsdServiceInfo, NsdManager.RegistrationListener>>()
     private val peerByChannelID = mutableMapOf<String, PeerInfo>()
     private var discoveryIndex = RoomDiscoveryIndex()
-    private val aware = if (Build.VERSION.SDK_INT >= 34) WiFiAwareRoomTransport(context) else null
+    private val aware = if (Build.VERSION.SDK_INT >= 34) WiFiAwareRoomTransport(context, connectionBudget) else null
     private var awareEnabled = false
     private var hostedRecord: BluetoothRoomRecord? = null
-    private val awareRooms = mutableSetOf<UUID>()
-    private val nearbyBridge = NearbySocketBridge()
-    private var nearbyGuestRoom: UUID? = null
-    override var usesBluetoothGuestRoute = false
+    private val awareRooms = ConcurrentHashMap.newKeySet<UUID>()
+    private val nearbyBridge = NearbySocketBridge(connectionBudget = connectionBudget)
+    private val nearbyPreparation = Mutex()
+    private val nearbyOwnerLock = Any()
+    private var nearbyGeneration = 0L
+    private var nearbyGuestConnector: (() -> NearbyByteConnection)? = null
+    @Volatile override var activeNearbyGuestRoute: NearbyGuestRoute? = null
         private set
+    override val usesBluetoothGuestRoute: Boolean
+        get() = activeNearbyGuestRoute?.transport == SessionTransportRoute.BLUETOOTH
     override val awareSettings: NearbyAwareSettings? = aware?.let { transport ->
         object : NearbyAwareSettings {
             override val state = transport.state
@@ -95,28 +109,80 @@ class LocalControlPlane(
 
     override fun canConnectNearby(roomID: UUID): Boolean = roomID in awareRooms ||
         (bluetooth as? BluetoothSessionDiscoveryInterface)?.canConnect(roomID) == true
-    override suspend fun prepareNearbyGuest(roomID: UUID): String {
-        nearbyGuestRoom?.let { check(it == roomID) { "Leave the current nearby room before joining another" }; return "127.0.0.1" }
-        val connect = if (roomID in awareRooms) {
-            usesBluetoothGuestRoute = false
-            requireNotNull(aware).connector(roomID)
-        } else {
-            val transport = requireNotNull(bluetooth as? BluetoothSessionDiscoveryInterface) { "No nearby route is available" }
-            check(transport.canConnect(roomID)) { "No nearby route is available" }
-            val connection = transport.connector(roomID)
-            transport.setJoinedRoom(roomID)
-            usesBluetoothGuestRoute = true
-            connection
+    override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): NearbyGuestRoute = nearbyPreparation.withLock {
+        withContext(Dispatchers.IO) {
+            val cached = synchronized(nearbyOwnerLock) { activeNearbyGuestRoute?.let { it to nearbyGuestConnector } }
+            if (cached != null) {
+                check(cached.first.roomID == roomID) { "Leave the current nearby room before joining another" }
+                try {
+                    val connect = requireNotNull(cached.second) { "Nearby adapter owner disappeared" }
+                    NearbyRoomMetadataPolicy.validate(nearbyBridge.readRecord(connect), roomID, expectedGuideID)
+                    synchronized(nearbyOwnerLock) {
+                        check(activeNearbyGuestRoute?.routeID == cached.first.routeID) { "Nearby join was canceled" }
+                        return@withContext cached.first
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    Log.w(TAG, "Cached nearby route failed (${error.javaClass.simpleName})")
+                    synchronized(nearbyOwnerLock) {
+                        check(activeNearbyGuestRoute?.routeID == cached.first.routeID) { "Nearby join was canceled" }
+                        stopNearbyGuest()
+                    }
+                    if (error is NearbyRoomMetadataMismatch) throw error
+                }
+            }
+            val attempt = synchronized(nearbyOwnerLock) {
+                check(activeNearbyGuestRoute == null) { "Nearby adapter changed during preparation" }
+                nearbyGeneration
+            }
+            val bluetoothSession = bluetooth as? BluetoothSessionDiscoveryInterface
+            val routes = buildList {
+                if (roomID in awareRooms) add(SessionTransportRoute.WIFI_AWARE)
+                if (bluetoothSession?.canConnect(roomID) == true) add(SessionTransportRoute.BLUETOOTH)
+            }
+            check(routes.isNotEmpty()) { "No nearby route is available" }
+            var lastError: Exception? = null
+            for (route in routes) {
+                try {
+                    val connect = when (route) {
+                        SessionTransportRoute.WIFI_AWARE -> requireNotNull(aware).connector(roomID)
+                        SessionTransportRoute.BLUETOOTH -> requireNotNull(bluetoothSession).connector(roomID)
+                        SessionTransportRoute.LOCAL_LAN -> error("LAN is not a nearby adapter route")
+                    }
+                    // Prove reachability before advertising a loopback adapter as connected. A stale
+                    // preferred Aware endpoint may fail here and leave Bluetooth available to try.
+                    NearbyRoomMetadataPolicy.validate(nearbyBridge.readRecord(connect), roomID, expectedGuideID)
+                    return@withContext synchronized(nearbyOwnerLock) {
+                        check(nearbyGeneration == attempt) { "Nearby join was canceled" }
+                        if (route == SessionTransportRoute.BLUETOOTH) bluetoothSession?.setJoinedRoom(roomID)
+                        val host = nearbyBridge.startGuest(roomID, connect)
+                        NearbyGuestRoute(host, route, roomID, UUID.randomUUID()).also {
+                            nearbyGuestConnector = connect
+                            activeNearbyGuestRoute = it
+                        }
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    if (error is NearbyRoomMetadataMismatch) throw error
+                    lastError = error
+                    Log.w(TAG, "Nearby ${route.name} preparation failed (${error.javaClass.simpleName})")
+                    synchronized(nearbyOwnerLock) {
+                        check(nearbyGeneration == attempt) { "Nearby join was canceled" }
+                        if (route == SessionTransportRoute.BLUETOOTH) bluetoothSession?.setJoinedRoom(null)
+                    }
+                }
+            }
+            throw IllegalStateException("No reachable nearby route could be prepared", lastError)
         }
-        val host = try { nearbyBridge.startGuest(roomID, connect) }
-        catch (error: Exception) { stopNearbyGuest(); throw error }
-        nearbyGuestRoom = roomID
-        return host
     }
     override fun stopNearbyGuest() {
-        nearbyBridge.stop(); nearbyGuestRoom = null
-        if (usesBluetoothGuestRoute) (bluetooth as? BluetoothSessionDiscoveryInterface)?.setJoinedRoom(null)
-        usesBluetoothGuestRoute = false
+        synchronized(nearbyOwnerLock) {
+            nearbyGeneration++
+            nearbyBridge.stop()
+            if (usesBluetoothGuestRoute) (bluetooth as? BluetoothSessionDiscoveryInterface)?.setJoinedRoom(null)
+            activeNearbyGuestRoute = null
+            nearbyGuestConnector = null
+        }
     }
 
     init {
@@ -127,26 +193,31 @@ class LocalControlPlane(
                     if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
                 emit(discoveryIndex.update(BLECommand.ChannelAnnounce(channelID = record.roomID.toString(),
                     channelName = record.name, createdBy = peer.id, audioQuality = AudioQuality.STANDARD,
-                    wifiSSID = null, audioHostIP = null, roomAdmissionVersion = 1, isRoomLocked = record.isLocked),
+                    wifiSSID = null, audioHostIP = null, roomAdmissionVersion = record.admissionVersion, isRoomLocked = record.isLocked),
                     peer, RoomDiscoveryIndex.Source.AWARE))
             }
         }
         aware?.onLost = { room ->
             awareRooms.remove(room)
+            synchronized(nearbyOwnerLock) {
+                if (activeNearbyGuestRoute?.let { it.roomID == room && it.transport == SessionTransportRoute.WIFI_AWARE } == true) {
+                    stopNearbyGuest()
+                }
+            }
             emit(discoveryIndex.remove(room.toString(), RoomDiscoveryIndex.Source.AWARE))
         }
-        bluetooth.onRoom = { record ->
+        this.bluetooth.onRoom = { record ->
             if (record.guideID != UUID.fromString(localPeer.id)) {
                 val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
                     if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
                 emit(discoveryIndex.update(BLECommand.ChannelAnnounce(
                     channelID = record.roomID.toString(), channelName = record.name, createdBy = peer.id,
                     audioQuality = AudioQuality.STANDARD, wifiSSID = null, audioHostIP = null,
-                    roomAdmissionVersion = 1, isRoomLocked = record.isLocked,
+                    roomAdmissionVersion = record.admissionVersion, isRoomLocked = record.isLocked,
                 ), peer, RoomDiscoveryIndex.Source.BLUETOOTH))
             }
         }
-        bluetooth.onLost = { emit(discoveryIndex.remove(it.toString(), RoomDiscoveryIndex.Source.BLUETOOTH)) }
+        this.bluetooth.onLost = { emit(discoveryIndex.remove(it.toString(), RoomDiscoveryIndex.Source.BLUETOOTH)) }
     }
 
     private fun emit(observation: Pair<BLECommand, PeerInfo>?) {
@@ -274,7 +345,7 @@ class LocalControlPlane(
 
     private fun publishChannel(announce: BLECommand.ChannelAnnounce) {
         val record = BluetoothRoomRecord(UUID.fromString(announce.channelID), UUID.fromString(announce.createdBy),
-            announce.channelName, true, announce.isRoomLocked ?: true)
+            announce.channelName, true, announce.isRoomLocked ?: true, admissionVersion = announce.roomAdmissionVersion ?: 1)
         hostedRecord = record
         bluetooth.publish(record)
         updateAwareMode()

@@ -26,12 +26,18 @@ import java.net.ServerSocket
 class TourNavigationTest {
     @After fun releaseTourEvenWhenAnAssertionFails() {
         // The application intentionally outlives Activity recreation. Tests must end their tour.
-        composeRule.runOnIdle { channelService().leaveChannel(); channelService().stop() }
+        composeRule.runOnIdle {
+            channelService().leaveChannel()
+            channelService().stop()
+            channelService().setBluetoothDiscoveryEnabled(false)
+            channelService().awareSettings?.setEnabled(false)
+        }
     }
     @Test fun bluetoothDiscoveryDefaultsOffAndRequiresExplicitIntent() {
-        composeRule.onNodeWithTag("bluetoothRoomDiscovery").assertIsOff()
-        composeRule.onNodeWithTag("bluetoothRoomDiscovery").performClick()
+        composeRule.runOnIdle { channelService().setBluetoothDiscoveryEnabled(false) }
+        composeRule.onNodeWithTag("findNearbyTours").assertIsDisplayed().performClick()
         composeRule.waitUntil(2_000) { channelService().bluetoothDiscoveryEnabled.value }
+        composeRule.onNodeWithContentDescription("Connection diagnostics").performClick()
         composeRule.onNodeWithTag("bluetoothRoomDiscovery").performClick()
         composeRule.waitUntil(2_000) { !channelService().bluetoothDiscoveryEnabled.value }
     }
@@ -40,6 +46,7 @@ class TourNavigationTest {
         GrantPermissionRule.grant(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.NEARBY_WIFI_DEVICES,
             *BluetoothRoomDiscovery.requiredPermissions(),
         )
 
@@ -90,7 +97,7 @@ class TourNavigationTest {
         composeRule.onNodeWithText("Slides").assertIsDisplayed()
         composeRule.onNodeWithText("Map").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("No offline map").assertIsDisplayed()
-        composeRule.onNodeWithText("Import Offline Map").assertIsDisplayed()
+        composeRule.onNodeWithText("Import Offline Map").performScrollTo().assertIsDisplayed()
         composeRule.waitUntil(2_000) {
             channelService().visualFocusSnapshot.value?.mode == TourVisualMode.MAP
         }

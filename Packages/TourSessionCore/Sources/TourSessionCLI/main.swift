@@ -10,6 +10,15 @@ enum TourSessionCLI {
         }
 
         switch command {
+        case "audio-readiness-fixture":
+            print(AudioReadinessPayload(status: .playing, revision: 0x0102030405060708).encode().lowercaseHex)
+        case "bluetooth-v2-fixture":
+            print(try BluetoothRoomRecord(roomID: UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!,
+                guideID: UUID(uuidString: "FFEEDDCC-BBAA-9988-7766-554433221100")!, name: "Tour",
+                isAndroid: true, isLocked: true, admissionVersion: 2).encode().lowercaseHex)
+        case "room-v2-guide", "room-v2-guest":
+            do { try roomAdmissionV2(arguments) }
+            catch { fail("admission-v2 rejected: \(error.localizedDescription)") }
         case "sign-guide":
             let frame = try TourSessionFixtures.encryptedRealtimeFixture()
             let signer = GuideFrameSigner(sessionID: frame.sessionID, guideID: frame.senderID)
@@ -89,6 +98,50 @@ enum TourSessionCLI {
             print(TourSessionFixtures.simulateVisualFocus())
         default:
             fail("unknown command: \(command)")
+        }
+    }
+
+    private static func roomAdmissionV2(_ arguments: [String]) throws {
+        guard arguments.count == 4,
+              let session = UUID(uuidString: arguments[1]), let guideID = UUID(uuidString: arguments[2]) else {
+            fail("room-v2-guide/room-v2-guest requires SESSION_UUID GUIDE_UUID CODE (use - for open)")
+        }
+        let code: String? = arguments[3] == "-" ? nil : arguments[3]
+        func emit(_ text: String) { FileHandle.standardOutput.write(Data((text + "\n").utf8)) }
+        func receive() throws -> Data {
+            guard let line = readLine() else { fail("admission input closed") }
+            return try Data(hex: line)
+        }
+        if arguments[0] == "room-v2-guide" {
+            let signer = GuideFrameSigner(sessionID: session, guideID: guideID)
+            let guide = try RoomAdmissionV2.Guide(sessionID: session,
+                policy: RoomAccessPolicy(sessionID: session, code: code), signer: signer)
+            emit(guide.challenge.lowercaseHex)
+            emit(try guide.reply(to: receive(), mediaSecret: "23456789AB").lowercaseHex)
+            let credential = try SessionCredential.derive(shortCode: "23456789AB", sessionID: session)
+            let envelope = try SessionEnvelope(lane: .control, kind: .leave, sequence: 1,
+                sessionID: session, senderID: guideID, payload: Data())
+            let sealed = try SessionFrameSealer(credential: credential).seal(envelope, streamID: UUID())
+            emit(try signer.sign(sealed).encode().lowercaseHex)
+            emit(signer.publicKey.lowercaseHex)
+        } else {
+            let guest = try RoomAdmissionV2.Guest(challenge: receive(), sessionID: session,
+                expectedGuideID: guideID, code: code)
+            emit(guest.request.lowercaseHex)
+            let admitted = try guest.open(receive())
+            var pin = SessionGuidePin()
+            try pin.accept(admitted.guideIdentity)
+            let verifier = try GuideFrameVerifier(pinnedPublicKey: admitted.guideIdentity.publicKey,
+                sessionID: session, guideID: guideID)
+            let sealed = try verifier.verify(receive())
+            let credential = try SessionCredential.derive(shortCode: admitted.mediaSecret, sessionID: session)
+            guard case let .opened(envelope) = try SessionFrameOpener(credential: credential).open(sealed),
+                  envelope.kind == .leave, envelope.sequence == 1, envelope.payload.isEmpty else {
+                fail("admitted guide frame roundtrip failed")
+            }
+            emit(admitted.mediaSecret)
+            emit(admitted.guideIdentity.publicKey.lowercaseHex)
+            emit("signed-guide-ok")
         }
     }
 

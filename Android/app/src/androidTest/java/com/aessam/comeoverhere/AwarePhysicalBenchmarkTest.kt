@@ -103,6 +103,39 @@ class AwarePhysicalBenchmarkTest {
         } finally { (guide + guest).forEach { it.close() }; pool.shutdownNow() }
     }
 
+    @Test fun tinyPacketLoopbackAndCorruptionSmoke() {
+        val guide = mutableListOf<NearbyByteConnection>()
+        val guest = mutableListOf<NearbyByteConnection>()
+        val pool = Executors.newCachedThreadPool()
+        try {
+            repeat(4) {
+                ServerSocket(0).use { server ->
+                    guest.add(NearbyTCPConnection(Socket("127.0.0.1", server.localPort).apply { soTimeout = 10_000 }))
+                    guide.add(NearbyTCPConnection(server.accept().apply { soTimeout = 10_000 }))
+                }
+            }
+            val serving = pool.submit { AwareTinyPacketProtocol.guide(guide, pool) }
+            val results = mutableListOf<JSONObject>()
+            AwareTinyPacketProtocol.guest(guest, pool, 500, 1) { results.add(it) }
+            serving.get(10, TimeUnit.SECONDS)
+            assertEquals(listOf("tiny_idle", "tiny_paced_asset"), results.map { it.getString("phase") })
+            results.forEach {
+                assertEquals(it.getInt("offered_packets"), it.getInt("sent_packets") + it.getInt("local_schedule_drops"))
+                assertEquals(it.getInt("sent_packets"), it.getInt("received_packets"))
+                assertEquals(0, it.getInt("missing_echo_packets"))
+            }
+            val factory = AwareTinyPacketProtocol.FrameFactory()
+            val frame = factory.frame(0, 1)
+            factory.verifier.verify(frame)
+            assertThrows(IllegalArgumentException::class.java) {
+                factory.verifier.verify(frame.copyOf().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() })
+            }
+            assertEquals(false, AwareTinyPacketProtocol.missedSlot(19_999_999, 0))
+            assertEquals(true, AwareTinyPacketProtocol.missedSlot(20_000_000, 0))
+            assertEquals(3.0, AwareBenchmarkProtocol.percentile(listOf(1.0, 2.0, 3.0), .99), 0.0)
+        } finally { (guide + guest).forEach { it.close() }; pool.shutdownNow() }
+    }
+
     @Test fun measurePhysicalAwareGoodput() {
         val args = InstrumentationRegistry.getArguments()
         val role = args.getString("benchmarkRole")
@@ -113,6 +146,8 @@ class AwarePhysicalBenchmarkTest {
         val pin = requireNotNull(args.getString("benchmarkPIN"))
         val millis = requireNotNull(args.getString("benchmarkMillis")).toInt()
         val rounds = requireNotNull(args.getString("benchmarkRounds")).toInt()
+        val profile = args.getString("benchmarkProfile") ?: "bulk"
+        require(profile in setOf("bulk", "tiny"))
         require(millis in 100..30_000 && rounds in 1..5 && pin.matches(Regex("[0-9]{6}")))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -131,6 +166,7 @@ class AwarePhysicalBenchmarkTest {
         fun report(json: JSONObject) {
             json.put("role", role).put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
                 .put("thermal_status", power.currentThermalStatus)
+                .put("benchmark_profile", profile).put("transport_path", "aware_tcp_guide_adapter")
             Log.i("AwareBenchmark", json.toString())
             instrumentation.sendStatus(0, Bundle().apply { putString("aware_benchmark", json.toString()) })
         }
@@ -239,10 +275,20 @@ class AwarePhysicalBenchmarkTest {
                 }
             }
             ensureForeground()
-            report(JSONObject().put("phase", "connected").put("elapsed_ms", (System.nanoTime() - started) / 1_000_000.0))
+            val diagnostic = requireNotNull(radio).state.value.diagnostics
+            report(JSONObject().put("phase", "connected").put("elapsed_ms", (System.nanoTime() - started) / 1_000_000.0)
+                .put("maximum_data_paths", diagnostic.maximumDataPaths ?: JSONObject.NULL)
+                .put("available_data_paths", diagnostic.availableDataPaths ?: JSONObject.NULL)
+                .put("owned_network_handles", diagnostic.networks.map { it.networkHandle }.distinct().joinToString(","))
+                .put("owned_interfaces", diagnostic.networks.mapNotNull { it.interfaceName }.distinct().joinToString(",")))
             val streams = channels.map { requireNotNull(it) }
-            if (role == "guide") AwareBenchmarkProtocol.guide(streams, pool)
-            else AwareBenchmarkProtocol.guest(streams, pool, millis, rounds, ::report)
+            if (profile == "tiny") {
+                if (role == "guide") AwareTinyPacketProtocol.guide(streams, pool)
+                else AwareTinyPacketProtocol.guest(streams, pool, millis, rounds, ::report)
+            } else {
+                if (role == "guide") AwareBenchmarkProtocol.guide(streams, pool)
+                else AwareBenchmarkProtocol.guest(streams, pool, millis, rounds, ::report)
+            }
             check(failure.get() == null) { requireNotNull(failure.get()) }
             ensureForeground()
             report(JSONObject().put("phase", "complete").put("interactive", true).put("keyguard", false))

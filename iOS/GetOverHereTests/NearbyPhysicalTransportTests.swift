@@ -34,28 +34,37 @@ struct NearbyPhysicalTransportTests {
             admission.stop(); bridge.stop(); radio.stop()
         }
         let secret: String
+        let authentication: SessionGuideAuthentication
         if role == "guide" {
             secret = "23456789AB"
-            try admission.start(sessionID: room, sessionCode: secret)
+            let signer = GuideFrameSigner(sessionID: room, guideID: guide)
+            authentication = .guide(signer)
+            try admission.start(sessionID: room, sessionCode: secret, signer: signer)
             try admission.update(policy: RoomAccessPolicy(sessionID: room, code: "2468"))
         } else {
             radio.setMode(.browsing)
             try await waitUntil(seconds: 30) { radio.canConnect(roomID: room) }
             radio.setJoinedRoom(room)
             let host = try await bridge.startGuest(roomID: room) { try await radio.connect(roomID: room) }
-            secret = try await admit(host: host, room: room)
+            let admitted = try await admit(host: host, room: room, guideID: guide)
+            secret = admitted.mediaSecret
+            authentication = .guest(try GuideFrameVerifier(pinnedPublicKey: admitted.guideIdentity.publicKey,
+                sessionID: room, guideID: guide))
         }
         let credential = try await credential(secret: secret, room: room)
         audio.configureSession(sessionID: room, participantID: participant, displayName: role, platform: .iOS, credential: credential)
         control.configureSession(sessionID: room, participantID: participant, displayName: role, platform: .iOS, credential: credential)
         assets.configureSession(sessionID: room, participantID: participant, displayName: role, platform: .iOS, credential: credential)
+        audio.configureGuideAuthentication(authentication)
+        control.configureGuideAuthentication(authentication)
+        assets.configureGuideAuthentication(authentication)
         if role == "guide" {
             audio.setSessionEventHandler { event in
                 if case .joined = event { Task { @MainActor in progress.joined = true } }
             }
             try audio.startBroadcasting(channelID: room.uuidString, quality: .standard)
             try control.startGuide(); try assets.startGuide()
-            radio.publish(BluetoothRoomRecord(roomID: room, guideID: guide, name: "Physical nearby fixture", isAndroid: false, isLocked: true))
+            radio.publish(BluetoothRoomRecord(roomID: room, guideID: guide, name: "Physical nearby fixture", isAndroid: false, isLocked: true, admissionVersion: 2))
             radio.setMode(.advertising)
             for frame in 0..<3_000 {
                 var pcm = Data(capacity: 640)
@@ -112,8 +121,8 @@ struct NearbyPhysicalTransportTests {
             try await Task.sleep(for: .milliseconds(20))
         }
     }
-    @concurrent private func admit(host: String, room: UUID) async throws -> String {
-        try RoomAdmissionTransport().join(host: host, sessionID: room, code: "2468")
+    @concurrent private func admit(host: String, room: UUID, guideID: UUID) async throws -> AdmittedRoomCredentials {
+        try RoomAdmissionTransport().join(host: host, sessionID: room, expectedGuideID: guideID, code: "2468")
     }
     @concurrent private func credential(secret: String, room: UUID) async throws -> SessionCredential {
         try SessionCredential.derive(shortCode: secret, sessionID: room)

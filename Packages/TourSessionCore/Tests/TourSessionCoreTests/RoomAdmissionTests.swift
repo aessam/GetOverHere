@@ -10,6 +10,9 @@ struct RoomAdmissionTests {
         let key = try P256.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0, count: 31) + Data([1]))
         let derived = try RoomAdmission.derive(key, peer, Data(repeating: 0, count: 32), Data())
         #expect(derived.withUnsafeBytes { Data($0).lowercaseHex } == "1652d7207df35c849397c233a68b03323308bd4dcd2f50e20ab8323fea0bd015")
+        let v2 = try RoomAdmission.derive(key, peer, Data(repeating: 0, count: 32), Data(),
+                                          domain: "GetOverHere/room-admission/v2")
+        #expect(v2.withUnsafeBytes { Data($0).lowercaseHex } == "e6c7820134e8240ee5ab4f70d589cc9a4e29531739e7301a50e24057f06a53fd")
     }
 
     @Test(arguments: [nil, "1234", "My-Tour!42", String(repeating: "a", count: 64)] as [String?])

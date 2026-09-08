@@ -36,6 +36,29 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class TourAssetTransferServiceTest {
+    @Test fun currentAndNextPriorityYieldsOnlyAfterBackgroundChunkAndResumesExactOffset() {
+        val f = GuestFixture(mapOf("a" to 70_000, "b" to 70_000, "c" to 1_000, "d" to 1_000))
+        try {
+            f.deliverManifest(); f.awaitRequestCount(2)
+            f.service.prioritizeAssets(f.hash("d"), f.hash("c"))
+            f.deliverChunk("a", 0); f.awaitRequestCount(3)
+            assertEquals(listOf(f.hash("a"), f.hash("b"), f.hash("d")), f.requests().map { it.sha256 })
+            f.deliverChunk("b", 0); f.awaitRequestCount(4)
+            assertEquals(f.hash("c"), f.requests()[3].sha256)
+            f.deliverChunk("d", 0); f.awaitRequestCount(5)
+            assertEquals(f.hash("a"), f.requests()[4].sha256)
+            assertEquals(65_536L, f.requests()[4].offset)
+            f.deliverChunk("c", 0); f.awaitRequestCount(6)
+            assertEquals(f.hash("b"), f.requests()[5].sha256)
+            assertEquals(65_536L, f.requests()[5].offset)
+            f.deliverChunk("a", 65_536); f.deliverChunk("b", 65_536)
+            f.awaitReadyAssets(setOf("a", "b", "c", "d"))
+            assertArrayEquals(f.bytes("a"), f.readyFile("a").readBytes())
+            assertArrayEquals(f.bytes("b"), f.readyFile("b").readBytes())
+            assertTrue(f.failedStatuses().isEmpty())
+        } finally { f.close() }
+    }
+
     @Test
     fun interruptedTransferResumesAndReportsVerifiedParticipantReadiness() {
         val root = Files.createTempDirectory("GetOverHereTransferTests-").toFile()
@@ -149,7 +172,9 @@ class TourAssetTransferServiceTest {
 
             try {
                 val credential = SessionCredential.derive("23456789AB", sessionID)
+                guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
                 guide.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
+                guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
                 guest.configureSession(sessionID, guestID, "Guest", ParticipantPlatform.ANDROID, credential)
                 guide.hostTourPack(
                     TourPackManifestPayload(packID, 0, "Alhambra", emptyList()),
@@ -419,6 +444,7 @@ class TourAssetTransferServiceTest {
                 TourAssetTransferService(transport, cache)
             }
             service.setEventHandler { events += it }
+            service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             service.configureSession(
                 sessionID,
                 UUID.randomUUID(),

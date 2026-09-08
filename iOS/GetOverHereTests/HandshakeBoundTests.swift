@@ -21,6 +21,7 @@ struct HandshakeBoundTests {
         let guide = LocalSessionControlTransport(port: port)
         let sessionID = UUID()
         defer { guide.stop() }
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -40,6 +41,7 @@ struct HandshakeBoundTests {
         let guide = UDPAudioPlane(port: port, codecProvider: BoundTestCodecProvider())
         let sessionID = UUID()
         defer { guide.stop() }
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),

@@ -26,7 +26,7 @@ struct ChannelServiceLifecycleTests {
         let service: ChannelService
         private let root: URL
 
-        init(reconnectBaseDelay: Duration = .milliseconds(1)) throws {
+        init(reconnectBaseDelay: Duration = .milliseconds(1), allowNearbyAdmission: Bool = false) throws {
             root = FileManager.default.temporaryDirectory.appending(
                 path: "GetOverHereLifecycle-\(UUID().uuidString)",
                 directoryHint: .isDirectory
@@ -48,7 +48,7 @@ struct ChannelServiceLifecycleTests {
                 contentStore: try TourContentStore(rootDirectory: root.appending(path: "packs")),
                 localGuidanceService: LocalGuidanceService(),
                 reconnectBaseDelay: reconnectBaseDelay,
-                roomAdmission: LifecycleRoomAdmission()
+                roomAdmission: LifecycleRoomAdmission(allowNearby: allowNearbyAdmission)
             )
         }
 
@@ -75,7 +75,7 @@ struct ChannelServiceLifecycleTests {
         let h = try Harness()
         defer { h.service.terminate(); h.close() }
         let channel = Channel(id: UUID().uuidString, name: "Nearby", createdAt: .now,
-                              createdBy: UUID().uuidString, roomAdmissionVersion: 1)
+                              createdBy: UUID().uuidString, roomAdmissionVersion: 2)
         #expect(!h.service.canJoin(channel))
         h.controlPlane.nearbyAvailable = true
         #expect(h.service.canJoin(channel))
@@ -112,14 +112,13 @@ struct ChannelServiceLifecycleTests {
         #expect(h.controlPlane.bluetoothMode == .off)
     }
 
-    @Test("A guide advertises without scanning only after Bluetooth opt-in")
+    @Test("Creating a tour activates nearby advertising without an extra settings step")
     @MainActor
     func bluetoothGuideLifecycle() async throws {
         let h = try Harness()
         defer { h.service.terminate(); h.close() }
-        _ = try await createGuide(h)
         #expect(h.controlPlane.bluetoothMode == .off)
-        h.service.bluetoothDiscoveryEnabled = true
+        _ = try await createGuide(h)
         #expect(h.controlPlane.bluetoothMode == .advertising)
         h.service.discoveryForeground = false
         // A joined tour keeps its Bluetooth listener alive when the guide locks the phone.
@@ -392,6 +391,46 @@ struct ChannelServiceLifecycleTests {
         #expect(h.control.startGuestCalls == 6)
     }
 
+    @Test("A failed nearby route is retried with a bound, without restarting a closed adapter")
+    @MainActor
+    func nearbyRouteRecoveryExhaustionStopsCleanly() async throws {
+        let h = try Harness(allowNearbyAdmission: true)
+        defer { h.close() }
+        h.controlPlane.nearbyAvailable = true
+        _ = try await discoverAndJoin(h, hostIP: nil)
+        try await connectGuest(h)
+        h.controlPlane.nearbyPrepareError = NearbyConnectionError.unavailable
+        h.control.emit(.disconnected)
+        try await waitUntil("nearby route attempts exhausted") { h.service.connectionState == .failed }
+        #expect(h.controlPlane.nearbyPrepareCalls == 6)
+        #expect(h.control.startGuestCalls == 1, "failed route preparation cannot restart a stale loopback adapter")
+        #expect(h.service.guestRoute == nil)
+    }
+
+    @Test("Nearby identity mismatch is terminal; healthy recovery preserves route ownership", arguments: [false, true])
+    @MainActor
+    func nearbyRecoveryPreservesRouteOrRejectsIdentity(mismatch: Bool) async throws {
+        let h = try Harness(allowNearbyAdmission: true)
+        defer { h.close() }
+        h.controlPlane.nearbyAvailable = true
+        _ = try await discoverAndJoin(h, hostIP: nil)
+        try await connectGuest(h)
+        let route = try #require(h.service.guestRoute)
+        let stops = h.controlPlane.nearbyStopCalls
+        if mismatch { h.controlPlane.nearbyPrepareError = RoomAdmissionV2Error.wrongGuide }
+        h.control.emit(.disconnected)
+        if mismatch {
+            try await waitUntil("nearby identity rejected") { h.service.connectionState == .failed }
+            #expect(h.controlPlane.nearbyPrepareCalls == 2)
+            #expect(h.control.startGuestCalls == 1)
+            #expect(h.service.tourFeatureError == RoomAdmissionV2Error.wrongGuide.localizedDescription)
+        } else {
+            try await waitUntil("nearby lanes recovered") { h.control.startGuestCalls == 2 }
+            #expect(h.service.guestRoute == route)
+            #expect(h.controlPlane.nearbyStopCalls == stops)
+        }
+    }
+
     @Test("terminate() clears all lanes for a guide and for a guest")
     @MainActor
     func terminateClearsAllLanesForGuideAndGuest() async throws {
@@ -523,10 +562,101 @@ struct ChannelServiceLifecycleTests {
         h.engine.captureContinuation?.finish()
 
         try await waitUntil("capture error surfaced") {
-            h.service.tourFeatureError == "Microphone capture stopped"
+            h.service.audioRuntimeError == "Microphone capture stopped"
         }
+        #expect(h.service.audioRuntimeState == .failed)
         #expect(h.service.listenState == .broadcasting, "control and asset lanes stay up (DSCN-12)")
         #expect(h.control.clearSessionCalls == 0)
+        h.service.restartMicrophone()
+        #expect(h.service.audioRuntimeState == .running)
+        #expect(h.service.audioRuntimeError == nil)
+        #expect(h.engine.startCaptureCalls == 2)
+        #expect(h.control.startGuideCalls == 1)
+        #expect(h.audioPlane.startBroadcastingCalls == 1)
+    }
+
+    @Test("A connected guest waits for renderer acceptance before showing audio running")
+    @MainActor
+    func audioReadinessRequiresRendererAcceptance() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        _ = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        #expect(h.service.audioRuntimeState == .starting)
+        h.audioPlane.audioHandler?(Data([0, 0, 1, 0]))
+        try await waitUntil("renderer accepted audio") { h.service.audioRuntimeState == .running }
+        #expect(h.engine.played.count == 1)
+    }
+
+    @Test("Playback startup failure keeps room lanes and Retry Audio does not readmit")
+    @MainActor
+    func playbackFailureCanRetryWithoutRejoiningRoom() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        // Join normally, then use the same retry entry point to inject a renderer start failure.
+        let channel = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        h.engine.startPlaybackError = AudioEngineError.playbackStartFailed("Renderer unavailable")
+        h.service.retryAudio()
+        #expect(h.service.audioRuntimeState == .failed)
+        #expect(h.service.audioRuntimeError != nil)
+        #expect(h.service.connectionState == .connected)
+        #expect(h.service.activeChannelID == channel.id)
+        #expect(h.control.startGuestCalls == 1)
+        #expect(h.asset.startGuestCalls == 1)
+        let failedRun = h.engine.onRuntimeEvent
+        h.engine.startPlaybackError = nil
+        h.service.retryAudio()
+        #expect(h.service.audioRuntimeState == .starting)
+        failedRun?(.failed(.playback, "Stale renderer failure"))
+        #expect(h.service.audioRuntimeError == nil)
+        h.audioPlane.audioHandler?(Data([0, 0]))
+        try await waitUntil("audio retry accepted") { h.service.audioRuntimeState == .running }
+        #expect(h.control.startGuestCalls == 1)
+        #expect(h.asset.startGuestCalls == 1)
+    }
+
+    @Test("Audio callbacks queued before Leave cannot revive the old session")
+    @MainActor
+    func staleAudioCallbackCannotReviveLeftRoom() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        _ = try await discoverAndJoin(h)
+        let oldCallback = h.engine.onRuntimeEvent
+        let oldPCM = h.audioPlane.audioHandler
+        h.service.leaveChannel()
+        oldCallback?(.firstPlaybackBufferAccepted)
+        oldPCM?(Data([0, 0]))
+        await Task.yield()
+        #expect(h.service.audioRuntimeState == .idle)
+        #expect(h.engine.played.isEmpty)
+    }
+
+    @Test("Old guide callbacks cannot fail a replacement guide or guest", arguments: [false, true])
+    @MainActor
+    func oldGuideCallbackCannotAffectReplacement(becomeGuest: Bool) async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        h.service.createChannel(name: "First guide")
+        try await waitUntil("first guide") { h.service.listenState == .broadcasting }
+        let oldHandler = try #require(h.audioPlane.handler)
+        h.service.leaveChannel()
+        if becomeGuest {
+            _ = try await discoverAndJoin(h)
+        } else {
+            h.service.createChannel(name: "Replacement guide")
+            try await waitUntil("replacement guide") { h.service.listenState == .broadcasting }
+        }
+        let replacement = h.service.activeChannelID
+        oldHandler(.failed("Stale guide transport failure"))
+        oldHandler(.joined(ParticipantSession(participantID: UUID(), connectionID: "stale-guide",
+            displayName: "Old guest", role: .guest, platform: .iOS)))
+        // Synchronize with the queued MainActor delivery, not a radio or wall-clock delay.
+        await Task { @MainActor in }.value
+        #expect(h.service.activeChannelID == replacement)
+        #expect(h.service.connectionState != .failed)
+        #expect(h.service.tourFeatureError == nil)
+        #expect(h.service.listenerCount == 0)
     }
 
     // MARK: - G5 FND-9
@@ -540,6 +670,7 @@ struct ChannelServiceLifecycleTests {
         let h = try Harness()
         defer { h.close() }
         #expect(h.service.tourFeatureError == nil)
+        _ = try await discoverAndJoin(h)
 
         h.asset.emit(.failed("Asset lane failed"))
 
@@ -560,7 +691,7 @@ struct ChannelServiceLifecycleTests {
     /// Discovery must append the channel first: `scheduleReconnect` and the address-change path
     /// resolve through `channels`.
     @MainActor
-    private func discoverAndJoin(_ h: Harness, hostIP: String = "10.0.0.1") async throws -> Channel {
+    private func discoverAndJoin(_ h: Harness, hostIP: String? = "10.0.0.1") async throws -> Channel {
         h.coordinator.start()
         h.service.startListening()
         let channelID = UUID().uuidString
@@ -570,7 +701,9 @@ struct ChannelServiceLifecycleTests {
             createdBy: UUID().uuidString,
             audioQuality: .standard,
             wifiSSID: nil,
-            audioHostIP: hostIP
+            audioHostIP: hostIP,
+            roomAdmissionVersion: 2,
+            isRoomLocked: false
         )))
         try await waitUntil("discovered channel") { h.service.channels.contains { $0.id == channelID } }
         let channel = try #require(h.service.channels.first { $0.id == channelID })
@@ -596,7 +729,9 @@ struct ChannelServiceLifecycleTests {
             createdBy: channel.createdBy,
             audioQuality: .standard,
             wifiSSID: nil,
-            audioHostIP: audioHostIP
+            audioHostIP: audioHostIP,
+            roomAdmissionVersion: channel.roomAdmissionVersion,
+            isRoomLocked: channel.isRoomLocked
         )
     }
 

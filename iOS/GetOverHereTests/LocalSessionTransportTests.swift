@@ -11,9 +11,99 @@ struct LocalSessionTransportTests {
         case streamEnded
     }
 
-    @Test("GOH2 hello registers the guest and realtime payload arrives")
+    @Test func participantSlotsCountUniqueMembersAndReleaseOnlyTheMatchingConnection() throws {
+        let slots = SessionParticipantSlots()
+        let participants = (0..<30).map { _ in UUID() }
+        let connections = (0..<30).map { _ in UUID() }
+        for (participant, connection) in zip(participants, connections) {
+            try slots.acquire(participantID: participant, connectionID: connection)
+        }
+        #expect(slots.participantCount == 30)
+        #expect(throws: SessionParticipantCapacityError.self) {
+            try slots.acquire(participantID: UUID(), connectionID: UUID())
+        }
+        let replacement = UUID()
+        try slots.acquire(participantID: participants[0], connectionID: replacement)
+        slots.release(connections[0]); slots.release(connections[0])
+        #expect(slots.participantCount == 30)
+        slots.release(replacement)
+        #expect(slots.participantCount == 29)
+        let newConnection = UUID()
+        try slots.acquire(participantID: UUID(), connectionID: newConnection)
+        #expect(throws: SessionParticipantCapacityError.self) {
+            try slots.acquire(participantID: UUID(), connectionID: newConnection)
+        }
+        #expect(slots.participantCount == 30)
+    }
+
+    @Test("Native signed socket lane rejects member31 before welcome and permits member reconnect; not a radio scale test",
+          .timeLimit(.minutes(1)), arguments: [SessionLane.realtime, .control, .asset])
     @MainActor
-    func helloAndAudioRoundtrip() async throws {
+    func nativeSignedLaneEnforcesThirtyMemberBound(lane: SessionLane) async throws {
+        let port: UInt16 = 50_051
+        let session = UUID()
+        let guideID = UUID()
+        let credential = try transportCredential(session)
+        let signer = GuideFrameSigner(sessionID: session, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: session, guideID: guideID)
+        let control = LocalSessionControlTransport(port: port)
+        let assets = LocalSessionAssetTransport(port: port)
+        let audio = UDPAudioPlane(port: port, codecProvider: PassThroughRealtimeAudioCodecProvider())
+        let (joined, continuation) = AsyncStream.makeStream(of: UUID.self)
+        var clients: [RawGuestClient] = []
+        defer {
+            clients.forEach { $0.close() }
+            control.clearSession(); assets.clearSession(); audio.clearSession()
+            continuation.finish()
+        }
+        switch lane {
+        case .realtime:
+            audio.configureSession(sessionID: session, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+            audio.configureGuideAuthentication(.guide(signer))
+            audio.setSessionEventHandler { if case let .joined(participant) = $0 { continuation.yield(participant.participantID) } }
+            try audio.startBroadcasting(channelID: session.uuidString, quality: .standard)
+        case .control:
+            control.configureSession(sessionID: session, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+            control.configureGuideAuthentication(.guide(signer))
+            control.setEventHandler { if case let .guestJoined(participant) = $0 { continuation.yield(participant.participantID) } }
+            try control.startGuide()
+        case .asset:
+            assets.configureSession(sessionID: session, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+            assets.configureGuideAuthentication(.guide(signer))
+            assets.setEventHandler { if case let .guestJoined(participant) = $0 { continuation.yield(participant.participantID) } }
+            try assets.startGuide()
+        }
+        let participants = (0..<SessionCapacityPolicy.listenerLimit).map { _ in UUID() }
+        for participant in participants {
+            clients.append(try await signedCapacityGuest(port: port, sessionID: session, participantID: participant,
+                credential: credential, lane: lane, verifier: verifier))
+            #expect(try await next(from: joined) == participant)
+        }
+        await #expect(throws: RawGuestClient.ClientError.self) {
+            try await signedCapacityGuest(port: port, sessionID: session, participantID: UUID(),
+                credential: credential, lane: lane, verifier: verifier)
+        }
+        clients.append(try await signedCapacityGuest(port: port, sessionID: session, participantID: participants[0],
+            credential: credential, lane: lane, verifier: verifier))
+        #expect(try await next(from: joined) == participants[0])
+        let oldClient = clients[0]
+        #expect(await Task { @concurrent in oldClient.readFrame() }.value == nil)
+    }
+
+    @concurrent private func signedCapacityGuest(port: UInt16, sessionID: UUID, participantID: UUID,
+        credential: SessionCredential, lane: SessionLane, verifier: GuideFrameVerifier) async throws -> RawGuestClient {
+        let client = try RawGuestClient(port: port)
+        do {
+            _ = try client.authenticate(sessionID: sessionID, participantID: participantID, displayName: "Guest",
+                platform: .iOS, credential: credential, lane: lane, guideVerifier: verifier,
+                capabilities: SessionCapabilities.opusDecoder.rawValue)
+            return client
+        } catch { client.close(); throw error }
+    }
+
+    @Test("GOH2 hello registers the guest and realtime payload arrives", arguments: [false, true])
+    @MainActor
+    func helloAndAudioRoundtrip(signed: Bool) async throws {
         let provider = PassThroughRealtimeAudioCodecProvider()
         let guide = UDPAudioPlane(codecProvider: provider)
         let guest = UDPAudioPlane(codecProvider: provider)
@@ -21,6 +111,8 @@ struct LocalSessionTransportTests {
         let guideID = UUID()
         let guestID = UUID()
         let credential = try transportCredential(sessionID)
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: sessionID, guideID: guideID)
         let payload = Data([0x10, 0x20, 0x30, 0x40])
         let (events, eventContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
         let (audio, audioContinuation) = AsyncStream.makeStream(of: (Data, String).self)
@@ -32,6 +124,7 @@ struct LocalSessionTransportTests {
             audioContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(signed ? .guide(signer) : .legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: guideID,
@@ -43,6 +136,7 @@ struct LocalSessionTransportTests {
         try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(signed ? .guest(verifier) : .legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: guestID,
@@ -213,6 +307,7 @@ struct LocalSessionTransportTests {
             continuation.finish()
         }
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -232,14 +327,17 @@ struct LocalSessionTransportTests {
         #expect(localMajor == SealedSessionEnvelope.majorVersion)
     }
 
-    @Test("Native codec crosses the encrypted realtime transport")
+    @Test("Native codec crosses the encrypted realtime transport", arguments: [false, true])
     @MainActor
-    func nativeCodecEncryptedAudioRoundtrip() async throws {
+    func nativeCodecEncryptedAudioRoundtrip(signed: Bool) async throws {
         let port: UInt16 = 50_034
         let guide = UDPAudioPlane(port: port)
         let guest = UDPAudioPlane(port: port)
         let sessionID = UUID()
+        let guideID = UUID()
         let credential = try transportCredential(sessionID)
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: sessionID, guideID: guideID)
         let (events, eventContinuation) = AsyncStream.makeStream(of: AudioSessionEvent.self)
         let (audio, audioContinuation) = AsyncStream.makeStream(of: Data.self)
         defer {
@@ -249,9 +347,10 @@ struct LocalSessionTransportTests {
             audioContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(signed ? .guide(signer) : .legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
-            participantID: UUID(),
+            participantID: guideID,
             displayName: "Guide",
             platform: .iOS,
             credential: credential
@@ -260,6 +359,7 @@ struct LocalSessionTransportTests {
         try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(signed ? .guest(verifier) : .legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -283,15 +383,17 @@ struct LocalSessionTransportTests {
         #expect(decoded.count.isMultiple(of: MemoryLayout<Int16>.size))
     }
 
-    @Test("Independent GOH2 control lane authenticates both directions")
+    @Test("Independent GOH2 control lane authenticates both directions", arguments: [false, true])
     @MainActor
-    func controlLaneRoundtrip() async throws {
+    func controlLaneRoundtrip(signed: Bool) async throws {
         let guide = LocalSessionControlTransport()
         let guest = LocalSessionControlTransport()
         let sessionID = UUID()
         let guideID = UUID()
         let guestID = UUID()
         let credential = try transportCredential(sessionID)
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: sessionID, guideID: guideID)
         let targetID = UUID()
         let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
         let (guestEvents, guestContinuation) = AsyncStream.makeStream(of: SessionControlEvent.self)
@@ -303,6 +405,7 @@ struct LocalSessionTransportTests {
             guestContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(signed ? .guide(signer) : .legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: guideID,
@@ -314,6 +417,7 @@ struct LocalSessionTransportTests {
         try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(signed ? .guest(verifier) : .legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: guestID,
@@ -416,6 +520,7 @@ struct LocalSessionTransportTests {
             guestContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -426,6 +531,7 @@ struct LocalSessionTransportTests {
         try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -471,6 +577,7 @@ struct LocalSessionTransportTests {
         let guests = guestIDs.enumerated().map { index, guestID in
             let guest = LocalSessionControlTransport(port: port)
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(.legacyFixture)
             guest.configureSession(
                 sessionID: sessionID,
                 participantID: guestID,
@@ -492,6 +599,7 @@ struct LocalSessionTransportTests {
             receivedContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: guideID,
@@ -562,6 +670,7 @@ struct LocalSessionTransportTests {
         let healthy = healthyIDs.map { guestID in
             let guest = LocalSessionControlTransport(port: port)
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(.legacyFixture)
             guest.configureSession(
                 sessionID: sessionID,
                 participantID: guestID,
@@ -585,6 +694,7 @@ struct LocalSessionTransportTests {
             receiptContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -674,6 +784,7 @@ struct LocalSessionTransportTests {
             guideContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: guideID,
@@ -752,6 +863,7 @@ struct LocalSessionTransportTests {
             guestContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -766,6 +878,7 @@ struct LocalSessionTransportTests {
         try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: guestID,
@@ -836,6 +949,7 @@ struct LocalSessionTransportTests {
             continuation.finish()
         }
 
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -845,6 +959,7 @@ struct LocalSessionTransportTests {
         )
         try guide.startGuide()
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -891,6 +1006,7 @@ struct LocalSessionTransportTests {
             guide.stop()
             continuation.finish()
         }
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -900,6 +1016,7 @@ struct LocalSessionTransportTests {
         )
         try guide.startGuide()
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -946,6 +1063,7 @@ struct LocalSessionTransportTests {
             continuation.finish()
         }
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -977,6 +1095,7 @@ struct LocalSessionTransportTests {
             transport.clearSession()
             continuation.finish()
         }
+        transport.configureGuideAuthentication(.legacyFixture)
         transport.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -1000,15 +1119,17 @@ struct LocalSessionTransportTests {
         try await expectControlSilence(on: events)
     }
 
-    @Test("Independent GOH2 asset lane supports targeted manifests and guest requests")
+    @Test("Independent GOH2 asset lane supports targeted manifests and guest requests", arguments: [false, true])
     @MainActor
-    func assetLaneRoundtrip() async throws {
+    func assetLaneRoundtrip(signed: Bool) async throws {
         let guide = LocalSessionAssetTransport()
         let guest = LocalSessionAssetTransport()
         let sessionID = UUID()
         let guideID = UUID()
         let guestID = UUID()
         let credential = try transportCredential(sessionID)
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: sessionID, guideID: guideID)
         let packID = UUID()
         let hash = String(repeating: "ab", count: 32)
         let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: SessionAssetEvent.self)
@@ -1021,6 +1142,7 @@ struct LocalSessionTransportTests {
             guestContinuation.finish()
         }
 
+        guide.configureGuideAuthentication(signed ? .guide(signer) : .legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: guideID,
@@ -1032,6 +1154,7 @@ struct LocalSessionTransportTests {
         try guide.startGuide()
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(signed ? .guest(verifier) : .legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: guestID,
@@ -1095,6 +1218,116 @@ struct LocalSessionTransportTests {
         #expect(try AssetRequestPayload.decode(requestEnvelope.payload) == request)
     }
 
+    @Test("Signed-profile native lanes reject unsigned, wrong-key, tampered and malformed guide challenges",
+          arguments: [SessionLane.control, .asset, .realtime], ["unsigned", "wrong-key", "tampered", "malformed"])
+    @MainActor
+    func signedNativeHandshakeRejectsUntrustedGuide(lane: SessionLane, attack: String) async throws {
+        let port: UInt16 = 50_048
+        let sessionID = UUID()
+        let guideID = UUID()
+        let credential = try transportCredential(sessionID)
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: sessionID, guideID: guideID)
+        let envelope = try SessionEnvelope(lane: .control, kind: .authChallenge, sequence: 0,
+            sessionID: sessionID, senderID: guideID,
+            payload: AuthChallengePayload(requestedLane: lane, challengeNonce: SessionAuthenticator.randomNonce()).encode())
+        let sealed = try SessionFrameSealer(credential: credential).seal(envelope, streamID: UUID())
+        let frame: Data
+        switch attack {
+        case "unsigned": frame = sealed.encode()
+        case "wrong-key": frame = try GuideFrameSigner(sessionID: sessionID, guideID: guideID).sign(sealed).encode()
+        case "tampered":
+            var bytes = try signer.sign(sealed).encode()
+            bytes[bytes.count - 1] ^= 1
+            frame = bytes
+        case "malformed": frame = Data(try signer.sign(sealed).encode().dropLast())
+        default: throw GuideSignatureError.invalidFrame
+        }
+        let serverFD = try legacyVersionServer(port: port)
+        let serverTask = Task { @concurrent in
+            let client = Darwin.accept(serverFD, nil, nil)
+            guard client >= 0 else { return }
+            defer { close(client) }
+            #expect(writeTestFrame(fd: client, data: frame))
+        }
+        let (events, continuation) = AsyncStream.makeStream(of: String.self)
+        let control = LocalSessionControlTransport(port: port)
+        let assets = LocalSessionAssetTransport(port: port)
+        let audio = UDPAudioPlane(port: port, codecProvider: PassThroughRealtimeAudioCodecProvider())
+        defer {
+            control.clearSession(); assets.clearSession(); audio.clearSession()
+            continuation.finish()
+            shutdown(serverFD, SHUT_RDWR); close(serverFD); serverTask.cancel()
+        }
+        switch lane {
+        case .control:
+            control.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guest", platform: .iOS, credential: credential)
+            control.configureGuideAuthentication(.guest(verifier))
+            control.hostIP = "127.0.0.1"
+            control.setEventHandler {
+                switch $0 {
+                case .credentialRejected: continuation.yield("rejected")
+                case .connected, .envelopeReceived: continuation.yield("accepted")
+                case .failed: continuation.yield("retryable-failure")
+                default: break
+                }
+            }
+            control.startGuest()
+        case .asset:
+            assets.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guest", platform: .iOS, credential: credential)
+            assets.configureGuideAuthentication(.guest(verifier))
+            assets.hostIP = "127.0.0.1"
+            assets.setEventHandler {
+                switch $0 {
+                case .credentialRejected: continuation.yield("rejected")
+                case .connected, .envelopeReceived: continuation.yield("accepted")
+                case .failed: continuation.yield("retryable-failure")
+                default: break
+                }
+            }
+            assets.startGuest()
+        case .realtime:
+            audio.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guest", platform: .iOS, credential: credential)
+            audio.configureGuideAuthentication(.guest(verifier))
+            audio.hostIP = "127.0.0.1"
+            audio.setSessionEventHandler {
+                switch $0 {
+                case .authenticationFailed: continuation.yield("rejected")
+                case .failed: continuation.yield("retryable-failure")
+                default: break
+                }
+            }
+            audio.startListening(channelID: sessionID.uuidString) { _ in continuation.yield("accepted") }
+        }
+        #expect(try await next(from: events) == "rejected")
+    }
+
+    @Test("Native lanes require explicit guide authority and terminal clear erases it")
+    @MainActor
+    func nativeGuideAuthorityMustBeConfigured() throws {
+        let sessionID = UUID()
+        let guideID = UUID()
+        let credential = try transportCredential(sessionID)
+        let control = LocalSessionControlTransport(port: 50_048)
+        let assets = LocalSessionAssetTransport(port: 50_049)
+        let audio = UDPAudioPlane(port: 50_050, codecProvider: PassThroughRealtimeAudioCodecProvider())
+        defer { control.clearSession(); assets.clearSession(); audio.clearSession() }
+        control.configureSession(sessionID: sessionID, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+        assets.configureSession(sessionID: sessionID, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+        audio.configureSession(sessionID: sessionID, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+        #expect(throws: SessionGuideAuthenticationError.self) { try control.startGuide() }
+        #expect(throws: SessionGuideAuthenticationError.self) { try assets.startGuide() }
+        #expect(throws: SessionGuideAuthenticationError.self) { try audio.startBroadcasting(channelID: sessionID.uuidString, quality: .standard) }
+        let signer = GuideFrameSigner(sessionID: sessionID, guideID: guideID)
+        control.configureGuideAuthentication(.guide(signer))
+        try control.startGuide()
+        control.stop()
+        try control.startGuide()
+        control.clearSession()
+        control.configureSession(sessionID: sessionID, participantID: guideID, displayName: "Guide", platform: .iOS, credential: credential)
+        #expect(throws: SessionGuideAuthenticationError.self) { try control.startGuide() }
+    }
+
     @MainActor
     private func startAudioPair(
         guide: UDPAudioPlane,
@@ -1105,6 +1338,7 @@ struct LocalSessionTransportTests {
         guideEvents: AsyncStream<AudioSessionEvent>.Continuation,
         guestEvents: AsyncStream<AudioSessionEvent>.Continuation
     ) throws {
+        guide.configureGuideAuthentication(.legacyFixture)
         guide.configureSession(
             sessionID: sessionID,
             participantID: UUID(),
@@ -1116,6 +1350,7 @@ struct LocalSessionTransportTests {
         try guide.startBroadcasting(channelID: sessionID.uuidString, quality: .standard)
 
         guest.hostIP = "127.0.0.1"
+        guest.configureGuideAuthentication(.legacyFixture)
         guest.configureSession(
             sessionID: sessionID,
             participantID: UUID(),

@@ -50,9 +50,16 @@ class AudioLaneReconnectTest {
         val guideAssets = LocalSessionAssetTransport()
         val guideAudio = UDPAudioPlane()
         val guideDiscovery = LocalControlPlane(app, "Guide")
+        val admission = com.aessam.comeoverhere.core.RoomAdmissionTransport()
+        val signer = com.aessam.toursession.GuideFrameSigner(sessionID, guideID)
+        val authentication = com.aessam.comeoverhere.core.SessionGuideAuthentication.Guide(signer)
         try {
+            admission.start(sessionID, TOUR_CODE, signer)
+            guideControl.configureGuideAuthentication(authentication)
             guideControl.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
+            guideAssets.configureGuideAuthentication(authentication)
             guideAssets.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
+            guideAudio.configureGuideAuthentication(authentication)
             guideAudio.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
             guideControl.startGuide()
             guideAssets.startGuide()
@@ -65,6 +72,8 @@ class AudioLaneReconnectTest {
                     audioQuality = AudioQuality.STANDARD,
                     wifiSSID = null,
                     audioHostIP = null,
+                    roomAdmissionVersion = 2,
+                    isRoomLocked = false,
                 ),
             )
 
@@ -74,7 +83,7 @@ class AudioLaneReconnectTest {
             }
             Log.i(TAG, "Discovered in-process guide channel; hostIP present=${channel.audioHostIP != null}")
 
-            withContext(Dispatchers.Main) { service.joinChannel(channel, TOUR_CODE) }
+            withContext(Dispatchers.Main) { service.joinChannel(channel, "") }
             withTimeout(10_000) { service.connectionState.first { it == SessionConnectionState.CONNECTED } }
             withTimeout(5_000) {
                 while (guideAudio.acceptedClientSockets().isEmpty()) delay(50)
@@ -94,6 +103,7 @@ class AudioLaneReconnectTest {
             guideControl.clearSession()
             guideAssets.clearSession()
             guideDiscovery.stop()
+            admission.stop()
         }
     }
 

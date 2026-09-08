@@ -96,8 +96,11 @@ class NearbyPhysicalTransportTest {
         val chunk = AssetChunkPayload(assetHash, 0, assetBytes.size.toLong(), assetBytes)
         try {
             val credential: SessionCredential
+            val authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication
             if (role == "guide") {
-                admission.start(room, "23456789AB")
+                val signer = com.aessam.toursession.GuideFrameSigner(room, guideID)
+                authentication = com.aessam.comeoverhere.core.SessionGuideAuthentication.Guide(signer)
+                admission.start(room, "23456789AB", signer)
                 admission.update(RoomAccessPolicy(room, "2468"))
                 credential = SessionCredential.derive("23456789AB", room)
             } else {
@@ -125,11 +128,17 @@ class NearbyPhysicalTransportTest {
                     connect = aware?.connector(room) ?: run { radio.setJoinedRoom(room); radio.connector(room) }
                 }
                 bridge.startGuest(room, connect)
-                credential = SessionCredential.derive(admission.join("127.0.0.1", room, "2468"), room)
+                val admitted = admission.join("127.0.0.1", room, guideID, "2468")
+                credential = SessionCredential.derive(admitted.mediaSecret, room)
+                authentication = com.aessam.comeoverhere.core.SessionGuideAuthentication.Guest(
+                    com.aessam.toursession.GuideFrameVerifier(admitted.guideIdentity.publicKey, room, guideID))
                 Log.i("NearbyPhysical", "BLE room admission authenticated")
             }
+            audio.configureGuideAuthentication(authentication)
             audio.configureSession(room, participant, role!!, ParticipantPlatform.ANDROID, credential)
+            control.configureGuideAuthentication(authentication)
             control.configureSession(room, participant, role, ParticipantPlatform.ANDROID, credential)
+            asset.configureGuideAuthentication(authentication)
             asset.configureSession(room, participant, role, ParticipantPlatform.ANDROID, credential)
             if (role == "guide") {
                 val audioJoined = AtomicInteger()
@@ -137,7 +146,7 @@ class NearbyPhysicalTransportTest {
                 audio.startBroadcasting(room.toString(), AudioQuality.STANDARD)
                 control.startGuide(); asset.startGuide()
                 instrumentation.runOnMainSync {
-                    val record = BluetoothRoomRecord(room, guideID, "Physical nearby fixture", true, true)
+                    val record = BluetoothRoomRecord(room, guideID, "Physical nearby fixture", true, true, admissionVersion = 2)
                     val nativeAware = aware
                     if (nativeAware != null) {
                         nativeAware.onError = { Log.w("NearbyPhysical", "Aware: $it") }

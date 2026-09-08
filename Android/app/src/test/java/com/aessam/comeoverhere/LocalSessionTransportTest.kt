@@ -65,6 +65,7 @@ class LocalSessionTransportTest {
         val audioThreadName = AtomicReference<String>()
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -82,6 +83,7 @@ class LocalSessionTransportTest {
 
             guest.hostIP = "127.0.0.1"
             guest.setGuestSocketFactory(factory)
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 guestID,
@@ -232,6 +234,7 @@ class LocalSessionTransportTest {
         val received = AtomicReference<AudioSessionEvent.VersionMismatch>()
         try {
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -276,6 +279,7 @@ class LocalSessionTransportTest {
         val socketFactory = CountingSocketFactory()
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -302,6 +306,7 @@ class LocalSessionTransportTest {
 
             guest.hostIP = "127.0.0.1"
             guest.setGuestSocketFactory(socketFactory)
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(sessionID, guestID, "Guest", ParticipantPlatform.ANDROID, credential)
             guest.setEventHandler { event ->
                 when (event) {
@@ -372,6 +377,7 @@ class LocalSessionTransportTest {
         val leaveReceived = CountDownLatch(1)
         val failure = AtomicReference<String>()
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -381,6 +387,7 @@ class LocalSessionTransportTest {
             )
             guide.startGuide()
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -421,6 +428,7 @@ class LocalSessionTransportTest {
         val message = AtomicReference<String>()
         val failure = AtomicReference<String>()
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -430,6 +438,7 @@ class LocalSessionTransportTest {
             )
             guide.startGuide()
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -489,6 +498,7 @@ class LocalSessionTransportTest {
         val received = AtomicReference<SessionControlEvent.VersionMismatch>()
         try {
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -519,6 +529,7 @@ class LocalSessionTransportTest {
         val sessionID = UUID.randomUUID()
         val transport = LocalSessionControlTransport(50_033)
         val failure = AtomicReference<String>()
+        transport.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
         transport.configureSession(
             sessionID,
             UUID.randomUUID(),
@@ -555,6 +566,7 @@ class LocalSessionTransportTest {
         val failure = AtomicReference<String>()
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, guideID, "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -573,6 +585,7 @@ class LocalSessionTransportTest {
             guide.startGuide()
 
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(sessionID, guestID, "Guest", ParticipantPlatform.ANDROID, credential)
             guest.setEventHandler { event ->
                 when (event) {
@@ -634,6 +647,7 @@ class LocalSessionTransportTest {
         val guests = guestIds.mapIndexed { index, guestId ->
             LocalSessionControlTransport(port).apply {
                 hostIP = "127.0.0.1"
+                configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
                 configureSession(sessionID, guestId, "Guest $index", ParticipantPlatform.ANDROID, credential)
                 setEventHandler { event ->
                     when (event) {
@@ -650,6 +664,7 @@ class LocalSessionTransportTest {
         }
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -697,6 +712,7 @@ class LocalSessionTransportTest {
         val healthy = healthyIds.map { guestId ->
             LocalSessionControlTransport(port).apply {
                 hostIP = "127.0.0.1"
+                configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
                 configureSession(sessionID, guestId, "Guest", ParticipantPlatform.ANDROID, credential)
                 setEventHandler { event ->
                     when (event) {
@@ -716,6 +732,7 @@ class LocalSessionTransportTest {
         var stalled: RawGuestClient? = null
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -773,6 +790,7 @@ class LocalSessionTransportTest {
         val failures = CopyOnWriteArrayList<String>()
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, guideId, "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -834,6 +852,7 @@ class LocalSessionTransportTest {
         val guideFailures = CopyOnWriteArrayList<String>()
 
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
             guide.setEventHandler { event ->
                 when (event) {
@@ -848,6 +867,7 @@ class LocalSessionTransportTest {
             guide.startGuide()
 
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(sessionID, guestId, "Guest", ParticipantPlatform.ANDROID, credential)
             guest.setEventHandler { event ->
                 guestEvents += event
@@ -927,11 +947,13 @@ private fun startAudioPair(
     joined: CountDownLatch,
     guestHandler: (AudioSessionEvent) -> Unit,
 ) {
+    guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
     guide.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, guideCredential)
     guide.setSessionEventHandler { event -> if (event is AudioSessionEvent.Joined) joined.countDown() }
     guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
 
     guest.hostIP = "127.0.0.1"
+    guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
     guest.configureSession(sessionID, UUID.randomUUID(), "Guest", ParticipantPlatform.ANDROID, guestCredential)
     guest.setSessionEventHandler(guestHandler)
     guest.startListening(sessionID.toString()) { }
@@ -966,7 +988,7 @@ private class CountingSocketFactory : SocketFactory() {
     ): Socket = delegate.createSocket(address, port, localAddress, localPort)
 }
 
-private class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvider {
+internal class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvider {
     val encodeThreadNames = CopyOnWriteArraySet<String>()
 
     override fun sessionCapabilities(): Long =

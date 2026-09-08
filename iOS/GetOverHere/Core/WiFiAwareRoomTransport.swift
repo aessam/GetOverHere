@@ -71,11 +71,16 @@ final class WiFiAwareRoomTransport: NearbyRoomTransport {
     private var records: [WAEndpoint: BluetoothRoomRecord] = [:]
     private var endpoints: [UUID: WAEndpoint] = [:]
     private let supportsAware: () -> Bool
+    private let maximumConnectableDevices: () -> Int?
+    /// Device capability, not available paths and never proof of field group capacity.
+    private(set) var maximumPeerCapacity: Int?
     private let operationOverride: ((BluetoothDiscoveryMode) async throws -> Void)?
 
     init(supportsAware: @escaping () -> Bool = { WACapabilities.supportedFeatures.contains(.wifiAware) },
+         maximumConnectableDevices: @escaping () -> Int? = { WACapabilities.maximumConnectableDevices },
          operation: ((BluetoothDiscoveryMode) async throws -> Void)? = nil) {
         self.supportsAware = supportsAware
+        self.maximumConnectableDevices = maximumConnectableDevices
         self.operationOverride = operation
     }
 
@@ -86,10 +91,23 @@ final class WiFiAwareRoomTransport: NearbyRoomTransport {
         stop()
         self.mode = mode
         guard mode != .off else { return }
+        maximumPeerCapacity = nil
         guard supportsAware() else {
             stop()
             report("Wi-Fi Aware is unsupported on this device.")
             return
+        }
+        if let maximum = maximumConnectableDevices(), maximum >= 0 {
+            maximumPeerCapacity = maximum
+            Logger.transport.info("Wi-Fi Aware reports a maximum of \(maximum) unique peers; software listener bound is \(SessionCapacityPolicy.listenerLimit), hardware group capacity remains unqualified")
+            guard maximum > 0 else {
+                stop()
+                report("Wi-Fi Aware reports no connectable peers on this device.")
+                return
+            }
+        } else {
+            maximumPeerCapacity = nil
+            Logger.transport.warning("Wi-Fi Aware peer capacity is unknown; no thirty-peer claim")
         }
         guideBridge.onError = { [weak self] in self?.report($0) }
         task = Task { [weak self] in

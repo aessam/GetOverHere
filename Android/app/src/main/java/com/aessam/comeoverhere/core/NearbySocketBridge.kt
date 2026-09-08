@@ -17,7 +17,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -40,20 +39,20 @@ class NearbyTCPConnection(private val socket: Socket) : NearbyByteConnection {
  * One connection per lane; each direction holds one 16 KiB chunk until written.
  */
 class NearbySocketBridge(
-    maximumConnections: Int = 32,
+    private val connectionBudget: NearbyConnectionBudget = NearbyConnectionBudget.sharedApp,
     private val localConnect: (Int) -> NearbyByteConnection = { port ->
         NearbyTCPConnection(Socket().apply { connect(InetSocketAddress("127.0.0.1", port), 5_000) })
     },
 ) : Closeable {
     var onError: ((String) -> Unit)? = null
-    private val slots = Semaphore(maximumConnections)
     private val generation = AtomicLong()
-    private val connections = ConcurrentHashMap<UUID, MutableList<NearbyByteConnection>>()
+    private data class Group(val lease: NearbyConnectionBudget.Lease, val resources: MutableList<NearbyByteConnection>)
+    private val connections = ConcurrentHashMap<UUID, Group>()
     private val listeners = mutableListOf<ServerSocket>()
     private val executor = Executors.newCachedThreadPool { task -> Thread(task, "nearby-lane").apply { isDaemon = true } }
     private val timer = Executors.newSingleThreadScheduledExecutor { task -> Thread(task, "nearby-deadline").apply { isDaemon = true } }
 
-    init { require(maximumConnections > 0) }
+    private var closed = false
 
     @Synchronized fun stop() {
         generation.incrementAndGet()
@@ -61,7 +60,7 @@ class NearbySocketBridge(
         connections.keys.toList().forEach(::closeConnections)
     }
 
-    override fun close() { stop(); executor.shutdownNow(); timer.shutdownNow() }
+    @Synchronized override fun close() { closed = true; stop(); executor.shutdownNow(); timer.shutdownNow() }
 
     fun accept(remote: NearbyByteConnection, record: () -> BluetoothRoomRecord?) {
         launch(remote) { id, attempt ->
@@ -76,6 +75,9 @@ class NearbySocketBridge(
                     DataOutputStream(remote.output).apply { writeShort(bytes.size); write(bytes); flush() }
                 } else {
                     require(request.roomID == current.roomID) { "Nearby room changed" }
+                    if (request.lane in NearbyConnectionBudget.persistentLanes) {
+                        check(promote(id, attempt, request.lane)) { "Nearby participant capacity reached" }
+                    }
                     val local = localConnect(requireNotNull(request.lane.localPort))
                     if (!register(id, local, attempt)) return@launch
                     remote.output.write(0); remote.output.flush()
@@ -90,6 +92,7 @@ class NearbySocketBridge(
     }
 
     @Synchronized fun startGuest(roomID: UUID, connect: () -> NearbyByteConnection): String {
+        check(!closed) { "Nearby bridge closed" }
         stop()
         val attempt = generation.get()
         try {
@@ -111,6 +114,9 @@ class NearbySocketBridge(
                                 try {
                                     remote.output.write(NearbyLaneRequest(lane, roomID).encode()); remote.output.flush()
                                     check(remote.input.read() == 0) { "Nearby room ended or changed" }
+                                    if (lane in NearbyConnectionBudget.persistentLanes) {
+                                        check(promote(id, connectionAttempt, lane)) { "Nearby participant capacity reached" }
+                                    }
                                     Log.d("NearbyLane", "Guest selector accepted ${lane.name}")
                                     deadline.cancel(false)
                                     val realtime = lane == NearbyLaneRequest.Lane.REALTIME
@@ -131,10 +137,12 @@ class NearbySocketBridge(
     }
 
     fun readRecord(connect: () -> NearbyByteConnection): BluetoothRoomRecord {
-        val remote = connect()
-        remote.use {
-            val deadline = timer.schedule({ closeResource(remote) }, 10, TimeUnit.SECONDS)
+        val (id, attempt) = requireNotNull(reserveGroup(null)) { "Nearby metadata capacity reached or discovery stopped" }
+        try {
+            val deadline = timer.schedule({ closeConnections(id) }, 10, TimeUnit.SECONDS)
             try {
+                val remote = connect()
+                check(register(id, remote, attempt)) { "Nearby room read cancelled" }
                 remote.output.write(NearbyLaneRequest(NearbyLaneRequest.Lane.METADATA, NearbyLaneRequest.METADATA_ROOM_ID).encode())
                 remote.output.flush()
                 val input = DataInputStream(remote.input)
@@ -142,28 +150,46 @@ class NearbySocketBridge(
                 require(length in 40..439) { "Invalid nearby room metadata length" }
                 return BluetoothRoomRecord.decode(ByteArray(length).also(input::readFully))
             } finally { deadline.cancel(false) }
-        }
+        } finally { closeConnections(id) }
     }
 
     private fun launch(initial: NearbyByteConnection, body: (UUID, Long) -> Unit) {
-        if (!slots.tryAcquire()) { closeResource(initial); report(IllegalStateException("Nearby connection capacity reached")); return }
+        val reservation = reserveGroup(initial)
+        if (reservation == null) {
+            closeResource(initial)
+            report(IllegalStateException("Nearby bootstrap capacity reached or bridge closed"))
+            return
+        }
+        val (id, attempt) = reservation
+        try {
+            executor.execute {
+                try { body(id, attempt) }
+                catch (error: Exception) { if (generation.get() == attempt && connections.containsKey(id)) report(error) }
+                finally { closeConnections(id) }
+            }
+        } catch (error: java.util.concurrent.RejectedExecutionException) {
+            closeConnections(id)
+            report(error)
+        }
+    }
+
+    @Synchronized private fun reserveGroup(initial: NearbyByteConnection?): Pair<UUID, Long>? {
+        if (closed) return null
+        val lease = connectionBudget.reserveBootstrap() ?: return null
         val id = UUID.randomUUID()
-        val attempt: Long
-        synchronized(this) {
-            attempt = generation.get()
-            connections[id] = mutableListOf(initial)
-        }
-        executor.execute {
-            try { body(id, attempt) }
-            catch (error: Exception) { if (generation.get() == attempt && connections.containsKey(id)) report(error) }
-            finally { closeConnections(id); slots.release() }
-        }
+        connections[id] = Group(lease, listOfNotNull(initial).toMutableList())
+        return id to generation.get()
+    }
+
+    @Synchronized private fun promote(id: UUID, attempt: Long, lane: NearbyLaneRequest.Lane): Boolean {
+        if (generation.get() != attempt) return false
+        return connections[id]?.lease?.promote(lane) == true
     }
 
     @Synchronized private fun register(id: UUID, connection: NearbyByteConnection, attempt: Long): Boolean {
         val active = connections[id]
         if (generation.get() != attempt || active == null) { closeResource(connection); return false }
-        active.add(connection)
+        active.resources.add(connection)
         return true
     }
 
@@ -201,7 +227,7 @@ class NearbySocketBridge(
                     val packet = java.nio.ByteBuffer.allocate(length + 4).putInt(length).put(frame).array()
                     synchronized(lock) {
                         // Public kind only. Ciphertext is verified by the existing receiving lane.
-                        backlog.offer(packet, frame[7].toInt() == 0x10, System.nanoTime() / 1_000_000)
+                        backlog.offer(packet, isNearbyAudioFrame(frame), System.nanoTime() / 1_000_000)
                         lock.notifyAll()
                     }
                 }
@@ -244,7 +270,11 @@ class NearbySocketBridge(
         }
     }
 
-    @Synchronized private fun closeConnections(id: UUID) { connections.remove(id)?.forEach(::closeResource) }
+    @Synchronized private fun closeConnections(id: UUID) {
+        val group = connections.remove(id) ?: return
+        try { group.resources.forEach(::closeResource) }
+        finally { group.lease.close() }
+    }
     private fun closeResource(value: Closeable) {
         try { value.close() } catch (error: Exception) { Log.w("NearbyLane", "Connection close failed (${error.javaClass.simpleName})") }
     }

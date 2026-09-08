@@ -9,6 +9,7 @@ import com.aessam.comeoverhere.core.NetworkCoordinator
 import com.aessam.comeoverhere.core.SessionAssetEvent
 import com.aessam.comeoverhere.core.SessionControlEvent
 import com.aessam.comeoverhere.service.ChannelService
+import com.aessam.comeoverhere.service.AudioRuntimeState
 import com.aessam.comeoverhere.service.FileTourAssetCache
 import com.aessam.comeoverhere.service.ListenState
 import com.aessam.comeoverhere.service.SessionConnectionState
@@ -48,11 +49,247 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelServiceLifecycleTest {
+    @Test fun oldCaptureFinalizerFailureCannotFailReplacementGuideOrGuest() {
+        listOf(false, true).forEach { replaceWithGuest ->
+            val h = Harness()
+            val releaseOld = CompletableDeferred<Unit>()
+            try {
+                h.engine.captureFlow = flow {
+                    try { kotlinx.coroutines.awaitCancellation() }
+                    finally {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            releaseOld.await()
+                            throw IllegalStateException("Old capture finalizer failed")
+                        }
+                    }
+                }
+                h.createGuide()
+                h.service.leaveChannel()
+                h.engine.captureFlow = flow { kotlinx.coroutines.awaitCancellation() }
+                if (replaceWithGuest) { h.discoverAndJoin(); h.connectGuest() } else h.createGuide()
+                val current = h.service.activeChannelID.value
+                val state = h.service.audioRuntimeState.value
+                releaseOld.complete(Unit)
+                h.scheduler.runCurrent()
+                assertEquals(current, h.service.activeChannelID.value)
+                assertEquals(state, h.service.audioRuntimeState.value)
+                assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+            } finally { releaseOld.complete(Unit); h.close() }
+        }
+    }
+
+    @Test fun oldAudioRunAuthenticationCallbackCannotFailNewRoom() {
+        val h = Harness()
+        try {
+            h.discoverAndJoin(); h.connectGuest()
+            val old = h.audioPlane.capturedEventHandler()
+            h.service.leaveChannel()
+            val current = h.discoverAndJoin(); h.connectGuest()
+            old(AudioSessionEvent.AuthenticationFailed("Old run failed"))
+            h.scheduler.runCurrent()
+            assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+            assertEquals(current.id, h.service.activeChannelID.value)
+        } finally { h.close() }
+    }
+
+    @Test fun assetCredentialRejectionIsTerminalAndPreservesPinnedGuide() {
+        val h = Harness()
+        try {
+            h.discoverAndJoin(); h.connectGuest()
+            val fingerprint = h.service.guideKeyFingerprint.value
+            val starts = h.control.startGuestCalls
+            h.asset.emit(SessionAssetEvent.CredentialRejected("Asset credential rejected"))
+            awaitCondition("terminal asset rejection") { h.service.connectionState.value == SessionConnectionState.FAILED }
+            h.scheduler.advanceTimeBy(60_000); h.scheduler.runCurrent()
+            assertEquals(starts, h.control.startGuestCalls)
+            assertEquals(fingerprint, h.service.guideKeyFingerprint.value)
+        } finally { h.close() }
+    }
+
+    @Test fun changedNearbyGuideDuringReconnectIsTerminalWithoutReadmission() {
+        val h = Harness()
+        try {
+            h.controlPlane.nearbyAvailable = true
+            h.discoverAndJoin(null); h.connectGuest()
+            val starts = h.control.startGuestCalls
+            h.controlPlane.nearbyPrepareError = com.aessam.comeoverhere.core.NearbyRoomMetadataMismatch(
+                com.aessam.comeoverhere.core.NearbyRoomMetadataMismatch.Reason.GUIDE_CHANGED)
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            awaitCondition("changed nearby guide rejected") { h.scheduler.runCurrent(); h.service.connectionState.value == SessionConnectionState.FAILED }
+            h.scheduler.advanceTimeBy(60_000); h.scheduler.runCurrent()
+            assertEquals(starts, h.control.startGuestCalls)
+            assertNotNull(h.service.guideKeyFingerprint.value)
+        } finally { h.close() }
+    }
+
+    @Test fun nearbyLoopbackRetainsActualCarrierAndRouteIdentityAcrossReconnect() {
+        listOf(com.aessam.toursession.SessionTransportRoute.BLUETOOTH,
+            com.aessam.toursession.SessionTransportRoute.WIFI_AWARE).forEach { carrier ->
+            val h = Harness()
+            try {
+                h.controlPlane.nearbyAvailable = true
+                h.controlPlane.nearbyTransport = carrier
+                val room = h.discoverAndJoin(null)
+                h.connectGuest()
+                val descriptor = requireNotNull(h.service.resolvedGuestRoute)
+                assertEquals(UUID.fromString(room.id), descriptor.roomID)
+                assertEquals("127.0.0.1", descriptor.adapterHost)
+                assertEquals(carrier, h.service.activeTransportRoute.value)
+                val stops = h.controlPlane.nearbyStopCalls
+                val starts = h.control.startGuestCalls
+                h.control.emit(SessionControlEvent.Disconnected)
+                h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+                awaitCondition("nearby reconnect") { h.scheduler.runCurrent(); h.control.startGuestCalls > starts }
+                assertEquals(descriptor.routeID, h.service.resolvedGuestRoute?.routeID)
+                assertEquals(carrier, h.service.activeTransportRoute.value)
+                assertEquals(stops, h.controlPlane.nearbyStopCalls)
+                h.service.leaveChannel()
+                assertNull(h.service.resolvedGuestRoute)
+                assertNull(h.service.activeTransportRoute.value)
+                assertNull(h.controlPlane.activeNearbyGuestRoute)
+            } finally { h.close() }
+        }
+    }
+
+    @Test fun guideInstallsOneAuthorityInEveryLaneAndShowsItsFingerprint() {
+        val h = Harness()
+        try {
+            h.createGuide()
+            val authority = h.audioPlane.configuredAuthentication as com.aessam.comeoverhere.core.SessionGuideAuthentication.Guide
+            assertTrue(authority === h.control.configuredAuthentication)
+            assertTrue(authority === h.asset.configuredAuthentication)
+            val expected = java.security.MessageDigest.getInstance("SHA-256").digest(authority.signer.publicKey)
+                .take(6).joinToString("") { "%02X".format(it.toInt() and 255) }.chunked(4).joinToString(" ")
+            assertEquals(expected, h.service.guideKeyFingerprint.value)
+            h.service.leaveChannel()
+            assertNull(h.service.guideKeyFingerprint.value)
+        } finally { h.close() }
+    }
+
+    @Test fun controlAdmissionDoesNotClaimPlaybackBeforeRendererAcceptsPCM() {
+        val h = Harness()
+        try {
+            h.discoverAndJoin()
+            h.connectGuest()
+            assertEquals(AudioRuntimeState.STARTING, h.service.audioRuntimeState.value)
+            fun statuses() = h.control.sent.filter { it.first == com.aessam.toursession.SessionMessageKind.AUDIO_STATUS }
+                .map { com.aessam.toursession.AudioReadinessPayload.decode(it.second).status }
+            assertEquals(listOf(com.aessam.toursession.AudioReadinessStatus.WAITING), statuses())
+            h.engine.acceptPlayback = false
+            h.audioPlane.emitPCM(ByteArray(320))
+            assertEquals(AudioRuntimeState.STARTING, h.service.audioRuntimeState.value)
+            h.engine.acceptPlayback = true
+            h.audioPlane.emitPCM(ByteArray(320))
+            awaitCondition("renderer accepted PCM") { h.service.audioRuntimeState.value == AudioRuntimeState.RUNNING }
+            awaitCondition("renderer readiness reported") { statuses().last() == com.aessam.toursession.AudioReadinessStatus.PLAYING }
+        } finally { h.close() }
+    }
+
+    @Test fun guideAuthenticationFailureDoesNotReconnectOrDiscardSelectedRoom() {
+        val h = Harness()
+        try {
+            val room = h.discoverAndJoin()
+            h.connectGuest()
+            val starts = h.control.startGuestCalls
+            h.audioPlane.emit(AudioSessionEvent.AuthenticationFailed("Guide authentication failed"))
+            awaitCondition("authentication failed") { h.service.connectionState.value == SessionConnectionState.FAILED }
+            h.scheduler.advanceTimeBy(60_000)
+            h.scheduler.runCurrent()
+            assertEquals(starts, h.control.startGuestCalls)
+            assertEquals(room.id, h.service.activeChannelID.value)
+        } finally { h.close() }
+    }
+
+    @Test fun playbackStartupFailureIsRetryableWithoutClearingRoomOrOtherLanes() {
+        val h = Harness()
+        try {
+            h.engine.startPlaybackError = IllegalStateException("Output device unavailable")
+            val room = h.discoverAndJoin()
+            h.connectGuest()
+            assertEquals(AudioRuntimeState.FAILED, h.service.audioRuntimeState.value)
+            assertEquals("Output device unavailable", h.service.audioRuntimeError.value)
+            val controlStarts = h.control.startGuestCalls
+            val assetStarts = h.asset.startGuestCalls
+            val audioStarts = h.audioPlane.startListeningCalls
+            h.resetClearSessionBaselines()
+            h.engine.startPlaybackError = null
+            h.service.retryAudio()
+            assertEquals(AudioRuntimeState.STARTING, h.service.audioRuntimeState.value)
+            h.audioPlane.emitPCM(ByteArray(320))
+            awaitCondition("retry audible") { h.service.audioRuntimeState.value == AudioRuntimeState.RUNNING }
+            assertEquals(room.id, h.service.activeChannelID.value)
+            assertEquals(controlStarts, h.control.startGuestCalls)
+            assertEquals(assetStarts, h.asset.startGuestCalls)
+            assertEquals(audioStarts, h.audioPlane.startListeningCalls)
+            assertEquals(0, h.control.clearSessionCalls)
+            assertEquals(0, h.asset.clearSessionCalls)
+            assertTrue(h.uncaught.isEmpty())
+        } finally { h.close() }
+    }
+
+    @Test fun playbackWriteFailureAndFocusLossStopClaimingLiveAudio() {
+        val h = Harness()
+        try {
+            h.discoverAndJoin()
+            h.connectGuest()
+            h.audioPlane.emitPCM(ByteArray(320))
+            h.engine.playbackFailureHandler?.invoke(-6)
+            awaitCondition("playback failure") { h.service.audioRuntimeState.value == AudioRuntimeState.FAILED }
+            assertFalse(h.engine.isPlaying)
+            h.service.retryAudio()
+            h.audioPlane.emitPCM(ByteArray(320))
+            awaitCondition("playback retry") { h.service.audioRuntimeState.value == AudioRuntimeState.RUNNING }
+            h.engine.onAudioFocusLost?.invoke()
+            awaitCondition("focus interruption") { h.service.audioRuntimeState.value == AudioRuntimeState.INTERRUPTED }
+            assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+            assertFalse(h.engine.isPlaying)
+        } finally { h.close() }
+    }
+
+    @Test fun microphoneRestartPreservesRoomAndControlAssetSessions() {
+        val h = Harness()
+        try {
+            val room = h.createGuide()
+            h.engine.onAudioFocusLost?.invoke()
+            awaitCondition("microphone interruption") { h.service.audioRuntimeState.value == AudioRuntimeState.INTERRUPTED }
+            assertFalse(h.engine.isCapturing)
+            h.resetClearSessionBaselines()
+            h.service.restartMicrophone()
+            awaitCondition("microphone restarted") { h.service.audioRuntimeState.value == AudioRuntimeState.RUNNING }
+            assertEquals(room.id, h.service.activeChannelID.value)
+            assertEquals(2, h.engine.startCaptureCalls)
+            assertEquals(1, h.control.startGuideCalls)
+            assertEquals(1, h.asset.startGuideCalls)
+            assertEquals(1, h.audioPlane.startBroadcastingCalls)
+            assertEquals(0, h.control.clearSessionCalls)
+            assertEquals(0, h.asset.clearSessionCalls)
+        } finally { h.close() }
+    }
+
+    @Test fun failedMicrophoneRestartKeepsTourAvailableForAnotherRetry() {
+        val h = Harness()
+        try {
+            val room = h.createGuide()
+            h.engine.startCaptureError = IllegalStateException("Microphone unavailable")
+            h.service.restartMicrophone()
+            awaitCondition("restart failure") { h.service.audioRuntimeState.value == AudioRuntimeState.FAILED }
+            assertEquals(room.id, h.service.activeChannelID.value)
+            assertEquals(ListenState.BROADCASTING, h.service.listenState.value)
+            h.engine.startCaptureError = null
+            h.service.restartMicrophone()
+            awaitCondition("second microphone restart") { h.service.audioRuntimeState.value == AudioRuntimeState.RUNNING }
+            h.service.leaveChannel()
+            assertEquals(AudioRuntimeState.IDLE, h.service.audioRuntimeState.value)
+        } finally { h.close() }
+    }
+
     @Test fun failedNearbyAdmissionClosesRouteAndPermitsRetry() {
         val h = Harness()
         try {
             val channel = Channel(UUID.randomUUID().toString(), "Nearby", 0.0,
-                UUID.randomUUID().toString(), roomAdmissionVersion = 1)
+                UUID.randomUUID().toString(), roomAdmissionVersion = 2)
+            h.admission.joinError = IllegalStateException("Admission rejected")
             assertFalse(h.service.canJoin(channel))
             h.controlPlane.nearbyAvailable = true
             assertTrue(h.service.canJoin(channel))
@@ -116,6 +353,7 @@ class ChannelServiceLifecycleTest {
         val control = LifecycleControlTransport()
         val asset = LifecycleAssetTransport()
         val engine = FakeAudioEngine()
+        val admission = LifecycleRoomAdmission()
         val guidance = FakeLocalGuidance()
         private val root = Files.createTempDirectory("GetOverHereLifecycle-").toFile()
         val coordinator = NetworkCoordinator(controlPlane, audioPlane, scope)
@@ -128,7 +366,7 @@ class ChannelServiceLifecycleTest {
             TourContentStore(root.resolve("packs")),
             guidance,
             reconnectBaseDelayMillis,
-            LifecycleRoomAdmission(),
+            admission,
         )
 
         fun resetClearSessionBaselines() {
@@ -502,7 +740,7 @@ class ChannelServiceLifecycleTest {
             failSignal.complete(Unit)
 
             awaitCondition("capture error surfaced") {
-                h.service.tourFeatureError.value == "Microphone capture stopped"
+                h.service.audioRuntimeError.value == "Microphone capture stopped"
             }
             assertEquals("control and asset lanes stay up (DSCN-12)", ListenState.BROADCASTING, h.service.listenState.value)
             assertTrue(h.uncaught.isEmpty())
@@ -565,7 +803,7 @@ class ChannelServiceLifecycleTest {
     }
 
     /** Discovery must append the channel first: `scheduleReconnect` and the IP-change path resolve through `channels`. */
-    private fun Harness.discoverAndJoin(hostIP: String = "10.0.0.1"): Channel {
+    private fun Harness.discoverAndJoin(hostIP: String? = "10.0.0.1"): Channel {
         service.start()
         val channelID = UUID.randomUUID().toString()
         controlPlane.emit(
@@ -576,15 +814,18 @@ class ChannelServiceLifecycleTest {
                 audioQuality = AudioQuality.STANDARD,
                 wifiSSID = null,
                 audioHostIP = hostIP,
+                roomAdmissionVersion = 2,
             ),
         )
         awaitCondition("discovered channel") { service.channels.value.any { it.id == channelID } }
         val channel = service.channels.value.first { it.id == channelID }
+        val controlStarts = control.startGuestCalls
+        val audioStarts = audioPlane.startListeningCalls
         service.joinChannel(channel, TOUR_CODE)
         awaitCondition("guest transports started") {
             service.connectionState.value == SessionConnectionState.CONNECTING &&
-                control.startGuestCalls >= 1 &&
-                audioPlane.startListeningCalls >= 1
+                control.startGuestCalls > controlStarts &&
+                audioPlane.startListeningCalls > audioStarts
         }
         return channel
     }
@@ -594,13 +835,14 @@ class ChannelServiceLifecycleTest {
         awaitCondition("connected") { service.connectionState.value == SessionConnectionState.CONNECTED }
     }
 
-    private fun announce(channel: Channel, audioHostIP: String) = BLECommand.ChannelAnnounce(
+    private fun announce(channel: Channel, audioHostIP: String?) = BLECommand.ChannelAnnounce(
         channelID = channel.id,
         channelName = channel.name,
         createdBy = channel.createdBy,
         audioQuality = AudioQuality.STANDARD,
         wifiSSID = null,
         audioHostIP = audioHostIP,
+        roomAdmissionVersion = 2,
     )
 
     private fun awaitCondition(description: String, timeoutMillis: Long = 5_000, condition: () -> Boolean) {

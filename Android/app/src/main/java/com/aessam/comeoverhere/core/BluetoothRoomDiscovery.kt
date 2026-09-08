@@ -51,7 +51,8 @@ interface BluetoothSessionDiscoveryInterface : BluetoothRoomDiscoveryInterface {
 
 /** Read-only room metadata. All mutable state is serialized on the main handler. */
 @SuppressLint("MissingPermission") // Every radio start and refresh checks all runtime permissions.
-class BluetoothRoomDiscovery(private val context: Context) : BluetoothSessionDiscoveryInterface {
+class BluetoothRoomDiscovery(private val context: Context,
+    connectionBudget: NearbyConnectionBudget = NearbyConnectionBudget.sharedApp) : BluetoothSessionDiscoveryInterface {
     override var onRoom: ((BluetoothRoomRecord) -> Unit)? = null
     override var onLost: ((UUID) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -79,7 +80,7 @@ class BluetoothRoomDiscovery(private val context: Context) : BluetoothSessionDis
     private data class Endpoint(val device: BluetoothDevice, val psm: Int)
     private val roomEndpoints = ConcurrentHashMap<UUID, Endpoint>()
     private val connectLock = Any()
-    private val sessionBridge = NearbySocketBridge()
+    private val sessionBridge = NearbySocketBridge(connectionBudget = connectionBudget)
     private val io = Executors.newCachedThreadPool { work -> Thread(work, "bluetooth-room").apply { isDaemon = true } }
 
     override fun canConnect(roomID: UUID): Boolean = Build.VERSION.SDK_INT >= 29 &&

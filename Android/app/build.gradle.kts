@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.aessam.comeoverhere"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "com.aessam.comeoverhere"

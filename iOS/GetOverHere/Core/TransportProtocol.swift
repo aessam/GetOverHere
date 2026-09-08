@@ -1,6 +1,110 @@
 import Foundation
 import TourSessionCore
 
+/// Production sessions must explicitly install admission-bound guide authority. The unsigned
+/// profile exists only for standalone compatibility fixtures and is never selected automatically.
+nonisolated enum SessionGuideAuthentication: Sendable {
+    case unconfigured
+    case guide(GuideFrameSigner)
+    case guest(GuideFrameVerifier)
+    case legacyFixture
+
+    func requireGuide(sessionID: UUID, guideID: UUID) throws {
+        switch self {
+        case let .guide(signer):
+            guard signer.sessionID == sessionID, signer.guideID == guideID else {
+                throw GuideSignatureError.wrongGuide
+            }
+        case .legacyFixture: break
+        case .unconfigured, .guest: throw SessionGuideAuthenticationError.notConfigured
+        }
+    }
+
+    func requireGuest() throws {
+        switch self {
+        case .guest, .legacyFixture: break
+        case .unconfigured, .guide: throw SessionGuideAuthenticationError.notConfigured
+        }
+    }
+
+    func requireSharedGuideProducer(hasMultipleOwners: Bool) throws {
+        switch self {
+        case .guide:
+            guard !hasMultipleOwners else { throw SessionGuideAuthenticationError.independentGuideFanoutUnavailable }
+        case .legacyFixture: break
+        case .unconfigured, .guest: throw SessionGuideAuthenticationError.notConfigured
+        }
+    }
+
+    func encodeGuideFrame(_ sealed: SealedSessionEnvelope) throws -> Data {
+        switch self {
+        case let .guide(signer): try signer.sign(sealed).encode()
+        case .legacyFixture: sealed.encode()
+        case .unconfigured, .guest: throw SessionGuideAuthenticationError.notConfigured
+        }
+    }
+
+    func decodeGuideFrame(_ bytes: Data) throws -> SealedSessionEnvelope {
+        switch self {
+        case let .guest(verifier): try verifier.verify(bytes)
+        case .legacyFixture: try SealedSessionEnvelope.decode(bytes)
+        case .unconfigured, .guide: throw SessionGuideAuthenticationError.notConfigured
+        }
+    }
+}
+
+nonisolated enum SessionGuideAuthenticationError: LocalizedError {
+    case notConfigured
+    case independentGuideFanoutUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured: "The admitted guide identity is not configured. Rejoin the room."
+        case .independentGuideFanoutUnavailable: "Signed guide frames require a shared producer across routes."
+        }
+    }
+}
+
+/// Atomic admission to a native application lane, after hello proof and before welcome.
+/// A reconnect may overlap its own old socket; it cannot evict another participant.
+nonisolated final class SessionParticipantSlots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var owners: [UUID: UUID] = [:]
+    private let limit: Int
+
+    init(limit: Int = SessionCapacityPolicy.listenerLimit) {
+        precondition(limit > 0)
+        self.limit = limit
+    }
+
+    func acquire(participantID: UUID, connectionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        if let existing = owners[connectionID] {
+            guard existing == participantID else { throw SessionParticipantCapacityError.rejected }
+            return
+        }
+        let participants = Set(owners.values)
+        guard participants.contains(participantID) || participants.count < limit else {
+            throw SessionParticipantCapacityError.full
+        }
+        owners[connectionID] = participantID
+    }
+
+    func release(_ connectionID: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        owners.removeValue(forKey: connectionID)
+    }
+
+    var participantCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return Set(owners.values).count
+    }
+}
+
+nonisolated enum SessionParticipantCapacityError: Error {
+    case full, rejected
+}
+
 // MARK: - Peer Identity
 
 struct PeerInfo: Identifiable, Hashable, Codable, Sendable {
@@ -155,6 +259,7 @@ enum PeerEvent: Sendable {
 /// High-bandwidth audio transport. Either MultipeerConnectivity or WiFi+UDP.
 protocol AudioPlane: AnyObject {
     var isActive: Bool { get }
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
     /// Start sending audio. Called by the channel creator (speaker). Synchronous and throwing
     /// (FND-2): the guide commits state only after the lane is listening.
@@ -182,6 +287,7 @@ enum AudioSessionEvent: Sendable {
     case joined(ParticipantSession)
     case disconnected(connectionID: String)
     case versionMismatch(remoteMajor: UInt8, localMajor: UInt8)
+    case authenticationFailed(String)
     case failed(String)
 }
 
@@ -233,6 +339,7 @@ enum SessionControlEvent: Sendable {
 protocol SessionControlTransport: AnyObject {
     var isActive: Bool { get }
     var hostIP: String? { get set }
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
     func configureSession(
         sessionID: UUID,
@@ -267,6 +374,7 @@ enum SessionAssetEvent: Sendable {
 protocol SessionAssetTransport: AnyObject {
     var isActive: Bool { get }
     var hostIP: String? { get set }
+    func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
     func configureSession(
         sessionID: UUID,

@@ -35,10 +35,18 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
 class LifecycleRoomAdmission : RoomAdmissionInterface {
-    override fun start(sessionID: UUID, sessionCode: String) = Unit
+    var joinError: Exception? = null
+    private val signers = mutableMapOf<UUID, com.aessam.toursession.GuideFrameSigner>()
+    override fun start(sessionID: UUID, sessionCode: String, signer: com.aessam.toursession.GuideFrameSigner) = Unit
     override fun update(policy: RoomAccessPolicy) = Unit
     override fun stop() = Unit
-    override fun join(host: String, sessionID: UUID, code: String?): String = error("Unexpected room admission")
+    override fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): com.aessam.toursession.AdmittedRoomCredentials {
+        joinError?.let { throw it }
+        val signer = signers.getOrPut(sessionID) { com.aessam.toursession.GuideFrameSigner(sessionID, expectedGuideID) }
+        val guide = com.aessam.toursession.RoomAdmissionV2.Guide(sessionID, RoomAccessPolicy(sessionID, code), signer)
+        val guest = com.aessam.toursession.RoomAdmissionV2.Guest(guide.challenge, sessionID, expectedGuideID, code)
+        return guest.open(guide.reply(guest.request, "23456789AB"))
+    }
 }
 
 /**
@@ -55,13 +63,19 @@ internal class LifecycleControlPlane(
     var nearbyAvailable = false
     var nearbyStopCalls = 0
     var nearbyPrepareCalls = 0
+    var nearbyPrepareError: Exception? = null
+    var nearbyTransport = com.aessam.toursession.SessionTransportRoute.BLUETOOTH
+    override var activeNearbyGuestRoute: com.aessam.comeoverhere.core.NearbyGuestRoute? = null
     override fun canConnectNearby(roomID: UUID) = nearbyAvailable
-    override suspend fun prepareNearbyGuest(roomID: UUID): String {
+    override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): com.aessam.comeoverhere.core.NearbyGuestRoute {
         check(nearbyAvailable)
-        nearbyPrepareCalls++; usesBluetoothGuestRoute = true
-        return "127.0.0.1"
+        nearbyPrepareError?.let { throw it }
+        nearbyPrepareCalls++; usesBluetoothGuestRoute = nearbyTransport == com.aessam.toursession.SessionTransportRoute.BLUETOOTH
+        return activeNearbyGuestRoute ?: com.aessam.comeoverhere.core.NearbyGuestRoute(
+            "127.0.0.1", nearbyTransport, roomID, UUID.randomUUID(),
+        ).also { activeNearbyGuestRoute = it }
     }
-    override fun stopNearbyGuest() { nearbyStopCalls++; usesBluetoothGuestRoute = false }
+    override fun stopNearbyGuest() { nearbyStopCalls++; usesBluetoothGuestRoute = false; activeNearbyGuestRoute = null }
     var bluetoothMode = com.aessam.comeoverhere.core.BluetoothDiscoveryMode.OFF
     override fun setBluetoothDiscoveryMode(mode: com.aessam.comeoverhere.core.BluetoothDiscoveryMode) { bluetoothMode = mode }
     private val mutableConnectedPeers = MutableStateFlow<List<PeerInfo>>(emptyList())
@@ -95,6 +109,8 @@ internal class LifecycleControlPlane(
 }
 
 internal class LifecycleAudioPlane : AudioPlane {
+    var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
+    override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     override var isActive = false
     var startBroadcastingCalls = 0
     var startListeningCalls = 0
@@ -104,6 +120,7 @@ internal class LifecycleAudioPlane : AudioPlane {
     val sent = CopyOnWriteArrayList<ByteArray>()
     var startBroadcastingError: Exception? = null
     private var handler: ((AudioSessionEvent) -> Unit)? = null
+    private var onAudio: ((ByteArray) -> Unit)? = null
 
     override fun startBroadcasting(channelID: String, quality: AudioQuality) {
         startBroadcastingCalls += 1
@@ -116,6 +133,7 @@ internal class LifecycleAudioPlane : AudioPlane {
     override fun startListening(channelID: String, onAudio: (ByteArray) -> Unit) {
         startListeningCalls += 1
         isActive = true
+        this.onAudio = onAudio
     }
 
     override fun stop() {
@@ -145,9 +163,14 @@ internal class LifecycleAudioPlane : AudioPlane {
     fun emit(event: AudioSessionEvent) {
         checkNotNull(handler) { "audio session handler is not installed" }.invoke(event)
     }
+    fun capturedEventHandler(): (AudioSessionEvent) -> Unit = requireNotNull(handler)
+
+    fun emitPCM(data: ByteArray) = checkNotNull(onAudio).invoke(data)
 }
 
 internal class LifecycleControlTransport : SessionControlTransport {
+    var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
+    override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     var configureCalls = 0
     override var isActive = false
     override var hostIP: String? = null
@@ -216,6 +239,8 @@ internal class LifecycleControlTransport : SessionControlTransport {
 }
 
 internal class LifecycleAssetTransport : SessionAssetTransport {
+    var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
+    override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     var configureCalls = 0
     data class Sent(val kind: SessionMessageKind, val payload: ByteArray, val to: UUID?)
 
@@ -275,10 +300,14 @@ internal class FakeAudioEngine : AudioEngineInterface {
     override var isCapturing = false
     override var isPlaying = false
     override var playbackFailureHandler: ((Int) -> Unit)? = null
+    override var onPlaybackBufferAccepted: (() -> Unit)? = null
     override var onOutputForcedPrivate: (() -> Unit)? = null
     override var onAudioFocusLost: (() -> Unit)? = null
     var startCaptureCalls = 0
     var startCaptureError: Exception? = null
+    var startPlaybackError: Exception? = null
+    var startPlaybackCalls = 0
+    var acceptPlayback = true
     /** Returned by [startCapture]; defaults to an open stream that never completes on its own. */
     var captureFlow: Flow<ByteArray> = flow { awaitCancellation() }
     var onStartCapture: (() -> Unit)? = null
@@ -294,8 +323,16 @@ internal class FakeAudioEngine : AudioEngineInterface {
     }
 
     override fun stopCapture() { isCapturing = false }
-    override fun startPlayback() { isPlaying = true }
-    override fun enqueuePlayback(data: ByteArray) { played += data }
+    override fun startPlayback() {
+        startPlaybackCalls++
+        startPlaybackError?.let { throw it }
+        isPlaying = true
+    }
+    override fun enqueuePlayback(data: ByteArray) {
+        if (!isPlaying || !acceptPlayback) return
+        played += data
+        onPlaybackBufferAccepted?.invoke()
+    }
     override fun stopPlayback() { isPlaying = false }
     override fun setListenerOutput(output: ListenerOutput) { appliedListenerOutput = output }
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Explicit two-phone Aware goodput measurement. No Internet endpoint or LAN fallback."""
+"""Two-phone Aware TCP/guide-adapter benchmark, or emulator-only protocol smoke."""
 import argparse
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -26,40 +27,94 @@ def run(command, timeout=30):
     return result.stdout
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--guide", required=True)
-    parser.add_argument("--guest", required=True)
+    parser.add_argument("--guide")
+    parser.add_argument("--guest")
     parser.add_argument("--emulator", default="emulator-5554")
+    parser.add_argument("--profile", choices=("bulk", "tiny"), default="bulk")
     parser.add_argument("--millis", type=int, default=10_000)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--reuse-installed", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--smoke-only", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not (100 <= args.millis <= 30_000 and 1 <= args.rounds <= 5):
         parser.error("millis must be 100..30000 and rounds 1..5")
-    if args.guide == args.guest or any(not re.fullmatch(r"[A-Za-z0-9]+", x) for x in (args.guide, args.guest)):
+    if not args.smoke_only and (not args.guide or not args.guest or args.guide == args.guest or
+            any(not re.fullmatch(r"[A-Za-z0-9]+", x) for x in (args.guide, args.guest))):
         parser.error("choose two distinct physical USB serials")
     if not re.fullmatch(r"emulator-[0-9]+", args.emulator):
         parser.error("smoke test must use an explicit emulator")
+    return args
+
+
+def preflight_serials(args):
+    """Smoke never contacts physical devices, even when serial arguments are supplied."""
+    return (args.emulator,) if args.smoke_only else (args.guide, args.guest, args.emulator)
+
+
+def percentile(values, quantile):
+    if not values or not 0 < quantile <= 1 or any(not math.isfinite(v) or v < 0 for v in values):
+        raise ValueError("invalid latency samples/quantile")
+    return sorted(values)[math.ceil(len(values) * quantile) - 1]
+
+
+def validate_tiny_row(row, millis):
+    """Reject incomplete/contradictory reports; do not turn TCP timeouts into a loss estimate."""
+    for field in ("offered_packets", "sent_packets", "received_packets", "missing_echo_packets",
+                  "local_schedule_drops", "late_echo_packets", "signed_frame_bytes"):
+        if type(row.get(field)) is not int or row[field] < 0:
+            raise ValueError(f"invalid {field}")
+    offered, sent, received = (row[key] for key in ("offered_packets", "sent_packets", "received_packets"))
+    if not (offered == millis // 20 and sent > 0 and offered == sent + row["local_schedule_drops"] and
+            sent == received + row["missing_echo_packets"] and row["missing_echo_packets"] == 0):
+        raise ValueError("incomplete tiny-packet accounting")
+    if row.get("duration_ms") != millis or row.get("offered_pps") != 50 or row.get("late_threshold_ms") != 150:
+        raise ValueError("unexpected tiny-packet timing policy")
+    if not (158 <= row["signed_frame_bytes"] <= 4096 and row.get("probe_prefix_bytes") == 12):
+        raise ValueError("invalid measured frame size")
+    if (row.get("scope") != "aware_tcp_guide_adapter_synthetic_audio_framing" or
+            row.get("codec_or_acoustic_measurement") is not False):
+        raise ValueError("unsupported benchmark scope")
+    samples, lags = row.get("rtt_samples_ms", []), row.get("send_lag_samples_ms", [])
+    if len(samples) != received or len(lags) != sent:
+        raise ValueError("missing raw latency samples")
+    for field, quantile in (("rtt_p50_ms", .5), ("rtt_p95_ms", .95), ("rtt_p99_ms", .99), ("rtt_max_ms", 1)):
+        if not math.isclose(row.get(field, -1), percentile(samples, quantile), rel_tol=1e-9, abs_tol=1e-6):
+            raise ValueError(f"inconsistent {field}")
+    if not math.isclose(row.get("send_lag_p95_ms", -1), percentile(lags, .95), rel_tol=1e-9, abs_tol=1e-6):
+        raise ValueError("inconsistent send lag")
+    if row["late_echo_packets"] != sum(value >= 150 for value in samples):
+        raise ValueError("inconsistent late-echo count")
+    expected_asset_rate = 524_288 if row.get("phase") == "tiny_paced_asset" else 0
+    if row.get("phase") not in ("tiny_idle", "tiny_paced_asset") or row.get("asset_target_bytes_per_second") != expected_asset_rate:
+        raise ValueError("unexpected tiny-packet phase/load")
+    if expected_asset_rate and (row.get("asset_received_bytes", 0) <= 0 or row.get("asset_receive_ns", 0) <= 0):
+        raise ValueError("paced-asset phase had no verified load")
+    return (row["local_schedule_drops"] + row["missing_echo_packets"] + row["late_echo_packets"]) / offered
+
+
+def main(argv=None):
+    args = parse_args(argv)
     adb = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk"))) / "platform-tools/adb"
     if not adb.is_file():
-        parser.error("adb missing")
+        raise RuntimeError("adb missing")
 
     def device(serial, *command, timeout=30):
         return run([str(adb), "-s", serial, *command], timeout)
 
-    for serial in (args.guide, args.guest, args.emulator):
+    for serial in preflight_serials(args):
         if device(serial, "get-state").strip() != "device":
             raise RuntimeError(f"Device unavailable: {serial}")
-    for serial in (args.guide, args.guest):
+    for serial in (() if args.smoke_only else (args.guide, args.guest)):
         if int(device(serial, "shell", "getprop", "ro.build.version.sdk")) < 34:
             raise RuntimeError(f"Android 14+ required: {serial}")
         if device(serial, "shell", "settings", "get", "global", "wifi_on").strip() != "1":
             raise RuntimeError(f"Enable Wi-Fi on {serial}; Aware cannot run with its radio disabled")
     if args.preflight_only:
-        print("Preflight passed: explicit Android pair, Wi-Fi enabled, emulator present", flush=True)
+        print("Preflight passed: emulator only" if args.smoke_only else
+              "Preflight passed: explicit Android pair, Wi-Fi enabled, emulator present", flush=True)
         return
 
     artifacts = Path(tempfile.mkdtemp(prefix="GetOverHereAwareBenchmark.", dir="/tmp"))
@@ -73,8 +128,12 @@ def main():
         "commit": run(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).strip(),
         "dirty": bool(run(["git", "-C", str(ROOT), "status", "--porcelain"]).strip()),
         "guide": args.guide, "guest": args.guest, "millis": args.millis, "rounds": args.rounds,
+        "profile": args.profile, "smoke_only": args.smoke_only,
         "apk_sha256": hashes,
-        "scope": "PIN-secured production Android Aware socket and bridge goodput; synthetic verified data, no tour AEAD/codec",
+        "scope": ("emulator TCP loopback component tests; no native Aware radio evidence" if args.smoke_only else
+                  "PIN-secured Android Aware TCP with guide-side asset adapter; no direct UDP or acoustic measurement"),
+        "payload": ("synthetic codec-sized bytes with real GOH2v4 AEAD/GOS1 serialization, not codec output"
+                    if args.profile == "tiny" else "synthetic verified bulk data; no tour AEAD/codec"),
     }, indent=2) + "\n")
 
     def install(serial, reuse=False):
@@ -114,7 +173,8 @@ def main():
     instrumentation(args.emulator, "completionWaitsForPeerBeforeReleasingOwner", {},
                     artifacts / "completion-regression.txt", 30)
     instrumentation(args.emulator, "protocolLoopbackAndCorruptionSmoke", {}, artifacts / "smoke.txt", 60)
-    print("Socket loopback, full-duplex protocol, corruption rejection and percentile smoke passed", flush=True)
+    instrumentation(args.emulator, "tinyPacketLoopbackAndCorruptionSmoke", {}, artifacts / "tiny-smoke.txt", 60)
+    print("Bulk/tiny socket loopback, signature/corruption, pacing-accounting and percentile smoke passed", flush=True)
     if args.smoke_only:
         return
     for serial in (args.guide, args.guest):
@@ -125,7 +185,7 @@ def main():
         # Fresh radio ownership and PIN per guide role. No automatic retry hiding setup failures.
         extra = {"benchmarkRoom": uuid.uuid4(), "benchmarkToken": uuid.uuid4(),
                  "benchmarkPIN": f"{secrets.randbelow(1_000_000):06d}",
-                 "benchmarkMillis": args.millis, "benchmarkRounds": args.rounds}
+                 "benchmarkMillis": args.millis, "benchmarkRounds": args.rounds, "benchmarkProfile": args.profile}
         timeout = 120 + args.rounds * 3 * (args.millis / 1000 + 15)
         for serial in (guide, guest):
             device(serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
@@ -153,17 +213,23 @@ def main():
         (artifacts / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
         if failures:
             raise RuntimeError("; ".join(failures))
-        measured = [row for row in rows if row["orientation"] == orientation and row["phase"] in
-                    ("guide_to_guest", "guest_to_guide", "duplex")]
-        if len(measured) != args.rounds * 3:
+        modes = ("tiny_idle", "tiny_paced_asset") if args.profile == "tiny" else ("guide_to_guest", "guest_to_guide", "duplex")
+        measured = [row for row in rows if row["orientation"] == orientation and row["phase"] in modes]
+        if len(measured) != args.rounds * len(modes) or len({(row["phase"], row["round"]) for row in measured}) != len(measured):
             raise RuntimeError("Missing benchmark trials")
-        for mode in ("guide_to_guest", "guest_to_guide", "duplex"):
+        if args.profile == "tiny":
+            for row in measured:
+                row["offered_rtt_deadline_miss_fraction"] = validate_tiny_row(row, args.millis)
+            (artifacts / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
+        for mode in modes:
             samples = [row for row in measured if row["phase"] == mode]
+            fields = (("rtt_p95_ms", "rtt_p99_ms", "local_schedule_drops", "late_echo_packets") if args.profile == "tiny"
+                      else ("guide_to_guest_mbps", "guest_to_guide_mbps", "rtt_p95_ms"))
             print(f"{orientation} {mode}: " + "; ".join(
                 f"{field} min/median/max={min(row[field] for row in samples):.2f}/"
                 f"{statistics.median(row[field] for row in samples):.2f}/{max(row[field] for row in samples):.2f}"
-                for field in ("guide_to_guest_mbps", "guest_to_guide_mbps", "rtt_p95_ms")), flush=True)
-    print(f"Aware benchmark passed; verified receiver goodput, not a radio PHY maximum. Results: {artifacts / 'results.json'}", flush=True)
+                for field in fields), flush=True)
+    print(f"Aware {args.profile} adapter benchmark completed; no native UDP/acoustic/capacity claim. Results: {artifacts / 'results.json'}", flush=True)
 
 
 if __name__ == "__main__":

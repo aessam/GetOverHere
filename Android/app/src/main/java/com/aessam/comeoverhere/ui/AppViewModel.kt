@@ -24,6 +24,9 @@ class AppViewModel(
     val listenState = channelService.listenState
     val listenerCount = channelService.listenerCount
     val connectedGuestCount = channelService.connectedGuestCount
+    val audioReadyGuestCount = channelService.audioReadyGuestCount
+    val guideKeyFingerprint = channelService.guideKeyFingerprint
+    val activeTransportRoute = channelService.activeTransportRoute
     val speakerFeedbackWarning = channelService.speakerFeedbackWarning
     val readyParticipantCount = channelService.readyParticipantCount
     val listenerOutput = channelService.listenerOutput
@@ -42,6 +45,11 @@ class AppViewModel(
     fun updateRoomAccess(locked: Boolean, code: String) = channelService.updateRoomAccess(locked, code)
     val connectionState = channelService.connectionState
     val reconnectAttempt = channelService.reconnectAttempt
+    val audioRuntimeState = channelService.audioRuntimeState
+    val audioRuntimeError = channelService.audioRuntimeError
+    val joinStage = channelService.joinStage
+    fun restartMicrophone() = channelService.restartMicrophone()
+    fun retryAudio() = channelService.retryAudio()
     val targetSnapshot = channelService.targetSnapshot
     val bearingSnapshot = channelService.bearingSnapshot
     val visualFocusSnapshot = channelService.visualFocusSnapshot

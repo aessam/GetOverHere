@@ -13,14 +13,13 @@ final class GetOverHereUITests: XCTestCase {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .bluetooth)
         app.launch()
-        let toggle = app.switches["bluetoothRoomDiscovery"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        XCTAssertEqual(toggle.value as? String, "0")
+        XCTAssertTrue(app.buttons["findNearbyTours"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["bluetoothRoomDiscovery"].exists, "Radio controls belong in diagnostics")
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let bluetoothAlert = springboard.alerts.containing(NSPredicate(format: "label CONTAINS[c] 'Bluetooth'"))
         XCTAssertFalse(bluetoothAlert.firstMatch.waitForExistence(timeout: 2))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Bluetooth discovery off at launch"
+        screenshot.name = "Find Nearby Tours without launch permissions"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }

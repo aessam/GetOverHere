@@ -93,6 +93,7 @@ interface ControlPlane {
 
 interface AudioPlane {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
 
     fun startBroadcasting(channelID: String, quality: AudioQuality)
     fun sendAudio(data: ByteArray)
@@ -111,6 +112,7 @@ interface AudioPlane {
 }
 
 sealed class AudioSessionEvent {
+    data class AuthenticationFailed(val message: String) : AudioSessionEvent()
     data class Joined(val participant: ParticipantSession) : AudioSessionEvent()
     data class Disconnected(val connectionID: String) : AudioSessionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : AudioSessionEvent()
@@ -120,6 +122,7 @@ sealed class AudioSessionEvent {
 // MARK: - Reliable Session Control Transport
 
 sealed class SessionControlEvent {
+    data class AuthenticationFailed(val message: String) : SessionControlEvent()
     data object Connected : SessionControlEvent()
     data class GuestJoined(val participant: ParticipantSession) : SessionControlEvent()
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionControlEvent()
@@ -133,6 +136,7 @@ sealed class SessionControlEvent {
 
 interface SessionControlTransport {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
     var hostIP: String?
 
     fun configureSession(
@@ -158,6 +162,7 @@ interface SessionControlTransport {
 }
 
 sealed class SessionAssetEvent {
+    data class AuthenticationFailed(val message: String) : SessionAssetEvent()
     data object Connected : SessionAssetEvent()
     data class GuestJoined(val participant: ParticipantSession) : SessionAssetEvent()
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionAssetEvent()
@@ -170,6 +175,7 @@ sealed class SessionAssetEvent {
 
 interface SessionAssetTransport {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
     var hostIP: String?
 
     fun configureSession(

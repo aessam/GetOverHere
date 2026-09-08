@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000003 /* TourSessionCore */; };
-		A10000000000000000000002 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000004 /* TourSessionCore */; };
 		A20000000000000000000001 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* MapLibre */; };
 /* End PBXBuildFile section */
 
@@ -80,7 +79,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000000000000000000002 /* TourSessionCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -159,7 +157,6 @@
 			);
 			name = GetOverHereTests;
 			packageProductDependencies = (
-				A10000000000000000000004 /* TourSessionCore */,
 			);
 			productName = GetOverHereTests;
 			productReference = D95FA5F52F71F52100456E8F /* GetOverHereTests.xctest */;
@@ -632,11 +629,6 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		A10000000000000000000003 /* TourSessionCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
-			productName = TourSessionCore;
-		};
-		A10000000000000000000004 /* TourSessionCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
 			productName = TourSessionCore;

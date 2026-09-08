@@ -11,6 +11,212 @@ struct TourAssetTransferServiceTests {
         case streamEnded
     }
 
+    @Test("Guide disk work is serial, deduplicated, member-bounded, and fairly paced")
+    @MainActor
+    func guideQueueIsSerialBoundedAndFair() async throws {
+        let f = try await GuideFixture()
+        defer { f.close() }
+        let first = UUID(), second = UUID()
+        f.join(first); f.join(second)
+        try await waitUntil("guide members") { f.service.connectedParticipantIDs.count == 2 }
+        try f.request(first, assetID: "a")
+        try await waitUntil("first blocked read") { f.reader.readCount == 1 }
+        try f.request(first, assetID: "a") // exact in-flight duplicate does not reserve another slot
+        try f.request(first, assetID: "b")
+        try f.request(first, assetID: "a", offset: 1) // third outstanding request is rejected
+        try f.request(second, assetID: "a")
+        try await waitUntil("bounded queue rejection") { f.service.lastError != nil }
+        #expect(f.reader.readCount == 1)
+        try f.reader.releaseNext()
+        try await waitUntil("second member read") { f.reader.readCount == 2 }
+        #expect(f.chunks.map(\.memberID) == [first])
+        try f.reader.releaseNext()
+        try await waitUntil("first member next read") { f.reader.readCount == 3 }
+        #expect(f.chunks.map(\.memberID) == [first, second])
+        try f.reader.releaseNext()
+        try await waitUntil("all queued chunks") { f.chunks.count == 3 }
+        #expect(f.chunks.map(\.memberID) == [first, second, first])
+        #expect(f.chunks.map { $0.payload.sha256 } == [f.hash("a"), f.hash("a"), f.hash("b")])
+        #expect(f.reader.maximumPending == 1)
+        #expect(f.chunks.allSatisfy { $0.payload.bytes.count == TourAssetTransferService.chunkSize })
+    }
+
+    @Test("Suspended guide reads cannot escape stop, member replacement, or pack replacement",
+          arguments: ["stop", "member", "manifest"])
+    @MainActor
+    func staleGuideReadNeverSendsIntoReplacement(change: String) async throws {
+        let f = try await GuideFixture()
+        defer { f.close() }
+        let member = UUID()
+        f.join(member)
+        try await waitUntil("guide member") { f.service.connectedParticipantIDs.contains(member) }
+        try f.request(member, assetID: "a")
+        try await waitUntil("old blocked read") { f.reader.readCount == 1 }
+        switch change {
+        case "stop": f.service.stop()
+        case "member":
+            f.transport.emit(.guestDisconnected(participantID: member))
+            f.join(member)
+            try await waitUntil("replacement manifest") { f.transport.sent.filter { $0.kind == .tourPackManifest }.count == 2 }
+        default:
+            try await f.replaceManifest()
+        }
+        if change != "stop" {
+            try f.request(member, assetID: "a", offset: UInt64(TourAssetTransferService.chunkSize))
+            for _ in 0..<50 { await Task.yield() }
+            #expect(f.reader.readCount == 1, "replacing a generation must not overlap its suspended disk read")
+        }
+        try f.reader.releaseNext()
+        if change == "stop" {
+            for _ in 0..<100 { await Task.yield() }
+            #expect(f.chunks.isEmpty)
+        } else {
+            try await waitUntil("replacement read") { f.reader.readCount == 2 }
+            #expect(f.chunks.isEmpty, "the old generation must not send")
+            try f.reader.releaseNext()
+            try await waitUntil("replacement chunk") { f.chunks.count == 1 }
+            #expect(f.chunks[0].payload.offset == UInt64(TourAssetTransferService.chunkSize))
+            #expect(f.chunks[0].payload.bytes == Data(f.bytes("a").dropFirst(TourAssetTransferService.chunkSize)))
+        }
+        #expect(f.reader.maximumPending == 1)
+    }
+
+    @Test("Unconnected members cannot mark the guide's pack ready")
+    @MainActor
+    func guideRejectsStatusFromDisconnectedMember() async throws {
+        let f = try await GuideFixture()
+        defer { f.close() }
+        let status = try AssetStatusPayload(sha256: f.hash("a"), status: .ready,
+            byteLength: UInt64(f.bytes("a").count), detail: "")
+        try f.deliver(member: UUID(), kind: .assetStatus, payload: status.encode())
+        try await waitUntil("unknown member status rejection") { f.service.lastError != nil }
+        #expect(f.service.readyParticipantIDs.isEmpty)
+    }
+
+    @Test("Replacing the same member resets its readiness even without a disconnect event")
+    @MainActor
+    func sameMemberReplacementRequiresFreshAssetReadiness() async throws {
+        let f = try await GuideFixture()
+        defer { f.close() }
+        let member = UUID()
+        func ready(_ assetID: String) throws {
+            let payload = try AssetStatusPayload(sha256: f.hash(assetID), status: .ready,
+                byteLength: UInt64(f.bytes(assetID).count), detail: "")
+            try f.deliver(member: member, kind: .assetStatus, payload: payload.encode())
+        }
+        f.join(member)
+        try await waitUntil("first member") { f.service.connectedParticipantIDs.contains(member) }
+        try ready("a"); try ready("b")
+        try await waitUntil("first ready report") { f.service.readyParticipantIDs.contains(member) }
+        f.join(member)
+        try await waitUntil("replacement manifest") { f.transport.sent.filter { $0.kind == .tourPackManifest }.count == 2 }
+        #expect(!f.service.readyParticipantIDs.contains(member))
+        try ready("b")
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!f.service.readyParticipantIDs.contains(member), "old hash readiness must not survive member replacement")
+        try ready("a")
+        try await waitUntil("replacement ready report") { f.service.readyParticipantIDs.contains(member) }
+    }
+
+    @Test("Current and next slide take the first two slots even when snapshot precedes manifest")
+    @MainActor
+    func currentSlidePriorityPrecedesManifest() async throws {
+        let f = try GuestFixture(sizes: ["a": 1_000, "b": 1_000, "c": 1_000, "d": 1_000])
+        defer { f.close() }
+        f.service.prioritizeSlide(assetID: "c")
+        try f.deliverManifest()
+        try await f.waitForRequestCount(2)
+        #expect(f.requests.map(\.sha256) == [f.hash("c"), f.hash("d")])
+    }
+
+    @Test("A new slide preempts background work only at a consumed chunk boundary and resumes exact offsets")
+    @MainActor
+    func slidePriorityYieldsBackgroundChunksWithoutLosingResume() async throws {
+        let f = try GuestFixture(sizes: ["a": 70_000, "b": 70_000, "c": 70_000, "d": 1_000])
+        defer { f.close() }
+        try f.deliverManifest()
+        try await f.waitForRequestCount(2)
+        f.service.prioritizeSlide(assetID: "c")
+        try f.deliverChunk(for: "a", offset: 0)
+        try await f.waitForRequestCount(3)
+        #expect(f.requests[2].sha256 == f.hash("c"))
+        try f.deliverChunk(for: "b", offset: 0)
+        try await f.waitForRequestCount(4)
+        #expect(f.requests[3].sha256 == f.hash("d"))
+        try f.deliverChunk(for: "c", offset: 0)
+        try await f.waitForRequestCount(5)
+        #expect(f.requests[4].sha256 == f.hash("c"))
+        #expect(f.requests[4].offset == UInt64(TourAssetTransferService.chunkSize))
+        try f.deliverChunk(for: "d", offset: 0)
+        try await f.waitForRequestCount(6)
+        #expect(f.requests[5].sha256 == f.hash("a"))
+        #expect(f.requests[5].offset == UInt64(TourAssetTransferService.chunkSize))
+        try f.deliverChunk(for: "c", offset: UInt64(TourAssetTransferService.chunkSize))
+        try await f.waitForRequestCount(7)
+        #expect(f.requests[6].sha256 == f.hash("b"))
+        #expect(f.requests[6].offset == UInt64(TourAssetTransferService.chunkSize))
+        try f.deliverChunk(for: "a", offset: UInt64(TourAssetTransferService.chunkSize))
+        try f.deliverChunk(for: "b", offset: UInt64(TourAssetTransferService.chunkSize))
+        try await f.waitForReadyAssets(["a", "b", "c", "d"])
+        #expect(try Data(contentsOf: f.readyURL("a")) == f.bytes("a"))
+        #expect(try Data(contentsOf: f.readyURL("b")) == f.bytes("b"))
+        #expect(f.requests.count == 7)
+        #expect(f.failedStatuses.isEmpty)
+    }
+
+    @Test("Stopping during a cache resume cannot emit a stale request")
+    @MainActor
+    func stoppedGuestIgnoresSuspendedResume() async throws {
+        let transport = LifecycleAssetTransport()
+        let cache = SuspendedResumeCache()
+        let service = TourAssetTransferService(transport: transport, cache: cache)
+        defer { service.stop(); cache.cancel() }
+        let session = UUID()
+        service.configureSession(sessionID: session, participantID: UUID(), displayName: "Guest", platform: .iOS,
+            credential: try SessionCredential.derive(shortCode: "23456789AB", sessionID: session))
+        service.joinTour(hostIP: "127.0.0.1")
+        let asset = try TourAssetDescriptor(assetID: "slide", kind: .slide, sha256: String(repeating: "a", count: 64),
+            byteLength: 100, order: 0, mimeType: "image/jpeg")
+        let manifest = try TourPackManifestPayload(packID: UUID(), manifestVersion: 1, displayName: "Tour", assets: [asset])
+        transport.emit(.envelopeReceived(try SessionEnvelope(lane: .asset, kind: .tourPackManifest, sequence: 1,
+            sessionID: session, senderID: UUID(), payload: manifest.encode())))
+        try await waitUntil("suspended cache resume") { cache.isWaiting }
+        service.stop()
+        cache.resume()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(transport.sent.filter { $0.kind == .assetRequest }.isEmpty)
+    }
+
+    @Test("Guide authentication failure stops guest content work terminally")
+    @MainActor
+    func authenticationFailureStopsGuestRequests() async throws {
+        let f = try GuestFixture(sizes: ["a": 70_000, "b": 1_000])
+        defer { f.close() }
+        try f.deliverManifest()
+        try await f.waitForRequestCount(2)
+        f.transport.emit(.credentialRejected("Changed guide key"))
+        try await f.waitUntil("asset transport stopped") { !f.transport.isActive }
+        try f.deliverChunk(for: "a", offset: 0)
+        for _ in 0..<100 { await Task.yield() }
+        #expect(f.requests.count == 2)
+        #expect(f.failedStatuses.isEmpty)
+    }
+
+    @Test("A queued authentication failure cannot stop a replacement asset session")
+    @MainActor
+    func queuedAssetFailureCannotCrossSessions() async throws {
+        let f = try GuestFixture(sizes: ["a": 1_000])
+        defer { f.close() }
+        f.transport.emit(.credentialRejected("old run"))
+        let replacement = UUID()
+        f.service.configureSession(sessionID: replacement, participantID: UUID(), displayName: "Guest", platform: .iOS,
+            credential: try SessionCredential.derive(shortCode: "23456789AB", sessionID: replacement))
+        f.service.joinTour(hostIP: "127.0.0.1")
+        for _ in 0..<100 { await Task.yield() }
+        #expect(f.transport.isActive)
+        #expect(f.service.lastError == nil)
+    }
+
     @Test("Interrupted transfer resumes past a corrupt cache entry and reports verified participant readiness")
     @MainActor
     func resumeAndReadiness() async throws {
@@ -103,11 +309,11 @@ struct TourAssetTransferServiceTests {
         let sessionID = UUID()
         let credential = try SessionCredential.derive(shortCode: "23456789AB", sessionID: sessionID)
         let guide = TourAssetTransferService(
-            transport: LocalSessionAssetTransport(port: 50_012),
+            transport: LocalSessionAssetTransport(port: 50_012, authentication: .legacyFixture),
             cache: guideCache
         )
         let guest = TourAssetTransferService(
-            transport: LocalSessionAssetTransport(port: 50_012),
+            transport: LocalSessionAssetTransport(port: 50_012, authentication: .legacyFixture),
             cache: guestCache
         )
         let (guideEvents, guideContinuation) = AsyncStream.makeStream(of: TourAssetTransferEvent.self)
@@ -338,6 +544,134 @@ struct TourAssetTransferServiceTests {
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    private func waitUntil(_ description: String, _ condition: () -> Bool) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while !condition() {
+            guard clock.now < deadline else { throw TestTimeout.expired(description) }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @MainActor
+    private final class GuideFixture {
+        struct Chunk { let memberID: UUID?; let payload: AssetChunkPayload }
+        let transport = LifecycleAssetTransport()
+        let reader: SuspendedChunkReader
+        let service: TourAssetTransferService
+        private let root: URL
+        private let sessionID = UUID()
+        private var sequence: UInt64 = 0
+        private var manifest: TourPackManifestPayload
+        private var sources: [String: URL] = [:]
+        private var contents: [String: Data] = [:]
+
+        init() async throws {
+            let reader = SuspendedChunkReader()
+            self.reader = reader
+            root = FileManager.default.temporaryDirectory.appending(path: "GetOverHereGuideSchedule-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            var descriptors: [TourAssetDescriptor] = []
+            for (index, id) in ["a", "b"].enumerated() {
+                let data = Data((0..<70_000).map { UInt8(($0 * (index + 3)) % 251) })
+                let url = root.appending(path: "\(id).bin")
+                try data.write(to: url)
+                sources[id] = url; contents[id] = data
+                descriptors.append(try TourAssetDescriptor(assetID: id, kind: .slide,
+                    sha256: TourAssetTransferServiceTests.sha256(data), byteLength: UInt64(data.count),
+                    order: UInt32(index), mimeType: "image/jpeg"))
+            }
+            manifest = try TourPackManifestPayload(packID: UUID(), manifestVersion: 1, displayName: "Tour", assets: descriptors)
+            service = TourAssetTransferService(transport: transport,
+                cache: try FileTourAssetCache(rootDirectory: root.appending(path: "cache", directoryHint: .isDirectory)),
+                readSourceChunk: { url, hash, offset, count in try await reader.read(url: url, hash: hash, offset: offset, count: count) })
+            service.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guide", platform: .iOS,
+                credential: try SessionCredential.derive(shortCode: "23456789AB", sessionID: sessionID))
+            try await service.hostTourPack(manifest, sourcesByAssetID: sources)
+        }
+
+        func close() {
+            service.stop(); reader.cancelAll()
+            do { try FileManager.default.removeItem(at: root) }
+            catch { Issue.record("Guide fixture cleanup failed: \(error)") }
+        }
+        func bytes(_ id: String) -> Data { contents[id]! }
+        func hash(_ id: String) -> String { manifest.assets.first { $0.assetID == id }!.sha256 }
+        func join(_ member: UUID) {
+            transport.emit(.guestJoined(ParticipantSession(participantID: member, connectionID: UUID().uuidString,
+                displayName: "Guest", role: .guest, platform: .iOS)))
+        }
+        func request(_ member: UUID, assetID: String, offset: UInt64 = 0) throws {
+            try deliver(member: member, kind: .assetRequest, payload: AssetRequestPayload(sha256: hash(assetID), offset: offset).encode())
+        }
+        func deliver(member: UUID, kind: SessionMessageKind, payload: Data) throws {
+            sequence += 1
+            transport.emit(.envelopeReceived(try SessionEnvelope(lane: .asset, kind: kind, sequence: sequence,
+                sessionID: sessionID, senderID: member, payload: payload)))
+        }
+        func replaceManifest() async throws {
+            manifest = try TourPackManifestPayload(packID: manifest.packID, manifestVersion: manifest.manifestVersion + 1,
+                displayName: manifest.displayName, assets: manifest.assets)
+            try await service.hostTourPack(manifest, sourcesByAssetID: sources)
+        }
+        var chunks: [Chunk] {
+            transport.sent.filter { $0.kind == .assetChunk }.compactMap {
+                do { return Chunk(memberID: $0.to, payload: try AssetChunkPayload.decode($0.payload)) }
+                catch { Issue.record("Invalid recorded chunk: \(error)"); return nil }
+            }
+        }
+    }
+
+    nonisolated private final class SuspendedChunkReader: @unchecked Sendable {
+        private struct Read {
+            let url: URL; let offset: UInt64; let count: Int
+            let continuation: CheckedContinuation<Data, any Error>
+        }
+        private let lock = NSLock()
+        private var pending: [Read] = []
+        private var total = 0
+        private var peak = 0
+        var readCount: Int { lock.withLock { total } }
+        var maximumPending: Int { lock.withLock { peak } }
+        func read(url: URL, hash: String, offset: UInt64, count: Int) async throws -> Data {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    pending.append(Read(url: url, offset: offset, count: count, continuation: continuation))
+                    total += 1; peak = max(peak, pending.count)
+                }
+            }
+        }
+        func releaseNext() throws {
+            let read = try lock.withLock { try #require(pending.isEmpty ? nil : pending.removeFirst()) }
+            do {
+                let data = try Data(contentsOf: read.url)
+                read.continuation.resume(returning: Data(data[Int(read.offset)..<(Int(read.offset) + read.count)]))
+            } catch { read.continuation.resume(throwing: error); throw error }
+        }
+        func cancelAll() {
+            let reads = lock.withLock { let reads = pending; pending.removeAll(); return reads }
+            reads.forEach { $0.continuation.resume(throwing: CancellationError()) }
+        }
+    }
+
+    nonisolated private final class SuspendedResumeCache: TourAssetCache, @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: CheckedContinuation<UInt64, any Error>?
+        var isWaiting: Bool { lock.withLock { pending != nil } }
+        func readyURL(sha256: String, expectedLength: UInt64) async throws -> URL? { nil }
+        func resumeOffset(sha256: String, expectedLength: UInt64) async throws -> UInt64 {
+            try await withCheckedThrowingContinuation { continuation in lock.withLock { pending = continuation } }
+        }
+        func ingest(_ chunk: AssetChunkPayload) async throws -> AssetCacheIngestResult { throw CancellationError() }
+        func discardPartial(sha256: String) async throws {}
+        func resume() { take()?.resume(returning: 0) }
+        func cancel() { take()?.resume(throwing: CancellationError()) }
+        private func take() -> CheckedContinuation<UInt64, any Error>? {
+            lock.withLock { let current = pending; pending = nil; return current }
+        }
+    }
 
     /// A guest `TourAssetTransferService` over G4's recording `LifecycleAssetTransport`: the test plays
     /// the guide by delivering manifest and chunk envelopes and reads back requests and statuses.

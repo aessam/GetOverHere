@@ -11,24 +11,30 @@ struct ChannelSidebar: View {
     var body: some View {
         List {
             Section {
+                Button("Find Nearby Tours", systemImage: "antenna.radiowaves.left.and.right") {
+                    service.findNearbyTours()
+                }
+                .accessibilityIdentifier("findNearbyTours")
+                Text("Keep Bluetooth and Wi-Fi enabled. No Internet connection is needed. Rooms are open unless the guide locks them.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if #available(iOS 26.4, *) {
-                    Toggle("Wi-Fi Aware (experimental)", isOn: Binding(
-                        get: { service.awareDiscoveryEnabled }, set: { service.awareDiscoveryEnabled = $0 }))
-                        .accessibilityIdentifier("awareRoomDiscovery")
                     if service.awareDiscoveryEnabled {
-                        NearbyAwarePairingView(isGuide: service.isCreator)
-                    }
-                    if let error = service.nearbyError {
-                        Text(error).foregroundStyle(.red).font(.caption)
-                            .accessibilityIdentifier("nearbyTransportError")
+                        DisclosureGroup("Pair with a nearby guide") {
+                            NearbyAwarePairingView(isGuide: service.isCreator)
+                        }
                     }
                 }
-                Toggle("Bluetooth room discovery", isOn: Binding(
-                    get: { service.bluetoothDiscoveryEnabled },
-                    set: { service.bluetoothDiscoveryEnabled = $0 }))
-                    .accessibilityIdentifier("bluetoothRoomDiscovery")
-                Text("Experimental direct Bluetooth joining and audio. Keep Bluetooth enabled. Older app versions may provide discovery only.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if let error = service.nearbyError {
+                    Text(error).foregroundStyle(.red).font(.caption)
+                        .accessibilityIdentifier("nearbyTransportError")
+                }
+            }
+            if service.activeChannelID == nil, service.connectionState == .connecting {
+                Section {
+                    ProgressView(service.joinStage?.rawValue ?? "Joining tour…")
+                        .accessibilityIdentifier("roomJoinProgress")
+                    Button("Cancel Join", role: .cancel) { service.cancelJoin() }
+                }
             }
             if service.activeChannelID == nil, service.connectionState == .failed,
                let error = service.tourFeatureError {
@@ -42,11 +48,15 @@ struct ChannelSidebar: View {
             if service.channels.isEmpty {
                 emptyState
             } else {
-                Section("Live Megaphones") {
+                Section("Nearby Tours") {
                     ForEach(service.channels) { channel in
                         Button {
                             guard service.activeChannelID != channel.id else { return }
-                            if channel.roomAdmissionVersion == 1 && !channel.isRoomLocked {
+                            guard service.canJoin(channel) else {
+                                service.explainUnavailableRoom()
+                                return
+                            }
+                            if (channel.roomAdmissionVersion ?? 0) > 0 && !channel.isRoomLocked {
                                 service.joinChannel(channel, tourCode: "")
                                 return
                             }
@@ -56,15 +66,24 @@ struct ChannelSidebar: View {
                             channelRow(channel)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!service.canJoin(channel))
+                        .disabled(service.activeChannelID == nil && service.connectionState == .connecting)
                     }
                 }
             }
         }
         .toolbar {
+#if DEBUG
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Wi-Fi Aware Lab", systemImage: "antenna.radiowaves.left.and.right", action: onOpenWiFiAwareLab)
+                Menu("Diagnostics", systemImage: "ellipsis.circle") {
+                    Toggle("Bluetooth room discovery", isOn: Binding(
+                        get: { service.bluetoothDiscoveryEnabled }, set: { service.bluetoothDiscoveryEnabled = $0 }))
+                        .accessibilityIdentifier("bluetoothRoomDiscovery")
+                    Toggle("Wi-Fi Aware discovery", isOn: Binding(
+                        get: { service.awareDiscoveryEnabled }, set: { service.awareDiscoveryEnabled = $0 }))
+                    Button("Wi-Fi Aware Lab", action: onOpenWiFiAwareLab)
+                }
             }
+#endif
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     coordinator.showCreateChannel = true
@@ -99,7 +118,7 @@ struct ChannelSidebar: View {
                             service.joinChannel(channel, tourCode: joinCode)
                             pendingJoinChannel = nil
                         }
-                        .disabled(channel.roomAdmissionVersion == 1
+                        .disabled((channel.roomAdmissionVersion ?? 0) > 0
                             ? !RoomAccessPolicy.isValidCode(joinCode)
                             : SessionCredential.normalize(joinCode).count != SessionCredential.shortCodeLength)
                     }
@@ -121,7 +140,7 @@ struct ChannelSidebar: View {
                     .font(.body.bold())
                     .lineLimit(1)
                 Text(channel.createdBy == coordinator.coordinator.controlPlane.localPeer.id ? "Your megaphone"
-                     : channel.audioHostIP == nil ? (service.canJoin(channel) ? "Nearby direct · Experimental" : "Nearby via Bluetooth · Audio unavailable") : "Live")
+                     : channel.audioHostIP == nil ? (service.canJoin(channel) ? "Nearby connection available" : "Tap for connection help") : "Local network")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

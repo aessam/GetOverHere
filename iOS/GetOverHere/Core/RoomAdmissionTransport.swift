@@ -4,10 +4,10 @@ import os
 import TourSessionCore
 
 nonisolated protocol RoomAdmissionInterface: Sendable {
-    func start(sessionID: UUID, sessionCode: String) throws
+    func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws
     func update(policy: RoomAccessPolicy) throws
     func stop()
-    func join(host: String, sessionID: UUID, code: String?) throws -> String
+    func join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?) throws -> AdmittedRoomCredentials
 }
 
 /// Bounded, short-lived bootstrap sockets; existing media lanes are deliberately untouched.
@@ -20,10 +20,11 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
     private var revision: UInt64 = 0
     private let port: UInt16
 
-    init(port: UInt16 = RoomAdmission.port) { self.port = port }
+    init(port: UInt16 = RoomAdmissionV2.port) { self.port = port }
 
-    func start(sessionID: UUID, sessionCode: String) throws {
+    func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws {
         stop()
+        guard signer.sessionID == sessionID else { throw RoomAdmissionV2Error.wrongGuide }
         let open = try RoomAccessPolicy(sessionID: sessionID, code: nil)
         let socket = try Self.makeSocket()
         var yes: Int32 = 1
@@ -63,10 +64,10 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
                         self.slots.release()
                     }
                     do {
-                        let guide = RoomAdmission.Guide(sessionID: sessionID, policy: snapshot.0)
+                        let guide = try RoomAdmissionV2.Guide(sessionID: sessionID, policy: snapshot.0, signer: signer)
                         try Self.write(client, guide.challenge)
-                        let request = try Self.read(client, count: RoomAdmission.requestSize)
-                        let reply = try guide.reply(to: request, sessionCode: sessionCode)
+                        let request = try Self.read(client, count: RoomAdmissionV2.requestSize)
+                        let reply = try guide.reply(to: request, mediaSecret: sessionCode)
                         let flags = fcntl(client.fd, F_GETFL, 0)
                         guard flags >= 0, fcntl(client.fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
                             throw RoomAdmissionError.invalidMessage
@@ -106,7 +107,7 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
         }
     }
 
-    func join(host: String, sessionID: UUID, code: String?) throws -> String {
+    func join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?) throws -> AdmittedRoomCredentials {
         let socket = try Self.makeSocket()
         defer { socket.close() }
         var address = Self.address(port: port)
@@ -130,10 +131,10 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
             }
         }
         guard fcntl(socket.fd, F_SETFL, flags) == 0 else { throw RoomAdmissionError.invalidMessage }
-        let challenge = try Self.read(socket, count: RoomAdmission.challengeSize)
-        let guest = try RoomAdmission.Guest(challenge: challenge, sessionID: sessionID, code: code)
+        let challenge = try Self.read(socket, count: RoomAdmissionV2.challengeSize)
+        let guest = try RoomAdmissionV2.Guest(challenge: challenge, sessionID: sessionID, expectedGuideID: expectedGuideID, code: code)
         try Self.write(socket, guest.request)
-        return try guest.open(Self.read(socket, count: RoomAdmission.replySize))
+        return try guest.open(Self.read(socket, count: RoomAdmissionV2.replySize))
     }
 
     private enum TransportError: LocalizedError {
@@ -186,7 +187,7 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
     /// cannot open an incomplete AEAD reply. Never wait for a slow peer while holding the lock.
     static func writeReplyOnce(_ fd: Int32, _ data: Data) throws {
         let flags = fcntl(fd, F_GETFL, 0)
-        guard flags >= 0, flags & O_NONBLOCK != 0, data.count == RoomAdmission.replySize else {
+        guard flags >= 0, flags & O_NONBLOCK != 0, data.count == RoomAdmissionV2.replySize else {
             throw RoomAdmissionError.invalidMessage
         }
         let sent = data.withUnsafeBytes { send(fd, $0.baseAddress, data.count, 0) }
