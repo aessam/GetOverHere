@@ -35,7 +35,6 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import com.aessam.toursession.BluetoothRoomRecord
-import com.aessam.toursession.NearbyLaneRequest
 import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -153,6 +152,7 @@ class WiFiAwareRoomTransport(
             override fun onAttached(attached: WifiAwareSession) {
                 if (generation != attempt) { attached.close(); return }
                 session = attached
+                Log.d(TAG, "Aware attached; hosting=$hosting")
                 try {
                     if (hosting) startServer(attempt)
                     val config = AwarePairingConfig.Builder().setPairingSetupEnabled(true)
@@ -217,13 +217,16 @@ class WiFiAwareRoomTransport(
     private fun discoveryCallback(attempt: Long, hosting: Boolean) = object : DiscoverySessionCallback() {
         override fun onPublishStarted(value: PublishDiscoverySession) {
             if (generation != attempt) { value.close(); return }; discovery = value
+            Log.d(TAG, "Aware publish ready")
         }
         override fun onSubscribeStarted(value: SubscribeDiscoverySession) {
             if (generation != attempt) { value.close(); return }; discovery = value
+            Log.d(TAG, "Aware subscribe ready")
             handler.post(refresh)
         }
         override fun onServiceDiscovered(info: ServiceDiscoveryInfo) {
             if (generation != attempt || candidates.size >= 32 && !candidates.containsKey(info.peerHandle)) return
+            Log.d(TAG, "Aware peer discovered")
             val candidate = candidates.getOrPut(info.peerHandle) { Candidate(info.peerHandle) }
             candidate.supportsPairing = info.pairingConfig?.isPairingSetupEnabled == true
             updatePeers()
@@ -278,7 +281,7 @@ class WiFiAwareRoomTransport(
     }
 
     private fun startServer(attempt: Long) {
-        val listener = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(NearbyLaneRequest.SERVICE_PORT), 8) }
+        val listener = openListener()
         server = listener
         io.execute {
             while (!listener.isClosed) {
@@ -306,7 +309,11 @@ class WiFiAwareRoomTransport(
         val specifier = try {
             val security = linkSecurity(pin)
             WifiAwareNetworkSpecifier.Builder(active, candidate.peer).setDataPathSecurityConfig(security).apply {
-                if (hosting) setPort(NearbyLaneRequest.SERVICE_PORT).setTransportProtocol(OsConstants.IPPROTO_TCP)
+                if (hosting) {
+                    val listener = requireNotNull(server) { "Aware listener is unavailable" }
+                    check(!listener.isClosed)
+                    setPort(listener.localPort).setTransportProtocol(OsConstants.IPPROTO_TCP)
+                }
             }.build()
         } catch (error: Exception) {
             fail("Aware link configuration failed (${error.javaClass.simpleName})"); return
@@ -317,6 +324,7 @@ class WiFiAwareRoomTransport(
                 val info = capabilities.transportInfo as? WifiAwareNetworkInfo ?: return
                 val address = info.peerIpv6Addr ?: return
                 if (info.port <= 0) { fail("Aware guide did not advertise a tour endpoint"); return }
+                Log.d(TAG, "Aware data path ready")
                 val route = Route(network, address, info.port)
                 candidate.route = route; readRoom(candidate, route)
             }
@@ -386,5 +394,19 @@ class WiFiAwareRoomTransport(
         mutableState.value = mutableState.value.copy(error = message)
         onError?.invoke(message)
     }
-    companion object { const val SERVICE_NAME = "_goh-tour._tcp"; private const val TAG = "AwareRoom" }
+    companion object {
+        const val SERVICE_NAME = "_goh-tour._tcp"
+        private const val TAG = "AwareRoom"
+
+        internal fun openListener(): ServerSocket {
+            val listener = ServerSocket()
+            try {
+                listener.reuseAddress = true
+                // Fixed 50004 can already be an unrelated outgoing connection's local port.
+                // The NDP advertises the assigned port; guests already consume that metadata.
+                listener.bind(InetSocketAddress(0), 8)
+                return listener
+            } catch (error: Exception) { listener.close(); throw error }
+        }
+    }
 }

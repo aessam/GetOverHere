@@ -504,6 +504,8 @@
 
 **September 7 admission completion follow-up**: Physical BLE reproduced a dropped final admission reply when local TCP EOF immediately closed the native guide stream. Guide-side admission now drains until peer closure, with a five-second limit after local EOF; other lanes retain their existing close policy. No new wire bytes, authentication downgrade, or unconditional sleep before delivery are introduced. Both adapters preserve this behavior and test bounded abandoned-peer cleanup. This is an adapter completion fix, not signed admission or mixed-Aware qualification.
 
+**September 7 Android Aware port follow-up**: The physical throughput pilot reproduced `BindException` before publishing. A scoped socket inspection showed an unrelated established outgoing connection already using local port 50004. The active Android Aware owner now binds port zero and advertises the assigned listener port through `WifiAwareNetworkSpecifier`; its guest already consumes `WifiAwareNetworkInfo.port`. GOD1 and the three application lane contracts are unchanged. The socket is closed if binding fails. An emulator regression occupies the old fixed port, fails before this change with `EADDRINUSE`, and passes with dynamic allocation. Do not terminate unrelated connections or claim this explains every earlier discovery failure. The unreferenced older Aware transport is not changed by this fix.
+
 ## ADR-057: Canonical signed-guide frame contract
 **Date**: 2026-09-07
 **Status**: Core prerequisite implemented; app bootstrap and relay integration pending. Does not complete ADR-038.

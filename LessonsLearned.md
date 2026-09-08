@@ -459,3 +459,13 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **What happened**: Adding verified APK reuse while a physical harness was still executing shifted its input and caused a shell parse failure after both instrumentation roles had passed. Separately, a fixture intended to be foreground was observed running with its guide asleep behind keyguard.
 **Resolution**: Preserve the failed harness result, freeze the script before the next run, and verify installed APK hashes instead of repeatedly reinstalling unchanged candidates. Record actual foreground state rather than infer it from activity flags or the absence of a device passcode.
 **Decision**: Do not edit executing scripts. Native discovery failures need lifecycle/stage evidence; a passing wake/dismiss rerun is not a proven root cause.
+
+## 82. A fixed Aware listener can collide with an outgoing connection
+**What happened**: The throughput pilot verified foreground state on both phones, then the guide failed to bind port 50004. Scoped socket inspection found that local port occupied by an unrelated outgoing TCP connection. This prevented publishing; the guest consequently timed out discovering the endpoint.
+**Resolution**: Request an OS-assigned listener port and advertise the actual port using the existing native Aware metadata. Add a deterministic occupied-port regression and payload-free native-stage logs. Never stop the unrelated connection.
+**Decision**: Where the protocol already advertises an endpoint port, do not assume a fixed port is available. Preserve other discovery failures separately until their own cause is demonstrated.
+
+## 83. A throughput benchmark must verify delivery and completion
+**What happened**: A short loopback/pilot passed, but a longer physical benchmark lost its final completion marker when the guide released the Aware owner. Its bulk frames had all been verified; final protocol completion had not.
+**Resolution**: Keep the guide owner alive until the guest consumes the marker and closes, and regression-test that the guide cannot return before peer closure. Measure goodput using receiver bytes/time, verify every block and sequence, compare both endpoints' byte counts, separate warm-up, and use 100 idle RTT samples.
+**Decision**: A completed write, partial trial output, or high byte count alone is not a passing physical benchmark. Foreground state and complete role results are required.
