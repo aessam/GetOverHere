@@ -132,6 +132,7 @@ class ChannelService(
     override val awareSettings get() = (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.awareSettings
     internal var resolvedGuestRoute: NearbyGuestRoute? = null
         private set
+    private var guestUsesNearbyTransport = false
     private val mutableActiveTransportRoute = MutableStateFlow<SessionTransportRoute?>(null)
     override val activeTransportRoute = mutableActiveTransportRoute.asStateFlow()
     override fun canJoin(channel: Channel): Boolean {
@@ -545,7 +546,8 @@ class ChannelService(
             }
         val attempt = sessionAttempt
         scope.launch {
-            val host: String
+            // Main may not run this body until after Leave or a replacement join.
+            if (attempt != sessionAttempt) return@launch
             var nearbyRoute: NearbyGuestRoute? = null
             val admittedIdentity: AdmittedGuideIdentity
             val credential = try {
@@ -554,15 +556,40 @@ class ChannelService(
                 }
                 _joinStage.value = RoomJoinStage.CONNECTING_DEVICE
                 _tourFeatureError.value = null
-                host = channel.audioHostIP ?: run {
-                    nearbyRoute = requireNotNull(coordinator.controlPlane as? NearbyRouteControl) {
-                        "No nearby connection is available"
-                    }.prepareNearbyGuest(sessionID, UUID.fromString(channel.createdBy)).also { require(it.roomID == sessionID) { "Nearby room changed" } }
-                    requireNotNull(nearbyRoute).adapterHost
+                val expectedGuideID = UUID.fromString(channel.createdBy)
+                fun requireCurrentAttempt() {
+                    if (attempt != sessionAttempt) throw CancellationException("Room join was canceled")
                 }
-                _joinStage.value = RoomJoinStage.ADMITTING
-                val admitted = withContext(Dispatchers.IO) {
-                    roomAdmission.join(host, sessionID, UUID.fromString(channel.createdBy), tourCode.ifEmpty { null })
+                suspend fun prepareNearby(): String {
+                    requireCurrentAttempt()
+                    val prepared = requireNotNull(coordinator.controlPlane as? NearbyRouteControl) {
+                        "No nearby connection is available"
+                    }.prepareNearbyGuest(sessionID, expectedGuideID)
+                    requireCurrentAttempt()
+                    require(prepared.roomID == sessionID) { "Nearby room changed" }
+                    nearbyRoute = prepared
+                    return prepared.adapterHost
+                }
+                suspend fun admitAt(host: String): com.aessam.toursession.AdmittedRoomCredentials {
+                    requireCurrentAttempt()
+                    _joinStage.value = RoomJoinStage.ADMITTING
+                    return withContext(Dispatchers.IO) {
+                        roomAdmission.join(host, sessionID, expectedGuideID, tourCode.ifEmpty { null })
+                    }.also { requireCurrentAttempt() }
+                }
+                val lanHost = channel.audioHostIP
+                val admitted = if (lanHost == null) admitAt(prepareNearby()) else {
+                    try { admitAt(lanHost) }
+                    catch (error: RoomAdmissionTransportError) {
+                        requireCurrentAttempt()
+                        val nearby = coordinator.controlPlane as? NearbyRouteControl
+                        if (nearby?.canConnectNearby(sessionID) != true) throw error
+                        Log.w(TAG, "LAN admission is unreachable; trying the selected guide nearby")
+                        _joinStage.value = RoomJoinStage.CONNECTING_DEVICE
+                        // Exactly one fallback, with unchanged room, guide and code. Protocol,
+                        // identity and post-challenge failures never enter this branch.
+                        admitAt(prepareNearby())
+                    }
                 }
                 admittedIdentity = admitted.guideIdentity
                 withContext(Dispatchers.Default) { SessionCredential.derive(admitted.mediaSecret, sessionID) }
@@ -608,8 +635,9 @@ class ChannelService(
         nearbyRoute: NearbyGuestRoute?,
     ) {
         stopCurrentActivity(preservingNearbyRoute = true)
-        if (channel.audioHostIP != null) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
+        if (nearbyRoute == null) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
         resolvedGuestRoute = nearbyRoute
+        guestUsesNearbyTransport = nearbyRoute != null
         _readySlideFiles.value = emptyMap()
         _readyParticipantCount.value = 0
         _offlineMapConfiguration.value = null
@@ -867,6 +895,11 @@ class ChannelService(
         _audioRuntimeError.value = null
         if (_connectionState.value == SessionConnectionState.CONNECTED) {
             startGuestPlayback()
+        } else if (guestUsesNearbyTransport) {
+            if (reconnectJob == null) {
+                _reconnectAttempt.value = 0
+                scheduleReconnect("Restoring the selected nearby connection")
+            }
         } else {
             _reconnectAttempt.value = 0
             restartGuestTransports(channel)
@@ -925,6 +958,7 @@ class ChannelService(
     private fun stopCurrentActivity(discardingPendingStretch: Boolean = true, preservingNearbyRoute: Boolean = false) {
         if (!preservingNearbyRoute) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
         resolvedGuestRoute = null
+        guestUsesNearbyTransport = false
         roomAdmission.stop()
         roomAccessAttempt++
         _isUpdatingRoomAccess.value = false
@@ -1078,6 +1112,7 @@ class ChannelService(
 
                             if (_activeChannelID.value == updated.id &&
                                 _listenState.value == ListenState.LISTENING &&
+                                !guestUsesNearbyTransport &&
                                 updated.audioHostIP != null &&
                                 existing.audioHostIP != updated.audioHostIP) {
                                 // Discovery may only reconfigure the existing credential (FND-6, ADR-036).
@@ -1145,8 +1180,12 @@ class ChannelService(
         participantID: UUID,
         credential: SessionCredential,
     ) {
-        val hostIP = resolvedGuestRoute?.adapterHost ?: channel.audioHostIP
+        val hostIP = resolvedGuestRoute?.adapterHost ?: channel.audioHostIP.takeUnless { guestUsesNearbyTransport }
         if (hostIP == null) {
+            if (guestUsesNearbyTransport) {
+                scheduleReconnect("Restoring the selected nearby connection")
+                return
+            }
             _connectionState.value = SessionConnectionState.FAILED
             _tourFeatureError.value = "No room connection is available. Find the guide nearby or reconnect to their local Wi-Fi."
             return
@@ -1263,6 +1302,10 @@ class ChannelService(
         when (event) {
             is TourControlConnectionEvent.AuthenticationFailed -> failGuestSession(event.message)
             TourControlConnectionEvent.Connected -> {
+                // Recovery owns no new control run until tryNextGuestRoute sets CONNECTING.
+                // A callback already queued by the stopped run cannot cancel that recovery.
+                if (_connectionState.value != SessionConnectionState.CONNECTING &&
+                    _connectionState.value != SessionConnectionState.CONNECTED) return
                 val route = activeGuestRoute ?: return
                 if (!routeLease.select(route)) {
                     _connectionState.value = SessionConnectionState.FAILED
@@ -1332,41 +1375,58 @@ class ChannelService(
         _tourFeatureError.value = reason
         Log.e(TAG, "Session reconnect attempt ${_reconnectAttempt.value}")
         val delayMilliseconds = (1L shl (_reconnectAttempt.value - 1)) * reconnectBaseDelayMillis
+        val generation = sessionGeneration
         reconnectJob = scope.launch {
-            delay(delayMilliseconds)
-            reconnectJob = null
-            if (_listenState.value != ListenState.LISTENING) return@launch
-            // A fresher discovery address wins over the one captured when the reconnect was scheduled.
-            val current = activeChannel ?: channel
-            refreshGuestRouteForReconnect(current)
-            if (_listenState.value == ListenState.LISTENING && _activeChannelID.value == current.id && guestCredential != null) {
-                restartGuestTransports(current)
-            }
+            val owner = coroutineContext.job
+            try {
+                delay(delayMilliseconds)
+                if (generation != sessionGeneration || _listenState.value != ListenState.LISTENING) return@launch
+                // Refresh the selected route, but retain this job while its native probe suspends.
+                // Lane callbacks and Retry Audio cannot schedule a second overlapping recovery.
+                val current = activeChannel ?: channel
+                val routeReady = refreshGuestRouteForReconnect(current)
+                ensureActive()
+                if (generation != sessionGeneration || _listenState.value != ListenState.LISTENING ||
+                    _activeChannelID.value != current.id || guestCredential == null) return@launch
+                reconnectJob = null
+                if (routeReady) restartGuestTransports(current)
+                else scheduleReconnect("The nearby guide is not reachable yet")
+            } finally { if (reconnectJob === owner) reconnectJob = null }
         }
     }
 
-    private suspend fun refreshGuestRouteForReconnect(channel: Channel) {
-        val nearby = coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl ?: return
-        val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return }
-        if (resolvedGuestRoute != null && channel.audioHostIP != null) {
-            nearby.stopNearbyGuest(); resolvedGuestRoute = null
-            coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.OFF)
-        } else if (nearby.canConnectNearby(room)) {
+    private suspend fun refreshGuestRouteForReconnect(channel: Channel): Boolean {
+        val nearby = coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl
+            ?: return !guestUsesNearbyTransport && channel.audioHostIP != null
+        val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return false }
+        // Discovery cannot replace the route which actually admitted this session. In particular,
+        // a reflected or stale LAN address does not make an established nearby path unusable.
+        if (guestUsesNearbyTransport || nearby.canConnectNearby(room)) {
+            val generation = sessionGeneration
             coordinator.activeAudioPlane?.stop(); tourControlService.stop(); assetTransferService.stop()
             try {
-                resolvedGuestRoute = nearby.prepareNearbyGuest(room, UUID.fromString(channel.createdBy)).also { require(it.roomID == room) { "Nearby room changed" } }
+                val guide = requireNotNull(guidePin.identity).guideId
+                val prepared = nearby.prepareNearbyGuest(room, guide)
+                currentCoroutineContext().ensureActive()
+                if (generation != sessionGeneration || _activeChannelID.value != channel.id || _listenState.value != ListenState.LISTENING) return false
+                resolvedGuestRoute = prepared.also { require(it.roomID == room) { "Nearby room changed" } }
+                guestUsesNearbyTransport = true
                 if (_bluetoothDiscoveryEnabled.value && nearby.usesBluetoothGuestRoute) {
                     coordinator.controlPlane.setBluetoothDiscoveryMode(BluetoothDiscoveryMode.BROWSING)
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                if (generation != sessionGeneration || _activeChannelID.value != channel.id || _listenState.value != ListenState.LISTENING) return false
+                resolvedGuestRoute = null
                 if (error is NearbyRoomMetadataMismatch) {
                     failGuestSession(nearbyMetadataFailureMessage(error))
-                    return
+                    return false
                 }
                 Log.w(TAG, "Nearby route recovery failed (${error.javaClass.simpleName})")
+                return false
             }
         }
+        return resolvedGuestRoute != null || (!guestUsesNearbyTransport && channel.audioHostIP != null)
     }
 
     /**

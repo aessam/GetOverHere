@@ -30,6 +30,7 @@ import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.aessam.toursession.BluetoothLanePSMs
 import com.aessam.toursession.BluetoothRoomRecord
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -72,8 +73,8 @@ class BluetoothRoomDiscovery(private val context: Context,
     private val attempts = mutableMapOf<String, Long>()
     private val rooms = mutableMapOf<String, Pair<BluetoothRoomRecord, Long>>()
     private val snapshots = mutableMapOf<String, Pair<ByteArray, Long>>()
-    private var sessionServer: BluetoothServerSocket? = null
-    private var localPSM = 0
+    private val sessionServers = mutableListOf<BluetoothServerSocket>()
+    private var localLanePSMs: BluetoothLanePSMs? = null
     private val peerPSMs = mutableMapOf<String, Int>()
     private var joinedRoom: UUID? = null
     private var scanning = false
@@ -124,6 +125,7 @@ class BluetoothRoomDiscovery(private val context: Context,
         val SERVICE_ID: UUID = UUID.fromString("A1B2C3D4-0005-0000-0000-000000000000")
         val RECORD_ID: UUID = UUID.fromString("A1B2C3D4-0006-0000-0000-000000000000")
         val PSM_ID: UUID = UUID.fromString("A1B2C3D4-0007-0000-0000-000000000000")
+        val LANE_PSMS_ID: UUID = UUID.fromString("A1B2C3D4-0009-0000-0000-000000000000")
         fun requiredPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= 31) arrayOf(
             Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.BLUETOOTH_ADVERTISE,
@@ -205,23 +207,34 @@ class BluetoothRoomDiscovery(private val context: Context,
         service.addCharacteristic(BluetoothGattCharacteristic(RECORD_ID,
             BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
         if (Build.VERSION.SDK_INT >= 29) {
-            val listener = requireNotNull(adapter).listenUsingInsecureL2capChannel()
-            sessionServer = listener; localPSM = listener.psm
+            // Own each allocation immediately so a later allocation failure closes all earlier PSMs.
+            repeat(4) { sessionServers += requireNotNull(adapter).listenUsingInsecureL2capChannel() }
+            localLanePSMs = BluetoothLanePSMs(sessionServers[0].psm, sessionServers[1].psm,
+                sessionServers[2].psm, sessionServers[3].psm)
             service.addCharacteristic(BluetoothGattCharacteristic(PSM_ID,
                 BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
-            io.execute {
-                while (true) {
-                    try {
-                        val socket = listener.accept()
-                        handler.post {
-                            if (sessionServer !== listener) socket.close()
-                            else sessionBridge.accept(BluetoothByteConnection(socket)) {
-                                if (record.isEmpty()) null else BluetoothRoomRecord.decode(record)
+            service.addCharacteristic(BluetoothGattCharacteristic(LANE_PSMS_ID,
+                BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
+            for (listener in sessionServers) {
+                io.execute {
+                    while (true) {
+                        try {
+                            val socket = listener.accept()
+                            handler.post {
+                                if (sessionServers.none { it === listener }) socket.close()
+                                else sessionBridge.accept(BluetoothByteConnection(socket)) {
+                                    if (record.isEmpty()) null else BluetoothRoomRecord.decode(record)
+                                }
                             }
+                        } catch (error: Exception) {
+                            handler.post {
+                                if (sessionServers.any { it === listener }) {
+                                    Log.e(TAG, "Bluetooth session accept failed; retry in 30 s (${error.javaClass.simpleName})")
+                                    stopRadio(); retryAt = now() + 30_000
+                                }
+                            }
+                            break
                         }
-                    } catch (error: Exception) {
-                        handler.post { if (sessionServer === listener) Log.w(TAG, "Bluetooth session accept failed (${error.javaClass.simpleName})") }
-                        break
                     }
                 }
             }
@@ -230,8 +243,11 @@ class BluetoothRoomDiscovery(private val context: Context,
     }
 
     private fun stopRadio() {
-        val listener = sessionServer; sessionServer = null; localPSM = 0
-        try { listener?.close() } catch (error: Exception) { Log.w(TAG, "Bluetooth session listener close failed (${error.javaClass.simpleName})") }
+        val listeners = sessionServers.toList(); sessionServers.clear(); localLanePSMs = null
+        for (listener in listeners) {
+            try { listener.close() }
+            catch (error: Exception) { Log.w(TAG, "Bluetooth session listener close failed (${error.javaClass.simpleName})") }
+        }
         sessionBridge.stop(); peerPSMs.clear(); roomEndpoints.clear()
         try { stopScanning() }
         catch (error: Exception) { Log.w(TAG, "Stop scan failed (${error.javaClass.simpleName})") }
@@ -392,10 +408,17 @@ class BluetoothRoomDiscovery(private val context: Context,
                                                  characteristic: BluetoothGattCharacteristic) { handler.post {
             if (!running || !radioStarted || !permitted()) return@post
             val current = server ?: return@post
-            if (characteristic.uuid == PSM_ID) {
-                val bytes = byteArrayOf((localPSM shr 8).toByte(), localPSM.toByte())
-                if (offset !in 0..2) current.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
-                else current.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, bytes.copyOfRange(offset, 2))
+            if (characteristic.uuid == PSM_ID || characteristic.uuid == LANE_PSMS_ID) {
+                val endpoints = localLanePSMs
+                if (endpoints == null) {
+                    current.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return@post
+                }
+                // Legacy peers may still use admission's PSM for all GOD1 lanes.
+                val bytes = if (characteristic.uuid == PSM_ID)
+                    byteArrayOf((endpoints.admission shr 8).toByte(), endpoints.admission.toByte())
+                else endpoints.encode()
+                if (offset !in 0..bytes.size) current.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
+                else current.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, bytes.copyOfRange(offset, bytes.size))
                 return@post
             }
             if (characteristic.uuid != RECORD_ID) {

@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,6 +50,247 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelServiceLifecycleTest {
+    @Test fun canceledQueuedJoinCannotRestoreConnectingStateOrStartAdmission() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission, queuedDispatch = true)
+        try {
+            h.scheduler.runCurrent()
+            val room = Channel(UUID.randomUUID().toString(), "Canceled tour", 0.0, UUID.randomUUID().toString(),
+                audioHostIP = "10.0.0.1", roomAdmissionVersion = 2)
+            h.service.joinChannel(room, TOUR_CODE)
+            h.service.leaveChannel()
+            h.scheduler.runCurrent()
+            assertEquals(SessionConnectionState.IDLE, h.service.connectionState.value)
+            assertEquals(com.aessam.comeoverhere.service.RoomJoinStage.IDLE, h.service.joinStage.value)
+            assertNull(h.service.activeChannelID.value)
+            assertTrue(admission.calls.isEmpty())
+            assertEquals(0, h.controlPlane.nearbyPrepareCalls)
+            assertEquals(0, h.control.startGuestCalls)
+            assertEquals(0, h.audioPlane.startListeningCalls)
+            assertTrue(h.uncaught.isEmpty())
+        } finally { h.close() }
+    }
+
+    @Test fun queuedOldConnectedEventCannotCancelSuspendedNearbyRecovery() {
+        val base = LifecycleControlPlane().apply { nearbyAvailable = true }
+        val release = CompletableDeferred<Unit>()
+        var hold = false
+        var entered = 0
+        val routed = object : com.aessam.comeoverhere.core.ControlPlane by base,
+            com.aessam.comeoverhere.core.NearbyRouteControl by base {
+            override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): com.aessam.comeoverhere.core.NearbyGuestRoute {
+                val prepared = base.prepareNearbyGuest(roomID, expectedGuideID)
+                if (hold) { entered++; release.await() }
+                return prepared
+            }
+        }
+        val h = Harness(controlPlane = base, coordinatorControlPlane = routed, queuedDispatch = true)
+        try {
+            val room = Channel(UUID.randomUUID().toString(), "Nearby tour", 0.0, UUID.randomUUID().toString(),
+                audioHostIP = null, roomAdmissionVersion = 2)
+            h.service.start(); h.scheduler.runCurrent()
+            base.emit(announce(room, null)); h.scheduler.runCurrent()
+            h.service.joinChannel(room, TOUR_CODE)
+            awaitCondition("queued guest lanes") { h.scheduler.runCurrent(); h.control.startGuestCalls == 1 }
+            h.control.emit(SessionControlEvent.Connected); h.scheduler.runCurrent()
+            assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+            hold = true
+            h.control.emit(SessionControlEvent.Disconnected); h.scheduler.runCurrent()
+            h.scheduler.advanceTimeBy(1)
+            // Forward while the old control run still exists, behind the due reconnect task.
+            h.control.emit(SessionControlEvent.Connected)
+            h.scheduler.runCurrent()
+            assertEquals(1, entered)
+            assertEquals(SessionConnectionState.RECONNECTING, h.service.connectionState.value)
+            assertEquals(1, h.control.startGuestCalls)
+            release.complete(Unit); h.scheduler.runCurrent()
+            assertEquals(2, h.control.startGuestCalls)
+            assertEquals(SessionConnectionState.CONNECTING, h.service.connectionState.value)
+            h.control.emit(SessionControlEvent.Connected); h.scheduler.runCurrent()
+            assertEquals(SessionConnectionState.CONNECTED, h.service.connectionState.value)
+            assertTrue(h.uncaught.isEmpty())
+        } finally { release.complete(Unit); h.close() }
+    }
+
+    @Test fun unreachableLANFallsBackOnceToMatchingNearbyForEveryLane() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission)
+        try {
+            admission.unreachableLAN = true
+            h.controlPlane.nearbyAvailable = true
+            val room = h.discoverAndJoin()
+            h.connectGuest()
+            assertEquals(listOf("10.0.0.1", "127.0.0.1"), admission.calls.map { it.host })
+            assertEquals(1, h.controlPlane.nearbyPrepareCalls)
+            assertTrue(admission.calls.all { it.room == UUID.fromString(room.id) &&
+                it.guide == UUID.fromString(room.createdBy) && it.code == TOUR_CODE })
+            assertEquals(com.aessam.toursession.SessionTransportRoute.BLUETOOTH, h.service.activeTransportRoute.value)
+            assertNotNull(h.controlPlane.activeNearbyGuestRoute)
+            assertEquals("127.0.0.1", h.control.startGuestHostIPs.last())
+            assertEquals("127.0.0.1", h.asset.hostIP)
+            assertEquals(1, h.audioPlane.startListeningCalls)
+        } finally { h.close() }
+    }
+
+    @Test fun terminalLANAdmissionNeverFallsThroughToNearby() {
+        listOf(com.aessam.toursession.RoomAdmissionException("Wrong code"),
+            com.aessam.toursession.RoomAdmissionV2Exception(com.aessam.toursession.RoomAdmissionV2Exception.Reason.WRONG_GUIDE),
+            com.aessam.toursession.RoomAdmissionV2Exception(com.aessam.toursession.RoomAdmissionV2Exception.Reason.INCOMPATIBLE_VERSION),
+            IllegalArgumentException("Malformed challenge"), java.io.EOFException("Reply ended after request")).forEach { failure ->
+            val admission = RouteAdmission().apply { terminalError = failure }
+            val h = Harness(admissionOverride = admission)
+            try {
+                h.controlPlane.nearbyAvailable = true
+                val channel = Channel(UUID.randomUUID().toString(), "Tour", 0.0, UUID.randomUUID().toString(),
+                    audioHostIP = "10.0.0.1", roomAdmissionVersion = 2)
+                h.service.joinChannel(channel, TOUR_CODE)
+                awaitCondition("terminal LAN admission") { h.service.connectionState.value == SessionConnectionState.FAILED }
+                assertEquals(listOf("10.0.0.1"), admission.calls.map { it.host })
+                assertEquals(0, h.controlPlane.nearbyPrepareCalls)
+                assertEquals(0, h.audioPlane.startListeningCalls)
+            } finally { h.close() }
+        }
+    }
+
+    @Test fun unreachableNearbyFallbackStopsAfterOneAttempt() {
+        val admission = RouteAdmission().apply { unreachableLAN = true; unreachableNearby = true }
+        val h = Harness(admissionOverride = admission)
+        try {
+            h.controlPlane.nearbyAvailable = true
+            val channel = Channel(UUID.randomUUID().toString(), "Tour", 0.0, UUID.randomUUID().toString(),
+                audioHostIP = "10.0.0.1", roomAdmissionVersion = 2)
+            h.service.joinChannel(channel, TOUR_CODE)
+            awaitCondition("both routes failed") { h.service.connectionState.value == SessionConnectionState.FAILED }
+            assertEquals(listOf("10.0.0.1", "127.0.0.1"), admission.calls.map { it.host })
+            assertEquals(1, h.controlPlane.nearbyPrepareCalls)
+            assertNull(h.controlPlane.activeNearbyGuestRoute)
+            assertEquals(0, h.audioPlane.startListeningCalls)
+        } finally { h.close() }
+    }
+
+    @Test fun failedNearbyRecoveryDoesNotReopenStaleAdaptersOrSwitchToAdvertisedLAN() {
+        val h = Harness()
+        try {
+            h.controlPlane.nearbyAvailable = true
+            val room = h.discoverAndJoin(null)
+            h.connectGuest()
+            val starts = h.control.startGuestCalls
+            h.controlPlane.emit(announce(room, "10.0.0.99"))
+            h.controlPlane.nearbyPrepareError = IllegalStateException("Nearby path unavailable")
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            assertNull(h.service.resolvedGuestRoute)
+            assertEquals(starts, h.control.startGuestCalls)
+            h.service.retryAudio()
+            h.controlPlane.emit(announce(room, "10.0.0.100"))
+            h.scheduler.runCurrent()
+            assertEquals(starts, h.control.startGuestCalls)
+            repeat(6) { h.scheduler.advanceTimeBy(100); h.scheduler.runCurrent() }
+            awaitCondition("bounded failed nearby recovery") {
+                h.scheduler.advanceTimeBy(100); h.scheduler.runCurrent()
+                h.service.connectionState.value == SessionConnectionState.FAILED
+            }
+            assertEquals(starts, h.control.startGuestCalls)
+            assertNull(h.service.resolvedGuestRoute)
+            assertEquals("127.0.0.1", h.control.startGuestHostIPs.last())
+        } finally { h.close() }
+    }
+
+    @Test fun nearbyRouteSurvivesLANAnnouncementAndReconnectWithoutReadmission() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission)
+        try {
+            h.controlPlane.nearbyAvailable = true
+            val room = h.discoverAndJoin(null)
+            h.connectGuest()
+            val descriptor = requireNotNull(h.service.resolvedGuestRoute)
+            val starts = h.control.startGuestCalls
+            val stops = h.controlPlane.nearbyStopCalls
+            h.controlPlane.emit(announce(room, "10.0.0.99"))
+            h.scheduler.runCurrent()
+            assertEquals(starts, h.control.startGuestCalls)
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            awaitCondition("nearby reconnect after LAN announcement") { h.scheduler.runCurrent(); h.control.startGuestCalls > starts }
+            assertEquals(descriptor, h.service.resolvedGuestRoute)
+            assertEquals(stops, h.controlPlane.nearbyStopCalls)
+            assertEquals(listOf("127.0.0.1"), admission.calls.map { it.host })
+            assertEquals("127.0.0.1", h.control.startGuestHostIPs.last())
+            assertEquals("127.0.0.1", h.asset.hostIP)
+        } finally { h.close() }
+    }
+
+    @Test fun canceledLANAdmissionCannotPrepareNearbyOrMutateReplacementSession() {
+        val admission = RouteAdmission()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        admission.beforeJoin = { host ->
+            if (host == "10.0.0.1") {
+                entered.countDown()
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+        }
+        admission.unreachableLAN = true
+        val h = Harness(admissionOverride = admission)
+        try {
+            h.controlPlane.nearbyAvailable = true
+            val channel = Channel(UUID.randomUUID().toString(), "Old", 0.0, UUID.randomUUID().toString(),
+                audioHostIP = "10.0.0.1", roomAdmissionVersion = 2)
+            h.service.joinChannel(channel, TOUR_CODE)
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            h.service.leaveChannel()
+            h.createGuide()
+            val replacement = h.service.activeChannelID.value
+            release.countDown()
+            awaitCondition("old admission completed") { admission.returned }
+            h.scheduler.runCurrent()
+            assertEquals(replacement, h.service.activeChannelID.value)
+            assertEquals(ListenState.BROADCASTING, h.service.listenState.value)
+            assertEquals(0, h.controlPlane.nearbyPrepareCalls)
+        } finally { release.countDown(); h.close() }
+    }
+
+    @Test fun suspendedNearbyRecoveryIsSingleFlightAndCannotMutateReplacementRoom() {
+        val base = LifecycleControlPlane().apply { nearbyAvailable = true }
+        val release = CompletableDeferred<Unit>()
+        var hold = false
+        var entered = 0
+        val routed = object : com.aessam.comeoverhere.core.ControlPlane by base,
+            com.aessam.comeoverhere.core.NearbyRouteControl by base {
+            override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): com.aessam.comeoverhere.core.NearbyGuestRoute {
+                val prepared = base.prepareNearbyGuest(roomID, expectedGuideID)
+                if (hold) {
+                    entered++
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
+                }
+                return prepared
+            }
+        }
+        val h = Harness(controlPlane = base, coordinatorControlPlane = routed)
+        try {
+            h.discoverAndJoin(null); h.connectGuest()
+            hold = true
+            val starts = h.control.startGuestCalls
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            assertEquals(1, entered)
+            h.service.retryAudio()
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(1_000); h.scheduler.runCurrent()
+            assertEquals(1, entered)
+            assertEquals(starts, h.control.startGuestCalls)
+            h.service.leaveChannel()
+            h.createGuide()
+            val replacement = h.service.activeChannelID.value
+            release.complete(Unit)
+            h.scheduler.runCurrent()
+            assertEquals(replacement, h.service.activeChannelID.value)
+            assertEquals(ListenState.BROADCASTING, h.service.listenState.value)
+            assertNull(h.service.resolvedGuestRoute)
+            assertEquals(starts, h.control.startGuestCalls)
+        } finally { release.complete(Unit); h.close() }
+    }
+
     @Test fun oldCaptureFinalizerFailureCannotFailReplacementGuideOrGuest() {
         listOf(false, true).forEach { replaceWithGuest ->
             val h = Harness()
@@ -341,14 +583,17 @@ class ChannelServiceLifecycleTest {
         } finally { h.close() }
     }
 
-    private class Harness(reconnectBaseDelayMillis: Long = 1L) {
+    private class Harness(reconnectBaseDelayMillis: Long = 1L,
+        admissionOverride: com.aessam.comeoverhere.core.RoomAdmissionInterface? = null,
+        val controlPlane: LifecycleControlPlane = LifecycleControlPlane(),
+        coordinatorControlPlane: com.aessam.comeoverhere.core.ControlPlane = controlPlane,
+        queuedDispatch: Boolean = false) {
         val uncaught = CopyOnWriteArrayList<Throwable>()
         val scheduler = TestCoroutineScheduler()
         val scope = CoroutineScope(
-            SupervisorJob() + UnconfinedTestDispatcher(scheduler) +
+            SupervisorJob() + (if (queuedDispatch) StandardTestDispatcher(scheduler) else UnconfinedTestDispatcher(scheduler)) +
                 CoroutineExceptionHandler { _, error -> uncaught += error },
         )
-        val controlPlane = LifecycleControlPlane()
         val audioPlane = LifecycleAudioPlane()
         val control = LifecycleControlTransport()
         val asset = LifecycleAssetTransport()
@@ -356,7 +601,7 @@ class ChannelServiceLifecycleTest {
         val admission = LifecycleRoomAdmission()
         val guidance = FakeLocalGuidance()
         private val root = Files.createTempDirectory("GetOverHereLifecycle-").toFile()
-        val coordinator = NetworkCoordinator(controlPlane, audioPlane, scope)
+        val coordinator = NetworkCoordinator(coordinatorControlPlane, audioPlane, scope)
         val service = ChannelService(
             coordinator,
             engine,
@@ -366,7 +611,7 @@ class ChannelServiceLifecycleTest {
             TourContentStore(root.resolve("packs")),
             guidance,
             reconnectBaseDelayMillis,
-            admission,
+            admissionOverride ?: admission,
         )
 
         fun resetClearSessionBaselines() {
@@ -793,6 +1038,27 @@ class ChannelServiceLifecycleTest {
     }
 
     // MARK: - Helpers
+
+    private class RouteAdmission : com.aessam.comeoverhere.core.RoomAdmissionInterface by LifecycleRoomAdmission() {
+        data class Call(val host: String, val room: UUID, val guide: UUID, val code: String?)
+        val calls = CopyOnWriteArrayList<Call>()
+        private val actual = LifecycleRoomAdmission()
+        var unreachableLAN = false
+        var unreachableNearby = false
+        var terminalError: Exception? = null
+        var beforeJoin: ((String) -> Unit)? = null
+        @Volatile var returned = false
+        override fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): com.aessam.toursession.AdmittedRoomCredentials {
+            calls += Call(host, sessionID, expectedGuideID, code)
+            try {
+                beforeJoin?.invoke(host)
+                terminalError?.let { throw it }
+                if (if (host == "127.0.0.1") unreachableNearby else unreachableLAN) throw com.aessam.comeoverhere.core.RoomAdmissionTransportError(
+                    java.net.ConnectException("LAN unreachable"))
+                return actual.join(host, sessionID, expectedGuideID, code)
+            } finally { returned = true }
+        }
+    }
 
     private fun Harness.createGuide(): Channel {
         service.createChannel("Tour")

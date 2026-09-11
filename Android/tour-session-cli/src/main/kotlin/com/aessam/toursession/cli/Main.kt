@@ -7,6 +7,7 @@ import com.aessam.toursession.TourSessionFixtures
 import com.aessam.toursession.RealtimeSequenceAudit
 import com.aessam.toursession.RoomAdmission
 import com.aessam.toursession.RoomAdmissionV2
+import com.aessam.toursession.BluetoothLanePSMs
 import com.aessam.toursession.BluetoothRoomRecord
 import com.aessam.toursession.RoomAccessPolicy
 import com.aessam.toursession.NearbyLaneRequest
@@ -34,6 +35,7 @@ fun main(arguments: Array<String>) {
             "bluetooth-v2-fixture" -> println(BluetoothRoomRecord(
                 UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"),
                 UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100"), "Tour", true, true, 2).encode().lowercaseHex())
+            "bluetooth-lanes-fixture" -> println(BluetoothLanePSMs(128, 129, 256, 65535).encode().lowercaseHex())
             "room-v2-guide", "room-v2-guest" -> {
                 require(arguments.size == 4) {
                     "room-v2-guide/room-v2-guest requires SESSION_UUID GUIDE_UUID CODE (use - for open)"
@@ -138,7 +140,7 @@ fun main(arguments: Array<String>) {
             "auth" -> println(TourSessionFixtures.authenticationFixtureHex())
             "recovery" -> println(TourSessionFixtures.simulateRecovery())
             "focus" -> println(TourSessionFixtures.simulateVisualFocus())
-            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | nearby-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
+            null -> fail("usage: tour-session-kotlin fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | nearby-fixture | bluetooth-lanes-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
             else -> fail("unknown command: $command")
         }
     } catch (error: Exception) {

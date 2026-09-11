@@ -131,6 +131,7 @@ struct NearbySocketBridgeTests {
         #expect(replacement.routeID != first.routeID)
         #expect(replacement.transport == first.transport)
         #expect(bluetooth.connectCalls == (useAware ? 0 : 3))
+        #expect(bluetooth.requestedLanes == (useAware ? [] : [.metadata, .metadata, .metadata]))
         #expect(aware.connectCalls == (useAware ? 3 : 0))
     }
 
@@ -200,6 +201,25 @@ struct NearbySocketBridgeTests {
             #expect(try await bridge.startGuest(roomID: room) { throw NearbyConnectionError.unavailable } == "127.0.0.1")
             bridge.stop()
         }
+    }
+
+    @Test func adapterPassesEachApplicationLaneToItsNativeConnector() async throws {
+        let room = UUID()
+        let bridge = NearbySocketBridge(budget: NearbyConnectionBudget(), guestPort: { 60_119 + UInt16($0.rawValue) })
+        var requested: [NearbyLaneRequest.Lane] = []
+        var clients: [NearbyTCPConnection] = []
+        defer { clients.forEach { $0.close() }; bridge.stop() }
+        _ = try await bridge.startGuest(roomID: room, laneConnect: { lane in
+            requested.append(lane)
+            // Native setup is deliberately rejected after recording the selector.
+            throw NearbyConnectionError.unavailable
+        })
+        for lane in NearbyLaneRequest.Lane.allCases where lane != .metadata {
+            let client = NearbyTCPConnection(port: 60_119 + UInt16(lane.rawValue))
+            clients.append(client)
+            _ = try await client.read(maximum: 1) // EOF follows the rejected native setup.
+        }
+        #expect(requested == [.realtime, .control, .asset, .admission])
     }
 
     @Test(.timeLimit(.minutes(1)), arguments: [true, false])
@@ -324,12 +344,17 @@ private final class RouteBluetoothTestRadio: BluetoothSessionDiscoveryInterface 
     let record: BluetoothRoomRecord
     var joinedRoom: UUID?
     var connectCalls = 0
+    var requestedLanes: [NearbyLaneRequest.Lane] = []
     init(record: BluetoothRoomRecord) { self.record = record }
     func canConnect(roomID: UUID) -> Bool { record.roomID == roomID }
     func connect(roomID: UUID) async throws -> any NearbyByteConnection {
         connectCalls += 1
         let bytes = try record.encode()
         return BufferedNearbyTestConnection(bytes: Data([UInt8(bytes.count >> 8), UInt8(bytes.count & 255)]) + bytes, waitsForClose: false)
+    }
+    func connect(roomID: UUID, lane: NearbyLaneRequest.Lane) async throws -> any NearbyByteConnection {
+        requestedLanes.append(lane)
+        return try await connect(roomID: roomID)
     }
     func setJoinedRoom(_ roomID: UUID?) { joinedRoom = roomID }
     func setMode(_ mode: BluetoothDiscoveryMode) {}

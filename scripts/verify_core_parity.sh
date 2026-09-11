@@ -61,7 +61,7 @@ fi
 
 echo "[4/4] Byte-exact Swift/Kotlin fixture parity"
 # Deterministic argument-free fixtures. sign-guide uses fresh keys/signatures and is checked below.
-for command in fixture encrypted-fixture audio-fixture handshake realtime-fixture nearby-fixture bluetooth-v2-fixture audio-readiness-fixture state auth faults playout recovery focus; do
+for command in fixture encrypted-fixture audio-fixture handshake realtime-fixture nearby-fixture bluetooth-v2-fixture bluetooth-lanes-fixture audio-readiness-fixture state auth faults playout recovery focus; do
     SWIFT_OUT="$("$SWIFT_BIN" "$command")"
     KOTLIN_OUT="$(JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$command")"
     [[ -n "$SWIFT_OUT" && -n "$KOTLIN_OUT" ]] || { echo "error: $command produced no output" >&2; exit 1; }

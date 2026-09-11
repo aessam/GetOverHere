@@ -114,6 +114,7 @@ struct AudioEngineTests {
         engine.enqueuePlayback(Data([0, 1]))
         engine.enqueuePlayback(Data([2, 3]))
         #expect(runtime.enqueueCalls == 2)
+        #expect(engine.acceptedPlaybackByteCount == 4)
         #expect(events == [.started(.playback), .firstPlaybackBufferAccepted])
 
         engine.handleInterruption(.pause)
@@ -122,6 +123,7 @@ struct AudioEngineTests {
         #expect(runtime.pauseCalls == 1)
         engine.enqueuePlayback(Data([4, 5]))
         #expect(runtime.enqueueCalls == 2)
+        #expect(engine.acceptedPlaybackByteCount == 4)
         engine.handleConfigurationChange()
         #expect(runtime.resumeCalls == 0)
 
@@ -130,7 +132,11 @@ struct AudioEngineTests {
         #expect(runtime.resumeCalls == 1)
         engine.enqueuePlayback(Data([6, 7]))
         #expect(runtime.enqueueCalls == 3)
+        #expect(engine.acceptedPlaybackByteCount == 6)
         #expect(events == [.started(.playback), .firstPlaybackBufferAccepted, .interrupted(.playback), .resumed(.playback), .firstPlaybackBufferAccepted])
+        engine.stopPlayback()
+        try engine.startPlayback()
+        #expect(engine.acceptedPlaybackByteCount == 0)
         engine.stopPlayback()
     }
 

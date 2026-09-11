@@ -406,7 +406,8 @@ struct ChannelDetailView: View {
     }
 
     private var guestRouteLabel: String {
-        switch service.guestRoute?.transport {
+        if case .reconnecting = service.connectionState { return "Reconnecting" }
+        return switch service.guestRoute?.transport {
         case .bluetooth: "Bluetooth"
         case .wifiAware: "Wi-Fi Aware"
         case .localLAN, nil: "Local network"

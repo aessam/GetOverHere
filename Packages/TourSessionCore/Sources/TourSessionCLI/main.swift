@@ -10,6 +10,8 @@ enum TourSessionCLI {
         }
 
         switch command {
+        case "bluetooth-lanes-fixture":
+            print(try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535).encode().lowercaseHex)
         case "audio-readiness-fixture":
             print(AudioReadinessPayload(status: .playing, revision: 0x0102030405060708).encode().lowercaseHex)
         case "bluetooth-v2-fixture":

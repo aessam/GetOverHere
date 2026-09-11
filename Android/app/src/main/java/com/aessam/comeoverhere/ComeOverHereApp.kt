@@ -24,15 +24,18 @@ import kotlinx.coroutines.launch
 class ComeOverHereApp : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var coordinator: NetworkCoordinator
+    internal lateinit var audioEngine: AudioEngine
+        private set
     lateinit var channelService: ChannelService
         private set
 
     override fun onCreate() {
         super.onCreate()
         coordinator = NetworkCoordinator(this, Build.MODEL, applicationScope)
+        audioEngine = AudioEngine(this)
         channelService = ChannelService(
             coordinator,
-            AudioEngine(this),
+            audioEngine,
             applicationScope,
             TourControlService(),
             TourAssetTransferService(

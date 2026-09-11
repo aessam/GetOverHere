@@ -221,6 +221,8 @@ final class AudioEngine: AudioEngineInterface {
     private var activeRole: AudioRuntimeRole?
     private var interrupted = false
     private var acceptedPlaybackBuffer = false
+    /// Bytes accepted by the renderer in this playback run, not acoustic output.
+    private(set) var acceptedPlaybackByteCount: UInt64 = 0
     private var observerGeneration: UInt64 = 0
     private var hasCaptureTap = false
     private var captureStream: AudioCaptureStream?
@@ -397,6 +399,7 @@ final class AudioEngine: AudioEngineInterface {
             activeRole = .playback
             interrupted = false
             acceptedPlaybackBuffer = false
+            acceptedPlaybackByteCount = 0
             observeRouteChanges(for: .playback)
             onRuntimeEvent?(.started(.playback))
             Logger.audio.info("Playback started (output=\(self.listenerOutput.rawValue))")
@@ -418,6 +421,7 @@ final class AudioEngine: AudioEngineInterface {
             failRuntime(.playback, error: AudioEngineError.playbackStartFailed("The audio renderer stopped accepting buffers"))
             return
         }
+        acceptedPlaybackByteCount += UInt64(data.count)
         if !acceptedPlaybackBuffer {
             acceptedPlaybackBuffer = true
             onRuntimeEvent?(.firstPlaybackBufferAccepted)

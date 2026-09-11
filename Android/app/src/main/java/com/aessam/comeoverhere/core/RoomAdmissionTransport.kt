@@ -8,6 +8,9 @@ import com.aessam.toursession.AdmittedRoomCredentials
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
+import java.io.EOFException
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
@@ -21,6 +24,11 @@ interface RoomAdmissionInterface {
     fun stop()
     fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): AdmittedRoomCredentials
 }
+
+/** Reachability failed before receiving any challenge bytes. Once credentials may have been
+ * sent, I/O failure is terminal: a closed reply can mean wrong-code rejection, not route loss.
+ */
+class RoomAdmissionTransportError(cause: IOException) : IOException("Cannot reach the guide for room admission.", cause)
 
 class RoomAdmissionTransport(private val port: Int = RoomAdmissionV2.PORT) : RoomAdmissionInterface {
     private val lock = Any()
@@ -99,25 +107,32 @@ class RoomAdmissionTransport(private val port: Int = RoomAdmissionV2.PORT) : Roo
 
     override fun join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?): AdmittedRoomCredentials = Socket().use { socket ->
         socket.soTimeout = 5_000
-        socket.connect(InetSocketAddress(host, port), 5_000)
-        val challenge = read(socket, RoomAdmissionV2.CHALLENGE_SIZE)
+        try {
+            socket.connect(InetSocketAddress(host, port), 5_000)
+        } catch (error: IOException) { throw RoomAdmissionTransportError(error) }
+        val challenge = read(socket, RoomAdmissionV2.CHALLENGE_SIZE, beforeChallenge = true)
         val guest = RoomAdmissionV2.Guest(challenge, sessionID, expectedGuideID, code)
         socket.getOutputStream().write(guest.request)
         guest.open(read(socket, RoomAdmissionV2.REPLY_SIZE))
     }
 
-    private fun read(socket: Socket, count: Int): ByteArray {
+    private fun read(socket: Socket, count: Int, beforeChallenge: Boolean = false): ByteArray {
         val bytes = ByteArray(count)
         val input = socket.getInputStream()
         val deadline = System.nanoTime() + 5_000_000_000L
         var offset = 0
         while (offset < count) {
-            val remaining = deadline - System.nanoTime()
-            check(remaining > 0) { "Room admission timed out." }
-            socket.soTimeout = (remaining / 1_000_000L).coerceAtLeast(1).toInt()
-            val received = input.read(bytes, offset, count - offset)
-            check(received > 0) { "Room admission failed. Check the code and try again." }
-            offset += received
+            try {
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) throw SocketTimeoutException("Room admission timed out.")
+                socket.soTimeout = (remaining / 1_000_000L).coerceAtLeast(1).toInt()
+                val received = input.read(bytes, offset, count - offset)
+                if (received <= 0) throw EOFException("Room admission failed. Check the code and try again.")
+                offset += received
+            } catch (error: IOException) {
+                if (beforeChallenge && offset == 0) throw RoomAdmissionTransportError(error)
+                throw error
+            }
         }
         return bytes
     }

@@ -14,7 +14,14 @@ protocol BluetoothRoomDiscoveryInterface: AnyObject {
 protocol BluetoothSessionDiscoveryInterface: BluetoothRoomDiscoveryInterface {
     func canConnect(roomID: UUID) -> Bool
     func connect(roomID: UUID) async throws -> any NearbyByteConnection
+    func connect(roomID: UUID, lane: NearbyLaneRequest.Lane) async throws -> any NearbyByteConnection
     func setJoinedRoom(_ roomID: UUID?)
+}
+
+extension BluetoothSessionDiscoveryInterface {
+    func connect(roomID: UUID, lane: NearbyLaneRequest.Lane) async throws -> any NearbyByteConnection {
+        try await connect(roomID: roomID)
+    }
 }
 
 /// Read-only GATT discovery. This does not admit guests or carry tour payloads.
@@ -22,6 +29,7 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothSessionDiscoveryInterface
     static let serviceID = CBUUID(string: "A1B2C3D4-0005-0000-0000-000000000000")
     static let recordID = CBUUID(string: "A1B2C3D4-0006-0000-0000-000000000000")
     static let psmID = CBUUID(string: "A1B2C3D4-0007-0000-0000-000000000000")
+    static let lanePSMsID = CBUUID(string: "A1B2C3D4-0009-0000-0000-000000000000")
     var onRoom: ((BluetoothRoomRecord) -> Void)?
     var onLost: ((UUID) -> Void)?
     private var central: CBCentralManager?
@@ -41,13 +49,22 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothSessionDiscoveryInterface
     private var psm: CBL2CAPPSM = 0
     private var peerPSMs: [UUID: CBL2CAPPSM] = [:]
     private var psmCharacteristics: [UUID: CBCharacteristic] = [:]
-    private var opens: [UUID: [CheckedContinuation<any NearbyByteConnection, any Error>]] = [:]
+    private var laneCharacteristics: [UUID: CBCharacteristic] = [:]
+    private var peerLanePSMs: [UUID: BluetoothLanePSMs] = [:]
+    private struct PendingOpen {
+        let psm: CBL2CAPPSM
+        let continuation: CheckedContinuation<any NearbyByteConnection, any Error>
+    }
+    private var opens: [UUID: [PendingOpen]] = [:]
     private var joinedRoom: UUID?
     private var openingTokens: [UUID: UUID] = [:]
     private let sessionBridge = NearbySocketBridge()
 
     func canConnect(roomID: UUID) -> Bool {
-        rooms.contains { id, room in room.0.roomID == roomID && peerPSMs[id] != nil && links[id] != nil }
+        rooms.contains { id, room in
+            room.0.roomID == roomID && peerPSMs[id] != nil && links[id] != nil &&
+                (laneCharacteristics[id] == nil || peerLanePSMs[id] != nil)
+        }
     }
     func setJoinedRoom(_ roomID: UUID?) {
         joinedRoom = roomID
@@ -57,12 +74,18 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothSessionDiscoveryInterface
         }
     }
     func connect(roomID: UUID) async throws -> any NearbyByteConnection {
+        try await connect(roomID: roomID, lane: .admission)
+    }
+
+    func connect(roomID: UUID, lane: NearbyLaneRequest.Lane) async throws -> any NearbyByteConnection {
         guard let id = rooms.first(where: { $0.value.0.roomID == roomID })?.key,
               let link = links[id], let remotePSM = peerPSMs[id] else { throw NearbyConnectionError.unavailable }
+        guard laneCharacteristics[id] == nil || peerLanePSMs[id] != nil else { throw NearbyConnectionError.unavailable }
+        let selectedPSM = peerLanePSMs[id]?.psm(for: lane) ?? remotePSM
         guard opens[id, default: []].count < 4 else { throw NearbyConnectionError.capacity }
         return try await withCheckedThrowingContinuation { continuation in
-            opens[id, default: []].append(continuation)
-            if opens[id]?.count == 1 { openChannel(link, psm: remotePSM) }
+            opens[id, default: []].append(PendingOpen(psm: selectedPSM, continuation: continuation))
+            if opens[id]?.count == 1 { openChannel(link, psm: selectedPSM) }
         }
     }
 
@@ -104,9 +127,10 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothSessionDiscoveryInterface
 
     func stop() {
         joinedRoom = nil; psm = 0; peerPSMs.removeAll(); psmCharacteristics.removeAll()
+        laneCharacteristics.removeAll(); peerLanePSMs.removeAll()
         sessionBridge.stop()
         openingTokens.removeAll()
-        opens.values.flatMap { $0 }.forEach { $0.resume(throwing: NearbyConnectionError.closed) }; opens.removeAll()
+        opens.values.flatMap { $0 }.forEach { $0.continuation.resume(throwing: NearbyConnectionError.closed) }; opens.removeAll()
         mode = .off; scanTick = 0
         running = false; record = Data(); timer?.cancel(); timer = nil
         central?.stopScan()
@@ -157,7 +181,8 @@ final class BluetoothRoomDiscovery: NSObject, BluetoothSessionDiscoveryInterface
     private func disconnect(_ id: UUID) {
         openingTokens.removeValue(forKey: id)
         peerPSMs.removeValue(forKey: id); psmCharacteristics.removeValue(forKey: id)
-        opens.removeValue(forKey: id)?.forEach { $0.resume(throwing: NearbyConnectionError.closed) }
+        laneCharacteristics.removeValue(forKey: id); peerLanePSMs.removeValue(forKey: id)
+        opens.removeValue(forKey: id)?.forEach { $0.continuation.resume(throwing: NearbyConnectionError.closed) }
         if let link = links.removeValue(forKey: id) { central?.cancelPeripheralConnection(link) }
         characteristics.removeValue(forKey: id); pending.removeValue(forKey: id)
     }
@@ -202,7 +227,7 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
               let service = link.services?.first(where: { $0.uuid == Self.serviceID }) else {
             disconnect(link.identifier); return
         }
-        link.discoverCharacteristics([Self.recordID, Self.psmID], for: service)
+        link.discoverCharacteristics([Self.recordID, Self.psmID, Self.lanePSMsID], for: service)
     }
     func peripheral(_ link: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard running, links[link.identifier] === link, error == nil,
@@ -210,9 +235,27 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
             disconnect(link.identifier); return
         }
         psmCharacteristics[link.identifier] = service.characteristics?.first { $0.uuid == Self.psmID }
+        laneCharacteristics[link.identifier] = service.characteristics?.first { $0.uuid == Self.lanePSMsID }
         characteristics[link.identifier] = ch; link.readValue(for: ch)
     }
     func peripheral(_ link: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
+        if ch.uuid == Self.lanePSMsID {
+            guard running, links[link.identifier] === link else { return }
+            pending.removeValue(forKey: link.identifier)
+            do {
+                if let error { throw error }
+                guard let bytes = ch.value else { throw NearbyConnectionError.rejected }
+                let endpoints = try BluetoothLanePSMs.decode(bytes)
+                guard endpoints.admission == peerPSMs[link.identifier] else { throw NearbyConnectionError.rejected }
+                peerLanePSMs[link.identifier] = endpoints
+                if let room = rooms[link.identifier]?.0 { onRoom?(room) }
+            } catch {
+                // An advertised extension must validate. Only its absence selects legacy PSM.
+                Logger.transport.error("Bluetooth lane endpoints rejected")
+                disconnect(link.identifier)
+            }
+            return
+        }
         if ch.uuid == Self.psmID {
             guard running, links[link.identifier] === link else { return }
             pending.removeValue(forKey: link.identifier)
@@ -221,6 +264,11 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
                 let value = UInt16(bytes[0]) << 8 | UInt16(bytes[1])
                 if value != 0 { peerPSMs[link.identifier] = value }
                 else { peerPSMs.removeValue(forKey: link.identifier) }
+                if value != 0, let lanes = laneCharacteristics[link.identifier] {
+                    pending[link.identifier] = Date()
+                    link.readValue(for: lanes)
+                    return
+                }
                 if let joinedRoom, rooms[link.identifier]?.0.roomID == joinedRoom, value != 0 { central?.stopScan() }
                 if let room = rooms[link.identifier]?.0 { onRoom?(room) }
             }
@@ -248,15 +296,20 @@ extension BluetoothRoomDiscovery: CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ link: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
-        guard var queued = opens[link.identifier], !queued.isEmpty else {
+        guard running, links[link.identifier] === link,
+              var queued = opens[link.identifier], !queued.isEmpty else {
             channel?.inputStream.close(); channel?.outputStream.close(); return
         }
-        let continuation = queued.removeFirst()
+        let request = queued.removeFirst()
         openingTokens.removeValue(forKey: link.identifier)
         opens[link.identifier] = queued.isEmpty ? nil : queued
-        if let channel, error == nil { continuation.resume(returning: NearbyBluetoothConnection(channel)) }
-        else { continuation.resume(throwing: error ?? NearbyConnectionError.unavailable) }
-        if !queued.isEmpty, let remotePSM = peerPSMs[link.identifier] { openChannel(link, psm: remotePSM) }
+        if let channel, error == nil, channel.psm == request.psm {
+            request.continuation.resume(returning: NearbyBluetoothConnection(channel))
+        } else {
+            channel?.inputStream.close(); channel?.outputStream.close()
+            request.continuation.resume(throwing: error ?? NearbyConnectionError.unavailable)
+        }
+        if let next = queued.first { openChannel(link, psm: next.psm) }
     }
 }
 

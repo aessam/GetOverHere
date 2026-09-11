@@ -118,6 +118,8 @@ class AudioEngine(context: Context) : AudioEngineInterface {
     /** Non-blocking writes that filled the track buffer; the drift signal P3 physical must record. */
     @Volatile var playbackShortWriteCount = 0; private set
     @Volatile var playbackWriteErrorCount = 0; private set
+    /** Bytes actually accepted by AudioTrack this run, not an acoustic output measurement. */
+    @Volatile var acceptedPlaybackByteCount = 0L; private set
     @Volatile var captureDroppedBufferCount = 0L; private set
     override var playbackFailureHandler: ((Int) -> Unit)? = null
     override var onPlaybackBufferAccepted: (() -> Unit)? = null
@@ -310,6 +312,7 @@ class AudioEngine(context: Context) : AudioEngineInterface {
         playbackBufferAccepted = false
         playbackShortWriteCount = 0
         playbackWriteErrorCount = 0
+        acceptedPlaybackByteCount = 0
         applyListenerOutputRoute()
         if (!noisyReceiverRegistered) {
             ContextCompat.registerReceiver(
@@ -369,9 +372,15 @@ class AudioEngine(context: Context) : AudioEngineInterface {
             data,
         )
         when (outcome) {
-            PlaybackWriteOutcome.Written -> reportPlaybackAccepted()
+            PlaybackWriteOutcome.Written -> {
+                acceptedPlaybackByteCount += data.size
+                reportPlaybackAccepted()
+            }
             is PlaybackWriteOutcome.Short -> {
-                if (outcome.written > 0) reportPlaybackAccepted()
+                if (outcome.written > 0) {
+                    acceptedPlaybackByteCount += outcome.written
+                    reportPlaybackAccepted()
+                }
                 playbackShortWriteCount++
                 if (playbackShortWriteCount == 1 || playbackShortWriteCount % 100 == 0) {
                     Log.e(

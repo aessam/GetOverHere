@@ -149,6 +149,7 @@ private final class NearbyMetadataLease {
 @MainActor
 final class NearbySocketBridge {
     typealias Connect = @MainActor () async throws -> any NearbyByteConnection
+    typealias LaneConnect = @MainActor (NearbyLaneRequest.Lane) async throws -> any NearbyByteConnection
     var onError: ((String) -> Void)?
     private var listeners: [NearbyOwnedListener] = []
     private var retiringListeners: [NearbyOwnedListener] = []
@@ -244,6 +245,10 @@ final class NearbySocketBridge {
     }
 
     func startGuest(roomID: UUID, connect: @escaping Connect) async throws -> String {
+        try await startGuest(roomID: roomID, laneConnect: { _ in try await connect() })
+    }
+
+    func startGuest(roomID: UUID, laneConnect: @escaping LaneConnect) async throws -> String {
         stop()
         let attempt = generation
         do {
@@ -262,7 +267,7 @@ final class NearbySocketBridge {
                     let bridge = self
                     Task { @MainActor in
                         guard let bridge, bridge.generation == attempt else { accepted.cancel(); return }
-                        bridge.attachGuest(NearbyTCPConnection(accepted), roomID: roomID, lane: lane, connect: connect)
+                        bridge.attachGuest(NearbyTCPConnection(accepted), roomID: roomID, lane: lane, connect: laneConnect)
                     }
                 }
                 listeners.append(owner)
@@ -292,7 +297,7 @@ final class NearbySocketBridge {
     }
 
     private func attachGuest(_ local: any NearbyByteConnection, roomID: UUID,
-                             lane: NearbyLaneRequest.Lane, connect: @escaping Connect) {
+                             lane: NearbyLaneRequest.Lane, connect: @escaping LaneConnect) {
         let id: UUID
         do { id = try budget.acquireBootstrap() }
         catch { local.close(); report(error); return }
@@ -301,7 +306,7 @@ final class NearbySocketBridge {
             guard let self else { local.close(); budget.release(id); return }
             defer { finish(id) }
             do {
-                let remote = try await connect()
+                let remote = try await connect(lane)
                 guard !Task.isCancelled, connections[id] != nil else { remote.close(); return }
                 connections[id]?.append(remote)
                 let deadline = Task {

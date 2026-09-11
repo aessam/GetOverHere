@@ -45,7 +45,9 @@ struct NearbyPhysicalTransportTests {
             radio.setMode(.browsing)
             try await waitUntil(seconds: 30) { radio.canConnect(roomID: room) }
             radio.setJoinedRoom(room)
-            let host = try await bridge.startGuest(roomID: room) { try await radio.connect(roomID: room) }
+            let host = try await bridge.startGuest(roomID: room, laneConnect: { lane in
+                try await radio.connect(roomID: room, lane: lane)
+            })
             let admitted = try await admit(host: host, room: room, guideID: guide)
             secret = admitted.mediaSecret
             authentication = .guest(try GuideFrameVerifier(pinnedPublicKey: admitted.guideIdentity.publicKey,

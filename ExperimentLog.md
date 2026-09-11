@@ -1347,3 +1347,37 @@ Final frozen aggregate launched with the established `verify_virtual_devices.sh`
 Artifact SHA-256 from `shasum -a256`: app APK `9566fb7a8bcbbea4ccfc7c12972f040c32a4aff2a94f021674bff33e4eb75b9e`; instrumentation APK `e8308fdfd67f040d7976182e35d5062203628eae2aa750d47ed1d37b1ae22bb6`; simulator `GetOverHere.app/GetOverHere.debug.dylib` `a12a22b19899f9986fbd559c67a75b46909dd580fe3532a83a9d5e8bfa3f1ee2`. Sources remained frozen from the final gate through this verification; only living documentation was updated afterward. Starting HEAD was `aab2c10`; the following implementation checkpoint commit records the tested changes. Stable tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`. No push or new tag, paid resources, service restart, physical-device operation or acoustic/group qualification.
 
 **Remaining coding is explicit:** Android system-paired publisher/reverse-dial endpoint integration, native relay member enrollment/grants/possession/freshness/dual-role forwarding, direct UDP/bypass comparison support and radio-pressure scheduling. The current core topology planner, adapter tiny benchmark and asset scheduler do not close those items. FieldAcceptance.md consolidates the later physical round; it is not a request for intermediate user feedback.
+
+## 2026-09-10 — Mixed iPhone/Android route repair and physical investigation
+
+The user reauthorized phone testing. Initial HEAD `b3df039`, clean worktree; stable LAN tag remains `59b0402`. Selected USB iPhone12mini `00008101-000C690C3A30001E`, iOS26.5.2/23F84, Developer Mode enabled and no passcode required; Pixel11Pro `66180DLKX006ND`, SDK37/full37.0. Pixel7 was visible but not used in these initial cases. No Wi-Fi/radio configuration, pairing, passcode or router setting changed. The paired iPhone17ProMax and watch were not tested.
+
+Current selected toolchain is `/Users/aessam/Downloads/Xcode.app/Contents/Developer`, Xcode27.0/27A266a. The old Xcode-beta path no longer exists; its initial devicectl preflight failed before any device action. Sandboxed keychain inventory returned zero identities; read-only elevated inventory found one valid signing identity. No certificate/profile creation or provisioning update was requested.
+
+```bash
+# Baseline signed build, then exactly one physical guide UI test. No Bluetooth authorization reset.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS,id=00008101-000C690C3A30001E' -derivedDataPath /tmp/GetOverHereMixed20260910 -parallel-testing-enabled NO build-for-testing
+# /tmp/GetOverHere-mixed-ios-build-20260910.log: exit0.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcodebuild -quiet -xctestrun /tmp/GetOverHereMixed20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun -destination 'platform=iOS,id=00008101-000C690C3A30001E' -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath /tmp/GetOverHereMixed-guide-ui-20260910.xcresult test-without-building -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration
+# /tmp/GetOverHere-mixed-guide-ui-20260910.log; xcresult summary1pass,0fail/skip.
+```
+
+The UI test created a real-microphone guide, exercised open/lock1234/edit12345/unlock, Slides/Map/Pointer and End Tour. Exported and visually inspected attachment `/tmp/GetOverHereMixedGuideUIAttachments/F7F20B89-01F1-4F48-8A4A-74D11C29E310.png`. This proves startup/navigation, not peer transport or acoustic quality. Xcode27 emitted legacy concurrency warnings and spurious “command failed with exit code0” diagnostics in otherwise exit0 builds; actual test counts were verified from xcresult rather than inferred from quiet output.
+
+Route bug red/green: Android initial lifecycle35tests/2fail (`/tmp/GetOverHere-android-lan-fallback-red-20260910.log`); iOS three lifecycle methods failed (`/tmp/GetOverHere-ios-route-red-20260910.log`). Final Android app JVM169tests/33suites,0fail/errors/skips,34s (`/tmp/GetOverHere-android-lan-fallback-verified-20260910.log`). iOS scoped38methods/49runs,0fail/skip (`/tmp/GetOverHere-ios-route-final-20260910.log`, result `Test-GetOverHere-2026.09.10_17-07-43--0700.xcresult` under `/tmp/GetOverHereRouteFallback20260910/Logs/Test/`), iPhone17Pro Simulator/iOS27. These counts precede later native probes/playback-progress additions and are not a final aggregate gate.
+
+```bash
+# Frozen baseline protocol artifacts, not rebuilt while service workers edited sources.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_IOS_NEARBY_DERIVED=/tmp/GetOverHereMixed20260910 GOH_IOS_DEVICE=00008101-000C690C3A30001E GOH_NEARBY_ANDROID=66180DLKX006ND GOH_NEARBY_USE_BUILT=1 bash scripts/verify_nearby_cross_platform.sh
+# /tmp/GetOverHere-mixed-protocol-baseline-20260910.log; artifacts /tmp/GetOverHereNearbyCross.YCvd2d/.
+```
+
+**Result: partial, exit1.** iPhone-guide→Android-guest passed1test per endpoint: v2 locked admission, pointer, exact512byte asset,100nonzero native-decoded audio frames. Guest transport is native BLE with loopback adapters; no LAN connector. Android-guide→iPhone-guest authenticated admission and realtime; iOS received its first decoded audio frame but CoreBluetooth rejected control/asset channel opens. iOS timed out; no reverse/full-pair pass. Android listener retained its PSM and rearmed accept after admission and realtime. Failed iOS diagnostics were exported from the existing xcresult, not obtained by requesting sysdiagnose. `get log --type console` reported no console; exported `StandardOutputAndStandardError.txt` contains the actual app log. Original failure retained.
+
+```bash
+# Isolate native same-PSM channels, without admission or media.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_IOS_NEARBY_DERIVED=/tmp/GetOverHereMixedFixed20260910 GOH_IOS_DEVICE=00008101-000C690C3A30001E GOH_NEARBY_ANDROID=66180DLKX006ND GOH_NEARBY_USE_BUILT=1 GOH_NEARBY_PROFILE=channel-probe GOH_NEARBY_IOS_ROLES=guest GOH_BLE_PROBE_STYLE=sequential bash scripts/verify_nearby_cross_platform.sh
+# /tmp/GetOverHere-ble-open-sequential-20260910.log; /tmp/GetOverHereNearbyCross.hv3uFM/.
+```
+
+**Result: exit1,1of3 opens.** First native open completed in75.6ms; second and third returned `CBInternalErrorDomain` code24 while the first stayed open. Sequential calls returned from the delegate before the next request, so the failure is not explained solely by our queued callback reentrancy. No meaning is assigned to private error24 or the earlier unknown436. Close/reopen and distinct-PSM probes follow; this observation is device-specific, not a universal Apple API-capacity statement.

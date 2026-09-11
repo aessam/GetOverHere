@@ -3,6 +3,20 @@ import Foundation
 import os
 import TourSessionCore
 
+/// Only a failed connection before the admission challenge permits trying another route.
+/// Reply failures remain terminal: a guide can reject a wrong code by closing the socket.
+nonisolated enum RoomAdmissionConnectionError: Error, LocalizedError {
+    case unreachable, timedOut, closedBeforeChallenge
+
+    var errorDescription: String? {
+        switch self {
+        case .unreachable: "Cannot reach the guide. Try again."
+        case .timedOut: "Room admission timed out."
+        case .closedBeforeChallenge: "The guide connection closed before room admission."
+        }
+    }
+}
+
 nonisolated protocol RoomAdmissionInterface: Sendable {
     func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws
     func update(policy: RoomAccessPolicy) throws
@@ -121,17 +135,17 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
             }
         }
         if result != 0 {
-            guard errno == EINPROGRESS else { throw TransportError.failed("Cannot reach the guide. Try again.") }
+            guard errno == EINPROGRESS else { throw RoomAdmissionConnectionError.unreachable }
             var descriptor = pollfd(fd: socket.fd, events: Int16(POLLOUT), revents: 0)
-            guard poll(&descriptor, 1, 5_000) > 0 else { throw TransportError.failed("Room admission timed out.") }
+            guard poll(&descriptor, 1, 5_000) > 0 else { throw RoomAdmissionConnectionError.timedOut }
             var error: Int32 = 0
             var size = socklen_t(MemoryLayout<Int32>.size)
             guard getsockopt(socket.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0, error == 0 else {
-                throw TransportError.failed("Cannot reach the guide. Try again.")
+                throw RoomAdmissionConnectionError.unreachable
             }
         }
         guard fcntl(socket.fd, F_SETFL, flags) == 0 else { throw RoomAdmissionError.invalidMessage }
-        let challenge = try Self.read(socket, count: RoomAdmissionV2.challengeSize)
+        let challenge = try Self.readChallenge(socket)
         let guest = try RoomAdmissionV2.Guest(challenge: challenge, sessionID: sessionID, expectedGuideID: expectedGuideID, code: code)
         try Self.write(socket, guest.request)
         return try guest.open(Self.read(socket, count: RoomAdmissionV2.replySize))
@@ -166,18 +180,34 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
         setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
-    private static func read(_ socket: ManagedSocket, count: Int) throws -> Data {
+    static func readChallenge(_ socket: ManagedSocket) throws -> Data {
+        try read(socket, count: RoomAdmissionV2.challengeSize, permitsConnectionFailure: true)
+    }
+
+    private static func read(_ socket: ManagedSocket, count: Int, permitsConnectionFailure: Bool = false) throws -> Data {
         var bytes = [UInt8](repeating: 0, count: count)
         var offset = 0
         let deadline = ContinuousClock.now + .seconds(5)
         while offset < count {
             let remaining = ContinuousClock.now.duration(to: deadline)
-            guard remaining > .zero else { throw RoomAdmissionError.invalidMessage }
+            guard remaining > .zero else {
+                if permitsConnectionFailure && offset == 0 { throw RoomAdmissionConnectionError.timedOut }
+                throw RoomAdmissionError.invalidMessage
+            }
             let parts = remaining.components
             var timeout = timeval(tv_sec: Int(parts.seconds), tv_usec: max(1, Int32(parts.attoseconds / 1_000_000_000_000)))
             setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             let received = bytes.withUnsafeMutableBytes { recv(socket.fd, $0.baseAddress!.advanced(by: offset), count - offset, 0) }
-            guard received > 0 else { throw RoomAdmissionError.invalidMessage }
+            guard received > 0 else {
+                if permitsConnectionFailure && offset == 0 {
+                    if received == 0 { throw RoomAdmissionConnectionError.closedBeforeChallenge }
+                    if errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT {
+                        throw RoomAdmissionConnectionError.timedOut
+                    }
+                    throw RoomAdmissionConnectionError.unreachable
+                }
+                throw RoomAdmissionError.invalidMessage
+            }
             offset += received
         }
         return Data(bytes)

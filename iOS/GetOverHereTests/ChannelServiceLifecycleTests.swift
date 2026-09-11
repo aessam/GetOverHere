@@ -17,7 +17,7 @@ struct ChannelServiceLifecycleTests {
 
     @MainActor
     private final class Harness {
-        let controlPlane = LifecycleControlPlane()
+        let controlPlane: LifecycleControlPlane
         let audioPlane = LifecycleAudioPlane()
         let control = LifecycleControlTransport()
         let asset = LifecycleAssetTransport()
@@ -26,7 +26,12 @@ struct ChannelServiceLifecycleTests {
         let service: ChannelService
         private let root: URL
 
-        init(reconnectBaseDelay: Duration = .milliseconds(1), allowNearbyAdmission: Bool = false) throws {
+        init(reconnectBaseDelay: Duration = .milliseconds(1), allowNearbyAdmission: Bool = false,
+             admission: (any RoomAdmissionInterface)? = nil,
+             controlPlane: LifecycleControlPlane? = nil,
+             routedControlPlane: (any ControlPlane)? = nil) throws {
+            let controlPlane = controlPlane ?? LifecycleControlPlane()
+            self.controlPlane = controlPlane
             root = FileManager.default.temporaryDirectory.appending(
                 path: "GetOverHereLifecycle-\(UUID().uuidString)",
                 directoryHint: .isDirectory
@@ -34,7 +39,7 @@ struct ChannelServiceLifecycleTests {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             coordinator = NetworkCoordinator(
                 displayName: "Local",
-                controlPlane: controlPlane,
+                controlPlane: routedControlPlane ?? controlPlane,
                 audioPlane: audioPlane
             )
             service = ChannelService(
@@ -48,7 +53,7 @@ struct ChannelServiceLifecycleTests {
                 contentStore: try TourContentStore(rootDirectory: root.appending(path: "packs")),
                 localGuidanceService: LocalGuidanceService(),
                 reconnectBaseDelay: reconnectBaseDelay,
-                roomAdmission: LifecycleRoomAdmission(allowNearby: allowNearbyAdmission)
+                roomAdmission: admission ?? LifecycleRoomAdmission(allowNearby: allowNearbyAdmission)
             )
         }
 
@@ -68,6 +73,264 @@ struct ChannelServiceLifecycleTests {
     }
 
     // MARK: - FND-2
+
+    @MainActor private final class HoldingNearbyControlPlane: ControlPlane, NearbyRouteControl {
+        let base: LifecycleControlPlane
+        var holdPreparation = false
+        private(set) var heldPrepareCalls = 0
+        private var continuation: CheckedContinuation<Void, Never>?
+        init(base: LifecycleControlPlane) { self.base = base }
+        var localPeer: PeerInfo { base.localPeer }
+        var connectedPeers: [PeerInfo] { base.connectedPeers }
+        var commands: AsyncStream<(BLECommand, PeerInfo)> { base.commands }
+        var peerEvents: AsyncStream<PeerEvent> { base.peerEvents }
+        var onNearbyError: ((String) -> Void)? {
+            get { base.onNearbyError }
+            set { base.onNearbyError = newValue }
+        }
+        var usesBluetoothGuestRoute: Bool { base.usesBluetoothGuestRoute }
+        func start() { base.start() }
+        func stop() { base.stop() }
+        func broadcast(_ command: BLECommand) { base.broadcast(command) }
+        func send(_ command: BLECommand, to peer: PeerInfo) { base.send(command, to: peer) }
+        func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) { base.setBluetoothDiscoveryMode(mode) }
+        func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) { base.setAwareDiscoveryMode(mode) }
+        func canConnectNearby(roomID: UUID) -> Bool { base.canConnectNearby(roomID: roomID) }
+        func stopNearbyGuest() { base.stopNearbyGuest() }
+        func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute {
+            let prepared = try await base.prepareNearbyGuest(roomID: roomID, expectedGuideID: expectedGuideID)
+            if holdPreparation {
+                heldPrepareCalls += 1
+                await withCheckedContinuation { continuation = $0 }
+            }
+            return prepared
+        }
+        func release() {
+            let pending = continuation
+            continuation = nil
+            pending?.resume()
+        }
+    }
+
+    nonisolated private final class RouteAdmission: RoomAdmissionInterface, @unchecked Sendable {
+        struct Call: Equatable {
+            let host: String
+            let room: UUID
+            let guide: UUID
+            let code: String?
+        }
+        private let lock = NSCondition()
+        private var recorded: [Call] = []
+        private var held: Bool
+        private var finished = 0
+        private let lanError: (any Error)?
+        private let nearbyError: (any Error)?
+        var calls: [Call] { lock.withLock { recorded } }
+        var completedCalls: Int { lock.withLock { finished } }
+
+        init(lanError: (any Error)? = RoomAdmissionConnectionError.unreachable,
+             nearbyError: (any Error)? = nil, holdLAN: Bool = false) {
+            self.lanError = lanError; self.nearbyError = nearbyError; held = holdLAN
+        }
+        func release() { lock.lock(); held = false; lock.broadcast(); lock.unlock() }
+        func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws {}
+        func update(policy: RoomAccessPolicy) throws {}
+        func stop() {}
+        func join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?) throws -> AdmittedRoomCredentials {
+            lock.lock()
+            recorded.append(Call(host: host, room: sessionID, guide: expectedGuideID, code: code))
+            let deadline = Date().addingTimeInterval(5)
+            while held && host != "127.0.0.1" {
+                if !lock.wait(until: deadline) { lock.unlock(); throw TestTimeout.expired("held LAN admission") }
+            }
+            lock.unlock()
+            defer { lock.withLock { finished += 1 } }
+            if let error = host == "127.0.0.1" ? nearbyError : lanError { throw error }
+            return try LifecycleRoomAdmission(allowNearby: true).join(host: host, sessionID: sessionID,
+                expectedGuideID: expectedGuideID, code: code)
+        }
+    }
+
+    @Test("Unreachable advertised LAN admits once over the matching nearby route and starts every lane")
+    @MainActor
+    func unreachableLANFallsBackToNearby() async throws {
+        let admission = RouteAdmission()
+        let h = try Harness(admission: admission)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = try await discoverAndJoin(h)
+        #expect(admission.calls.map(\.host) == ["10.0.0.1", "127.0.0.1"])
+        #expect(admission.calls.allSatisfy { $0.room.uuidString == channel.id && $0.guide.uuidString == channel.createdBy && $0.code == "23456789AB" })
+        #expect(h.controlPlane.nearbyPrepareCalls == 1)
+        #expect(h.controlPlane.usesBluetoothGuestRoute)
+        #expect(h.service.guestRoute?.adapterHost == "127.0.0.1")
+        #expect(h.control.startGuestHostIPs == ["127.0.0.1"])
+        #expect(h.asset.hostIP == "127.0.0.1")
+        #expect(h.audioPlane.startListeningCalls == 1)
+    }
+
+    @Test("Admission rejection never retries the code on another route", arguments: 0..<6)
+    @MainActor
+    func terminalLANAdmissionNeverFallsBack(kind: Int) async throws {
+        let errors: [any Error] = [RoomAdmissionError.invalidCode, RoomAdmissionError.locked,
+            RoomAdmissionError.invalidMessage, RoomAdmissionV2Error.wrongGuide,
+            RoomAdmissionV2Error.incompatibleVersion, RoomAdmissionV2Error.guideChanged]
+        let admission = RouteAdmission(lanError: errors[kind])
+        let h = try Harness(admission: admission)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = Channel(id: UUID().uuidString, name: "Room", createdAt: .now,
+            createdBy: UUID().uuidString, audioHostIP: "10.0.0.1", roomAdmissionVersion: 2)
+        h.service.joinChannel(channel, tourCode: "WrongCode")
+        try await waitUntil("terminal admission failure") { h.service.connectionState == .failed }
+        #expect(admission.calls.count == 1)
+        #expect(h.controlPlane.nearbyPrepareCalls == 0)
+        #expect(h.control.startGuestCalls == 0)
+    }
+
+    @Test("Failed nearby admission does not loop back to LAN or retry the code")
+    @MainActor
+    func nearbyAdmissionFallbackIsBounded() async throws {
+        let admission = RouteAdmission(nearbyError: RoomAdmissionConnectionError.unreachable)
+        let h = try Harness(admission: admission)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = Channel(id: UUID().uuidString, name: "Room", createdAt: .now,
+            createdBy: UUID().uuidString, audioHostIP: "10.0.0.1", roomAdmissionVersion: 2)
+        h.service.joinChannel(channel, tourCode: "Code")
+        try await waitUntil("bounded fallback failure") { h.service.connectionState == .failed }
+        #expect(admission.calls.map(\.host) == ["10.0.0.1", "127.0.0.1"])
+        #expect(h.controlPlane.nearbyPrepareCalls == 1)
+        #expect(!h.controlPlane.usesBluetoothGuestRoute)
+        #expect(h.control.startGuestCalls == 0)
+    }
+
+    @Test("Cancel or replacement during LAN admission cannot start stale nearby fallback", arguments: [false, true])
+    @MainActor
+    func staleLANFailureDoesNotPrepareNearby(replace: Bool) async throws {
+        let admission = RouteAdmission(holdLAN: true)
+        let h = try Harness(admission: admission)
+        defer { admission.release(); h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = Channel(id: UUID().uuidString, name: "Old", createdAt: .now,
+            createdBy: UUID().uuidString, audioHostIP: "10.0.0.1", roomAdmissionVersion: 2)
+        h.service.joinChannel(channel, tourCode: "OldCode")
+        try await waitUntil("LAN admission entered") { admission.calls.count == 1 }
+        h.service.cancelJoin()
+        if replace {
+            let next = Channel(id: UUID().uuidString, name: "New", createdAt: .now,
+                createdBy: UUID().uuidString, roomAdmissionVersion: 2)
+            h.service.joinChannel(next, tourCode: "NewCode")
+            try await waitUntil("replacement joined") { h.control.startGuestCalls == 1 }
+        }
+        admission.release()
+        try await waitUntil("old admission completed") { admission.completedCalls == (replace ? 2 : 1) }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(h.controlPlane.nearbyPrepareCalls == (replace ? 1 : 0))
+        #expect(h.control.startGuestCalls == (replace ? 1 : 0))
+        #expect(replace ? h.service.activeChannel?.name == "New" || h.service.activeChannelID != nil : h.service.connectionState == .idle)
+    }
+
+    @Test("Cancel before the join task starts cannot send credentials or restore its join stage")
+    @MainActor
+    func canceledQueuedJoinNeverStartsAdmission() async throws {
+        let admission = RouteAdmission()
+        let h = try Harness(admission: admission)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = Channel(id: UUID().uuidString, name: "Canceled", createdAt: .now,
+            createdBy: UUID().uuidString, audioHostIP: "10.0.0.1", roomAdmissionVersion: 2)
+
+        // Both calls execute in this MainActor turn, before the unstructured join task can run.
+        h.service.joinChannel(channel, tourCode: "NeverSendThisCode")
+        h.service.cancelJoin()
+        #expect(h.service.connectionState == .idle)
+        #expect(h.service.joinStage == nil)
+        // Drain actor work before checking the absence of transport work and stale UI mutation.
+        for _ in 0..<20 { await Task.yield() }
+        #expect(admission.calls.isEmpty)
+        #expect(h.service.connectionState == .idle)
+        #expect(h.service.joinStage == nil)
+        #expect(h.controlPlane.nearbyPrepareCalls == 0)
+        #expect(h.control.startGuestCalls == 0)
+    }
+
+    @Test("Nearby ownership survives LAN announcements and a route recovery retry")
+    @MainActor
+    func nearbyRouteSurvivesLANAnnouncementAndReconnect() async throws {
+        let h = try Harness(reconnectBaseDelay: .milliseconds(10), allowNearbyAdmission: true)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = try await discoverAndJoin(h, hostIP: nil)
+        try await connectGuest(h)
+        let route = try #require(h.service.guestRoute)
+        let stops = h.controlPlane.nearbyStopCalls
+        h.controlPlane.emit(.channelAnnounce(announce: announce(channel, audioHostIP: "10.0.0.9")))
+        try await waitUntil("LAN announcement applied") { h.service.activeChannel?.audioHostIP == "10.0.0.9" }
+        #expect(h.control.startGuestCalls == 1)
+        #expect(h.service.guestRoute == route)
+        h.controlPlane.nearbyPrepareError = NearbyConnectionError.unavailable
+        h.control.emit(.failed("Connection lost"))
+        try await waitUntil("nearby recovery attempted") { h.controlPlane.nearbyPrepareCalls >= 2 }
+        h.service.retryAudio()
+        #expect(h.audioPlane.startListeningCalls == 1, "Audio-only retry cannot use rejected LAN metadata while nearby is unavailable")
+        h.controlPlane.nearbyPrepareError = nil
+        try await waitUntil("nearby recovery completed") { h.control.startGuestCalls == 2 }
+        #expect(h.service.guestRoute == route)
+        #expect(h.control.startGuestHostIPs == ["127.0.0.1", "127.0.0.1"])
+        #expect(h.asset.hostIP == "127.0.0.1")
+        #expect(h.controlPlane.nearbyStopCalls == stops)
+    }
+
+    @Test("Retry Audio cannot reopen an old adapter while native recovery is suspended")
+    @MainActor
+    func retryAudioWaitsForSuspendedNearbyRecovery() async throws {
+        let base = LifecycleControlPlane()
+        base.nearbyAvailable = true
+        let holding = HoldingNearbyControlPlane(base: base)
+        let h = try Harness(allowNearbyAdmission: true, controlPlane: base, routedControlPlane: holding)
+        defer { holding.release(); h.service.terminate(); h.close() }
+        _ = try await discoverAndJoin(h, hostIP: nil)
+        try await connectGuest(h)
+        let previousRoute = try #require(h.service.guestRoute)
+        let starts = h.audioPlane.startListeningCalls
+        holding.holdPreparation = true
+        h.control.emit(.disconnected)
+        try await waitUntil("native route probe suspended") { holding.heldPrepareCalls == 1 }
+
+        #expect(h.service.guestRoute == previousRoute)
+        h.service.retryAudio()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(holding.heldPrepareCalls == 1)
+        #expect(h.audioPlane.startListeningCalls == starts)
+        #expect(h.control.startGuestCalls == 1)
+
+        holding.release()
+        try await waitUntil("recovered nearby lanes restarted") { h.control.startGuestCalls == 2 }
+        #expect(h.audioPlane.startListeningCalls == starts + 1)
+        #expect(h.service.guestRoute == previousRoute)
+        #expect(h.service.connectionState == .connecting)
+        h.control.emit(.connected)
+        try await waitUntil("replacement lanes authenticated") { h.service.connectionState == .connected }
+    }
+
+    @Test("Loss of LAN discovery permits reconnecting retained credentials over nearby")
+    @MainActor
+    func LANSessionRecoversToNearbyWhenLANDisappears() async throws {
+        let h = try Harness(allowNearbyAdmission: true)
+        defer { h.service.terminate(); h.close() }
+        h.controlPlane.nearbyAvailable = true
+        let channel = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        h.controlPlane.emit(.channelAnnounce(announce: announce(channel, audioHostIP: nil)))
+        try await waitUntil("LAN route withdrawn") { h.service.activeChannel?.audioHostIP == nil }
+        h.control.emit(.disconnected)
+        try await waitUntil("nearby replacement lanes started") { h.control.startGuestCalls == 2 }
+        #expect(h.control.startGuestHostIPs == ["10.0.0.1", "127.0.0.1"])
+        #expect(h.service.guestRoute?.adapterHost == "127.0.0.1")
+        #expect(h.asset.hostIP == "127.0.0.1")
+        #expect(h.audioPlane.startListeningCalls == 2)
+    }
 
     @Test("A failed nearby admission closes its route and permits another attempt")
     @MainActor
@@ -498,6 +761,24 @@ struct ChannelServiceLifecycleTests {
         }
     }
 
+    @Test("An old duplicate connected event cannot cancel audio recovery during backoff")
+    @MainActor
+    func duplicateConnectedDuringBackoffDoesNotCancelRecovery() async throws {
+        let h = try Harness(reconnectBaseDelay: .seconds(30))
+        defer { h.service.terminate(); h.close() }
+        _ = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        h.audioPlane.emit(.failed("Old audio lane failed"))
+        try await waitUntil("audio recovery scheduled") { h.service.connectionState == .reconnecting(attempt: 1) }
+
+        // The old control lane has not stopped yet. Its duplicate must not acknowledge a new run.
+        h.control.emit(.connected)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(h.service.connectionState == .reconnecting(attempt: 1))
+        #expect(h.control.startGuestCalls == 1)
+        #expect(h.audioPlane.startListeningCalls == 1)
+    }
+
     // MARK: - FND-13
 
     @Test("Connected and audio-ready counts are independent")
@@ -722,7 +1003,7 @@ struct ChannelServiceLifecycleTests {
         try await waitUntil("connected") { h.service.connectionState == .connected }
     }
 
-    private func announce(_ channel: Channel, audioHostIP: String) -> BLECommand.ChannelAnnounce {
+    private func announce(_ channel: Channel, audioHostIP: String?) -> BLECommand.ChannelAnnounce {
         BLECommand.ChannelAnnounce(
             channelID: channel.id,
             channelName: channel.name,
