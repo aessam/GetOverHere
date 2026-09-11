@@ -41,6 +41,11 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
         guard signer.sessionID == sessionID else { throw RoomAdmissionV2Error.wrongGuide }
         let open = try RoomAccessPolicy(sessionID: sessionID, code: nil)
         let socket = try Self.makeSocket()
+        let flags = fcntl(socket.fd, F_GETFL, 0)
+        guard flags >= 0, fcntl(socket.fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            socket.close()
+            throw TransportError.failed("Cannot configure room admission listener.")
+        }
         var yes: Int32 = 1
         setsockopt(socket.fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
         var address = Self.address(port: port)
@@ -49,21 +54,53 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
                 Darwin.bind(socket.fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard result == 0, Darwin.listen(socket.fd, 8) == 0 else {
+        guard result == 0 else {
+            let code = errno
             socket.close()
-            throw TransportError.failed("Cannot open room admission port \(port).")
+            throw TransportError.failed("Cannot bind room admission port \(port) (errno \(code)).")
+        }
+        guard Darwin.listen(socket.fd, 8) == 0 else {
+            let code = errno
+            socket.close()
+            throw TransportError.failed("Cannot listen on room admission port \(port) (errno \(code)).")
         }
         lock.withLock { listener = socket; policy = open; revision &+= 1 }
         DispatchQueue(label: "room.admission.accept", qos: .userInitiated).async { [weak self] in
             defer { socket.close() }
             while !socket.isCancelled {
-                let fd = Darwin.accept(socket.fd, nil, nil)
+                guard let self else { break }
+                // Accept and retirement share the lock. A retired worker must never
+                // accept on a descriptor number reused by the next room.
+                let accepted: (Int32, Int32)? = self.lock.withLock {
+                    guard self.listener === socket else { return nil }
+                    let fd = Darwin.accept(socket.fd, nil, nil)
+                    return (fd, errno)
+                }
+                guard let (fd, code) = accepted else { break }
                 guard fd >= 0 else {
+                    if code == EAGAIN || code == EWOULDBLOCK {
+                        // Readiness only: every accept rechecks ownership under the lock.
+                        // Bounded poll also retires on platforms where shutdown won't wake accept.
+                        var descriptor = pollfd(fd: socket.fd, events: Int16(POLLIN), revents: 0)
+                        if poll(&descriptor, 1, 250) < 0, errno != EINTR {
+                            if !socket.isCancelled { Logger.transport.error("Room admission readiness poll failed") }
+                            break
+                        }
+                        continue
+                    }
+                    if code == EINTR { continue }
                     if !socket.isCancelled { Logger.transport.error("Room admission accept failed") }
                     break
                 }
-                guard let self, self.slots.tryAcquire() else { Darwin.close(fd); continue }
+                guard self.slots.tryAcquire() else { Darwin.close(fd); continue }
                 let client = ManagedSocket(fd: fd, generation: 0)
+                // Darwin may inherit O_NONBLOCK from the listener; handshakes retain
+                // their existing bounded blocking read/write contract.
+                let clientFlags = fcntl(fd, F_GETFL, 0)
+                guard clientFlags >= 0, fcntl(fd, F_SETFL, clientFlags & ~O_NONBLOCK) == 0 else {
+                    Logger.transport.error("Room admission client configuration failed")
+                    client.close(); self.slots.release(); continue
+                }
                 Self.setTimeouts(client)
                 let snapshot: (RoomAccessPolicy, UInt64)? = self.lock.withLock {
                     guard self.listener === socket, let policy = self.policy else { return nil }
@@ -114,6 +151,7 @@ nonisolated final class RoomAdmissionTransport: RoomAdmissionInterface, @uncheck
     func stop() {
         lock.withLock {
             listener?.cancel()
+            listener?.close()
             listener = nil
             policy = nil
             revision &+= 1

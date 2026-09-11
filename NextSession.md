@@ -1,5 +1,74 @@
 # GetOverHere — Next Session
 
+## September 10, 19:41 — three-phone speed benchmarks complete
+
+Full results and repeat commands: [benchmarks/2026-09-10/README.md](benchmarks/2026-09-10/README.md).
+All seven Bluetooth configurations passed: four mixed guide-role orientations, both
+Android guide orientations, and iPhone with both Android listeners. Each guest verified
+three64KiB transfers per direction and50 echo samples. Aware bulk and tiny profiles
+completed three rounds per condition in both Android guide roles. All1,800 tiny echoes
+returned;176 had RTT≥150ms. Do not translate that RTT into one-way or acoustic latency.
+Both Androids currently report8 supported Aware data paths; only one peer was measured.
+
+Next product work remains Android-guide intermittent audio startup/encoder reset churn,
+then sustained real audio with both listeners, synchronized fan-out, locked/background,
+and acoustic/field qualification. Mixed Wi-Fi Aware is NOT established by these runs.
+
+## September 10, 19:30 — router-free UI passes; speed-test setup history
+
+Supersedes the admission/startup blockers below: Android GOL2 now separates metadata
+from admission; the iOS listener synchronously releases port50003 on stop. Physical
+five-cycle Create/End UI reproduction passed after the errno48 fix. Normal iOS Find
+enables Bluetooth without forcing experimental Wi-Fi Aware.
+
+User forgot the iPhone Wi-Fi network. USB UI control remained available. Both normal
+Create/Find/Join/Audio/Pointer directions passed afterward over Bluetooth; artifacts
+`GetOverHereNormalUI-7qjtk44m` and `GetOverHereNormalUI-_h_rr_y3` in the system temp folder.
+This does not erase the earlier Android-guide intermittent Waiting for Audio failure:
+Android encoder recreation churn was also observed during the passing run and remains
+unresolved. Do not call the media path endurance-qualified.
+
+Current request: benchmark two Androids plus iPhone. Android Aware bulk completed both
+guide orientations; `/tmp/GetOverHereAwareBenchmark.3koyid51/results.json` has verified
+byte totals and timings. New test-only Bluetooth GBB1 harness measures each direction
+and 64-byte echo RTT, plus two concurrent Android listeners under an iPhone guide.
+It uses synthetic payloads through the production L2CAP/guide-loopback adapter, not
+tour encryption/codec. Android and iOS protocol loopback smoke each passed1/1.
+The first physical pilot selected zero iOS tests; rejected, not a radio failure/pass.
+Corrected Swift Testing selectors require parentheses. Completed results supersede
+this setup status above.
+
+
+## September 10, 18:40 — actual visible iPhone ↔ Pixel tested
+
+**Current priority: fix Android-guide → iPhone-guest admission, then rerun both roles.
+Do not extend the debugger before this pair works.** User explicitly redirected work
+from tooling to the two-phone tour loop.
+
+- **F1 PASS, iPhone guide → Pixel11Pro guest over Bluetooth:** the real visible iPhone
+  AppCoordinator created the room via authenticated debug commands. Android's production
+  service joined with LAN removed from the selected record, asserted Bluetooth provenance,
+  received authoritative Pointer state and passed five successive live PCM checks:
+  **160,048 renderer-accepted bytes in5,008ms**, minimum128,000. iPhone reported one
+  audio-ready guest. This is live microphone/renderer evidence, not acoustic latency,
+  assets, locked endurance or30-device qualification.
+- **F2 FAIL, Pixel guide → visible iPhone guest:** discovery succeeded; Join failed with
+  `The guide connection closed before room admission.` No accepted playback. This matches
+  the earlier native metadata/admission endpoint-reuse failure. Separate fifth metadata
+  PSM remains the next candidate, not implemented. Preserve admission/signature checks.
+- **F3 Debug bridge proven for its immediate purpose:** approved relaunch succeeded;
+  network create/audio/features/lock/unlock/leave smoke passed; physical debug-panel UI
+  observer passed1/1. A second full smoke failed at room creation with occupied admission
+  port50003. The newly added isolated stop/restart regression passes on simulator AND
+  iPhone, so no speculative socket teardown patch was applied. Full-app reuse still needs
+  investigation. New deep-link UI test compiles but has not run.
+
+Both physical fixtures finished. iPhone test tour ended, audio idle, no active room;
+its original Bluetooth/Aware toggles false/false restored. No device radio/router settings
+changed. Bridge remains bounded to its15-minute launch lifetime. Evidence paths and
+exact commands are appended in ExperimentLog. The historical pending approval below
+was satisfied by the user's `Go`; the initial debugger build is commit `63bb77d`.
+
 ## September 10 current task — iPhone network debug control
 
 User requested a debug server/library in the iPhone app plus a Mac command client,

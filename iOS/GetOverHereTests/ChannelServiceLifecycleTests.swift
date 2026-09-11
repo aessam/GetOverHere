@@ -11,6 +11,18 @@ import TourSessionCore
 /// `createChannel`/`joinChannel` polls with a real wait before emitting fake lane events (RSK-4).
 @Suite("ChannelService lifecycle", .serialized)
 struct ChannelServiceLifecycleTests {
+    @Test @MainActor
+    func findNearbyDoesNotForceExperimentalAware() throws {
+        let h = try Harness()
+        h.service.findNearbyTours()
+        #expect(h.service.bluetoothDiscoveryEnabled)
+        #expect(!h.service.awareDiscoveryEnabled)
+        h.service.awareDiscoveryEnabled = true
+        h.service.findNearbyTours()
+        #expect(h.service.awareDiscoveryEnabled, "Keep an explicit Aware choice")
+        h.service.terminate()
+    }
+
     private enum TestTimeout: Error {
         case expired(String)
     }

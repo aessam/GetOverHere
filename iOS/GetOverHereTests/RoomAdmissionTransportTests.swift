@@ -6,6 +6,30 @@ import TourSessionCore
 
 @Suite(.serialized)
 struct RoomAdmissionTransportTests {
+    @Test func stopReleasesPortBeforeReturningEvenBeforeAcceptWorkerStarts() throws {
+        let transport = RoomAdmissionTransport(port: 56005)
+        let id = UUID()
+        let signer = GuideFrameSigner(sessionID: id, guideID: UUID())
+        defer { transport.stop() }
+        for _ in 0..<100 {
+            try transport.start(sessionID: id, sessionCode: "23456789AB", signer: signer)
+            transport.stop()
+        }
+    }
+
+    @Test func stoppedIdleListenerCanImmediatelyHostAnotherRoom() async throws {
+        let transport = RoomAdmissionTransport(port: 56004)
+        defer { transport.stop() }
+        for _ in 0..<3 {
+            let id = UUID()
+            let signer = GuideFrameSigner(sessionID: id, guideID: UUID())
+            try transport.start(sessionID: id, sessionCode: "23456789AB", signer: signer)
+            // Let the worker enter its idle accept, matching a guide with no guests.
+            try await Task.sleep(for: .milliseconds(100))
+            transport.stop()
+        }
+    }
+
     @Test("Only a zero-byte challenge connection loss permits alternate-route admission", arguments: [0, 1, 102])
     func challengeConnectionFailureClassification(prefixLength: Int) throws {
         var descriptors: [Int32] = [0, 0]

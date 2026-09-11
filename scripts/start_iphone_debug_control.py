@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the existing installed Debug app using public devicectl. No force-stop or trust-store edits."""
+"""Launch the installed Debug app. Relaunch requires explicit opt-in; no trust-store edits."""
 import argparse
 import base64
 import os
@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("device")
     parser.add_argument("credentials", type=Path)
+    parser.add_argument("--relaunch", action="store_true", help="Explicitly terminate the existing app before this authorized debug launch")
     args = parser.parse_args()
     root = args.credentials.resolve()
     if stat.S_IMODE(root.stat().st_mode) & 0o077:
@@ -28,9 +29,10 @@ def main():
     })
     # Environment variables are not printed or passed in command arguments.
     subprocess.run(["/usr/bin/xcrun", "devicectl", "device", "process", "launch", "--device", args.device,
+                    *(["--terminate-existing"] if args.relaunch else []),
                     "--activate", "--payload-url", "goh-debug://panel", "com.aens.GetOverHere"],
                    env=environment, check=True, timeout=30)
-    print("Debug launch requested. If the app was already running, quit it normally and run again.")
+    print("Debug launch requested." if args.relaunch else "Debug launch requested. If the app was already running, quit it normally and run again.")
 
 
 if __name__ == "__main__":

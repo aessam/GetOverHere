@@ -208,9 +208,9 @@ class BluetoothRoomDiscovery(private val context: Context,
             BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
         if (Build.VERSION.SDK_INT >= 29) {
             // Own each allocation immediately so a later allocation failure closes all earlier PSMs.
-            repeat(4) { sessionServers += requireNotNull(adapter).listenUsingInsecureL2capChannel() }
+            repeat(5) { sessionServers += requireNotNull(adapter).listenUsingInsecureL2capChannel() }
             localLanePSMs = BluetoothLanePSMs(sessionServers[0].psm, sessionServers[1].psm,
-                sessionServers[2].psm, sessionServers[3].psm)
+                sessionServers[2].psm, sessionServers[3].psm, metadata = sessionServers[4].psm)
             service.addCharacteristic(BluetoothGattCharacteristic(PSM_ID,
                 BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
             service.addCharacteristic(BluetoothGattCharacteristic(LANE_PSMS_ID,

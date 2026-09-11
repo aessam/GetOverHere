@@ -67,7 +67,8 @@ final class ChannelService {
     func findNearbyTours() {
         nearbyError = nil
         bluetoothDiscoveryEnabled = true
-        if #available(iOS 26.4, *) { awareDiscoveryEnabled = true }
+        // The normal mixed-platform flow uses Bluetooth. Aware remains an explicit
+        // diagnostics/pairing choice; Find/Create must not force experimental pairing.
     }
 
     func explainUnavailableRoom() {

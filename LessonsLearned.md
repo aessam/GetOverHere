@@ -525,3 +525,18 @@ keep-awake session without claiming it proves the unresolved physical timeout's 
 not a passing create/join/audio loop. Neither a simulator nor a native transport fixture
 replaces the final visible-device test. Record physical partial success and stop at an
 approval boundary rather than silently relaunching a running debug server.
+
+## 92. Preserve guide orientation and distinguish bitrate from timely delivery
+
+**What happened**: Physical Bluetooth speeds changed substantially when the same two
+phones exchanged guide roles. With two Android listeners, the iPhone did not distribute
+throughput evenly. Android Aware delivered all1,800 small-packet echoes, but176 crossed
+the150ms round-trip threshold despite high bulk throughput.
+**Resolution**: Store each orientation and receiver's raw measurements separately;
+retain exact payload checks, echo timings and endpoint completion. Never derive group
+capacity by multiplying single-peer bitrate. An independently advanced two-client
+workload is not a synchronized fan-out test.
+**Testing lesson**: Xcode returned success after a Swift Testing filter selected zero
+tests. Requiring xcresult passedTests=1 caught this; the method selector needed `()`.
+The corrected loopback and physical fixtures passed. Raw results and limitations are
+in `benchmarks/2026-09-10/README.md`.

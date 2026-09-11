@@ -5,6 +5,16 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class BluetoothLanePSMsTest {
+    @Test fun separatedMetadataFixture() {
+        val record = BluetoothLanePSMs(128, 129, 256, 65535, 130)
+        assertEquals("474f4c32008000810100ffff0082", record.encode().joinToString("") { "%02x".format(it) })
+        assertEquals(record, BluetoothLanePSMs.decode(record.encode()))
+        assertEquals(130, record.psm(NearbyLaneRequest.Lane.METADATA))
+        for (length in 0 until 14) rejects { BluetoothLanePSMs.decode(record.encode().copyOf(length)) }
+        rejects { BluetoothLanePSMs(128, 129, 256, 65535, 128) }
+        rejects { BluetoothLanePSMs(128, 129, 256, 65535, 0) }
+    }
+
     @Test fun sharedFixtureAndLaneMapping() {
         val endpoints = BluetoothLanePSMs(admission = 128, realtime = 129, control = 256, asset = 65535)
         assertEquals("474f4c31008000810100ffff", endpoints.encode().joinToString("") { "%02x".format(it) })

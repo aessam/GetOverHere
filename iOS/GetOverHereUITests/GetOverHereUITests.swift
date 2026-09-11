@@ -8,6 +8,84 @@
 import XCTest
 
 final class GetOverHereUITests: XCTestCase {
+    @MainActor
+    func testRepeatedPhysicalGuideCreationThroughNormalUI() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires physical microphone capture")
+        #else
+        let app = XCUIApplication()
+        app.launch()
+        defer { if app.buttons["End Tour"].exists { app.buttons["End Tour"].tap() } }
+        for index in 0..<5 {
+            XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 10), app.debugDescription)
+            app.buttons["Add"].tap()
+            let field = app.textFields["e.g., Tour Group, Lecture Hall"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap(); field.typeText("Repeat \(index)")
+            app.buttons["Create"].tap()
+            XCTAssertTrue(app.buttons["End Tour"].waitForExistence(timeout: 15), app.debugDescription)
+            app.buttons["End Tour"].tap()
+        }
+        #endif
+    }
+
+    @MainActor
+    func testPhysicalMixedRoomThroughNormalUI() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let role = environment["GOH_NORMAL_UI_ROLE"], let name = environment["GOH_NORMAL_UI_ROOM"] else {
+            throw XCTSkip("Explicit physical mixed pair only")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        defer {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "Normal mixed tour UI"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if app.buttons["End Tour"].exists { app.buttons["End Tour"].tap() }
+            else if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        if role == "guide" {
+            XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 10))
+            app.buttons["Add"].tap()
+            let field = app.textFields["e.g., Tour Group, Lecture Hall"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap(); field.typeText(name)
+            app.buttons["Create"].tap()
+            XCTAssertTrue(app.buttons["End Tour"].waitForExistence(timeout: 20), app.debugDescription)
+            let ready = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '1 audio ready'")).firstMatch
+            XCTAssertTrue(ready.waitForExistence(timeout: 90), app.debugDescription)
+            app.segmentedControls.buttons["Pointer"].tap()
+            let end = XCTNSPredicateExpectation(predicate: NSPredicate(value: false), object: app)
+            end.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [end], timeout: 12), .completed)
+        } else {
+            XCTAssertEqual(role, "guest")
+            XCTAssertTrue(app.buttons["findNearbyTours"].waitForExistence(timeout: 10))
+            app.buttons["findNearbyTours"].tap()
+            let room = app.buttons.containing(.staticText, identifier: name).firstMatch
+            XCTAssertTrue(room.waitForExistence(timeout: 90), app.debugDescription)
+            room.tap()
+            XCTAssertTrue(app.staticTexts["Listening to the guide"].waitForExistence(timeout: 45), app.debugDescription)
+            let pointer = app.segmentedControls.buttons["Pointer"]
+            XCTAssertTrue(pointer.waitForExistence(timeout: 15), app.debugDescription)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: pointer)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+        }
+    }
+
+    @MainActor
+    func testDebugDeepLinkOpensPanelWithoutEnablingListener() {
+        let app = XCUIApplication()
+        app.open(URL(string: "goh-debug://panel")!)
+        XCTAssertTrue(app.staticTexts["debugControlState"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["debugControlState"].label, "disabled")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Debug URL opens diagnostics without network access"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Observe the installed app without launching a second coordinator or changing permissions.
     @MainActor
     func testObserveExistingDebugControlSession() throws {

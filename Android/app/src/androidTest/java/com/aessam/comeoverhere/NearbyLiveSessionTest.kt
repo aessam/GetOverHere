@@ -8,6 +8,12 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -34,6 +40,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class NearbyLiveSessionTest {
+    @get:Rule val compose = createEmptyComposeRule()
     @get:Rule val permissions: GrantPermissionRule = GrantPermissionRule.grant(*(
         listOf(Manifest.permission.RECORD_AUDIO) + BluetoothRoomDiscovery.requiredPermissions().toList() +
             if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.NEARBY_WIFI_DEVICES) else emptyList()
@@ -43,6 +50,7 @@ class NearbyLiveSessionTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val arguments = InstrumentationRegistry.getArguments()
         val role = arguments.getString("nearbyRole")
+        val normalUI = arguments.getString("nearbyUI") == "true"
         assumeTrue("Requires an explicit physical cross-platform pair", role == "guide" || role == "guest")
         assumeTrue("Native BLE sockets require Android10+", Build.VERSION.SDK_INT >= 29)
         assumeTrue("Physical microphone/radio required", !Build.FINGERPRINT.contains("generic"))
@@ -60,25 +68,34 @@ class NearbyLiveSessionTest {
                 previousBluetooth = service.bluetoothDiscoveryEnabled.value
                 previousAware = service.awareSettings?.state?.value?.enabled == true
                 ownsSessionSetup = true
-                service.setBluetoothDiscoveryEnabled(true)
-                service.awareSettings?.setEnabled(false)
+                if (!normalUI) {
+                    service.setBluetoothDiscoveryEnabled(true)
+                    service.awareSettings?.setEnabled(false)
+                }
             }
             if (role == "guide") {
-                instrumentation.runOnMainSync { service.createChannel(name) }
+                if (normalUI) {
+                    compose.onNodeWithContentDescription("Create Channel").performClick()
+                    compose.onNodeWithText("Channel name").performTextInput(name)
+                    compose.onNodeWithText("Create").performClick()
+                } else instrumentation.runOnMainSync { service.createChannel(name) }
                 await("guide microphone startup", 15, service) {
                     service.listenState.value == ListenState.BROADCASTING &&
                         service.audioRuntimeState.value == AudioRuntimeState.RUNNING
                 }
                 assertFalse(service.isRoomLocked.value)
                 await("guest audio-ready report", 90, service) { service.audioReadyGuestCount.value == 1 }
-                instrumentation.runOnMainSync { service.setVisualFocus(TourVisualMode.POINTER) }
+                if (normalUI) compose.onNodeWithText("Pointer").performClick()
+                else instrumentation.runOnMainSync { service.setVisualFocus(TourVisualMode.POINTER) }
                 SystemClock.sleep(10_000)
                 assertEquals(AudioRuntimeState.RUNNING, service.audioRuntimeState.value)
             } else {
+                if (normalUI) compose.onNodeWithTag("findNearbyTours").performClick()
                 await("joinable Bluetooth room", 90, service) {
                     service.channels.value.any { it.name == name && service.canJoin(it.copy(audioHostIP = null)) }
                 }
-                instrumentation.runOnMainSync {
+                if (normalUI) compose.onNodeWithText(name).performClick()
+                else instrumentation.runOnMainSync {
                     val selected = service.channels.value.first { it.name == name }.copy(audioHostIP = null)
                     service.joinChannel(selected, "")
                 }

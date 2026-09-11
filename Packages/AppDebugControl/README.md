@@ -16,7 +16,8 @@ python3 scripts/start_iphone_debug_control.py DEVICE_ID "$DEBUG_CREDENTIALS"
 ```
 
 The launch helper requires the app not already running to apply its environment.
-Quit normally first; the helper never force-stops it. Only explicitly enabled launches
+Quit normally first, or use `--relaunch` only with explicit approval to terminate the
+existing app. Only explicitly enabled launches
 start the listener. Debug identity import requires iOS 18+; the normal app baseline is unchanged.
 
 Open `goh-debug://panel` to see the address/port, or copy the non-secret

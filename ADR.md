@@ -628,3 +628,37 @@ certificates plus application authentication, not downgraded encryption.
 device build and Release exclusion checks pass. One physical Mac→iPhone status succeeds;
 later requests time out. Updated keep-awake behavior and complete remote UI/microphone
 smoke remain pending device relaunch approval. This is tooling, not mixed-tour completion.
+
+## ADR-067 — Separate Bluetooth metadata and release admission listeners synchronously
+**Date**: 2026-09-10
+**Context**: Physical Android-guide → iPhone-guest joins failed when metadata and
+admission reused an Android PSM. Repeated normal iPhone Create/End also reproduced
+port50003 bind errno48; cancellation deferred socket close to an accept worker.
+**Decision**: Add the optional fifth metadata endpoint in GOL2 (14 bytes), retaining
+GOL1 (12 bytes) decoding and fixtures. Android publishes five distinct native PSMs.
+Updated peers select metadata separately from admission. Older GOL1-only readers do
+not understand GOL2; update both test apps rather than bypassing admission checks.
+iOS closes the admission listener before stop returns, with nonblocking accept and
+socket identity checked under the same policy lock. Readiness polling is bounded and
+outside the lock; an old worker cannot accept on a new owner's reused descriptor.
+Normal iOS Find enables Bluetooth; experimental Aware remains an explicit opt-in.
+**Evidence**: Cross-language endpoint fixtures, focused admission/lifecycle tests,
+five normal physical Create/End cycles, and both normal mixed UI directions pass.
+Both mixed directions also pass after the user forgot the iPhone Wi-Fi network.
+**Limits**: Android-guide intermittent audio startup and native encoder recreation
+churn remain unresolved. A room-flow pass is not locked or acoustic qualification.
+
+## ADR-068 — Keep transport speed benchmarks separate from audio qualification
+**Date**: 2026-09-10
+**Decision**: Test-only GBB1 in iOS/Android test targets measures byte-verified,
+bounded half-duplex Bluetooth transfers and guest-clock echo RTT through production
+native connections/guide adapters. No production wire format or authentication path
+is replaced. Two guests may run concurrently, with independent phase advancement;
+do not report summed medians as a synchronized broadcast bitrate.
+Reuse Android Aware's existing bulk and signed small-packet benchmarks. Preserve raw
+results, role orientation, failed test selection, build hashes, and exact commands.
+Require positive actual test counts, verified payloads, both endpoint completion and
+monotonic receive timing before accepting a row. Simulator loopback is a protocol
+gate only. The three-phone report lives in `benchmarks/2026-09-10/README.md`.
+**Consequence**: Role-dependent Bluetooth throughput and Aware latency tails stay
+visible. These tests cannot certify microphone-to-speaker latency or thirty guests.

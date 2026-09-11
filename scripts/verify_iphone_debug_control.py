@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 
@@ -13,9 +14,25 @@ def main():
     parser.add_argument("credentials", type=Path)
     parser.add_argument("--cli", required=True, type=Path)
     parser.add_argument("--create-room", action="store_true", required=True)
+    parser.add_argument("--ui-device")
+    parser.add_argument("--ui-manifest", type=Path)
+    parser.add_argument("--ui-results", type=Path)
     args = parser.parse_args()
     if not args.cli.is_file() or not (args.credentials / "control.key").is_file():
         parser.error("Build the CLI and create private credentials first")
+    ui_options = (args.ui_device, args.ui_manifest, args.ui_results)
+    if any(ui_options) and not all(ui_options):
+        parser.error("Provide all three --ui-device/--ui-manifest/--ui-results options")
+    if args.ui_results:
+        if not args.ui_manifest.is_file() or args.ui_results.exists():
+            parser.error("UI manifest must exist and UI results directory must be new")
+        args.ui_results.mkdir(parents=True)
+
+    def observe(screen):
+        if args.ui_device:
+            subprocess.run([sys.executable, str(Path(__file__).with_name("observe_iphone_debug_control.py")),
+                            args.ui_device, str(args.ui_manifest), "--screen", screen,
+                            "--result", str(args.ui_results / f"{screen}.xcresult")], check=True)
 
     def command(action, **values):
         result = subprocess.run([str(args.cli), args.host, str(args.credentials / "control.key"), action,
@@ -42,6 +59,7 @@ def main():
         raise RuntimeError("Preflight requires a foreground app with no active room")
     command("show-debug")
     wait("screen", "debug")
+    observe("debug")
     command("dismiss")
     command("show-create")
     wait("screen", "create")
@@ -57,6 +75,8 @@ def main():
         for feature in ("map", "pointer", "slides"):
             command("feature", name=feature)
             wait("feature", feature)
+            if feature == "pointer":
+                observe("pointer")
         # Public throwaway fixture code, never a user's credential.
         command("room-lock", locked="true", code="debug-smoke-4829")
         wait("locked", True)
@@ -70,6 +90,7 @@ def main():
             command("leave")
             wait("activeRoom", "")
             wait("audio", "idle")
+            command("discovery", bluetooth=str(initial["bluetooth"]).lower(), aware=str(initial["aware"]).lower())
     print("PASS: real-app create/audio/navigation/lock/unlock/leave over authenticated TLS")
 
 

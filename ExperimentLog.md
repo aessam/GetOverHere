@@ -1441,3 +1441,114 @@ Final review removed a redundant direct visual-focus publication from the debug 
 the same SwiftUI selection observer used by the picker publishes it once. Final signed
 `build-for-testing` rerun exited0: `/tmp/GetOverHere-debug-final-build-20260910.log`.
 `git diff --check`, plist validation and Python helper CLI preflights pass.
+
+## 2026-09-10 18:31–18:40 — approved debug relaunch and actual mixed live sessions
+
+User approved relaunch (`Go`), then explicitly prioritized iPhone/Android testing over
+more debugger work. Same selected iPhone12mini and Pixel11Pro; Pixel7 was visible to
+adb but not operated. Fresh private debug credentials; updated app installed using
+devicectl, then `scripts/start_iphone_debug_control.py ... --relaunch`. No secrets logged.
+
+`scripts/verify_iphone_debug_control.py 192.168.3.132 PRIVATE_CREDENTIAL_DIR --cli /tmp/GetOverHereDebugControl20260910/out/Products/Debug/goh-control --create-room`
+passed actual create, microphone running, Map/Pointer/Slides, lock/unlock and leave/idle.
+Log `/tmp/GetOverHere-debug-approved-smoke-20260910.log`. Physical observer command:
+`scripts/observe_iphone_debug_control.py 00008101-000C690C3A30001E /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --screen debug --result /tmp/GetOverHere-debug-approved-panel-20260910.xcresult`.
+Result1passed/0failed/0skipped. Complete smoke helper now optionally integrates visual
+checks and restores initial discovery preferences after its own room cleanup.
+
+Second network/UI smoke `/tmp/GetOverHere-debug-complete-smoke-20260910.log` failed at
+new guide startup: `Cannot open room admission port 50003.` Added
+`RoomAdmissionTransportTests/stoppedIdleListenerCanImmediatelyHostAnotherRoom` before
+changing production code. Same scoped `xcodebuild test`, serial, on simulator17Pro and
+physical iPhone12mini both exited0. Logs `/tmp/GetOverHere-admission-restart-red-20260910.log`
+and `/tmp/GetOverHere-admission-restart-device-red-20260910.log` retain historical red
+candidate names but are PASSES. No production socket fix applied; full-app failure's
+cause remains unresolved. Added deep-link UI test compiled in the device test build,
+not executed because user redirected to mixed phones.
+
+Actual mixed test used the visible iPhone coordinator through debug commands and the
+existing Android production-service fixture (singleton service used by MainActivity):
+
+```sh
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 66180DLKX006ND shell am instrument -w -r -e class com.aessam.comeoverhere.NearbyLiveSessionTest -e nearbyRole guide -e nearbyRoomName Live-Android-iPhone-1838 com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner
+# iPhone debug: discovery bluetooth=true aware=false; dismiss; join discovered UUID
+# 0A1AD3DC-8E99-4AC6-A3DF-F9E6CF2BA0DF; watch real status.
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 66180DLKX006ND shell am instrument -w -r -e class com.aessam.comeoverhere.NearbyLiveSessionTest -e nearbyRole guest -e nearbyRoomName Live-iPhone-Android-1840 com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner
+# iPhone debug: create name=Live-iPhone-Android-1840; wait audio=running;
+# feature name=pointer; watch audioReadyGuests. End own room after the guest finishes.
+```
+
+Android-guide result FAIL1/1: iPhone found the room over Bluetooth but reported connection
+closed before admission; guide timed out waiting for audio-ready. Logs
+`/tmp/GetOverHere-visible-android-guide-20260910.log` and
+`/tmp/GetOverHere-visible-iphone-guest-20260910.jsonl`.
+
+iPhone-guide result PASS1/1 in11.881s. Android asserted Bluetooth route with no LAN address,
+authenticated live playback, received Pointer state, then five one-second positive
+renderer deltas totaling160,048 PCM bytes in5,008ms (threshold128,000). iPhone status
+recorded audioReadyGuests=1. Logs `/tmp/GetOverHere-visible-android-guest-20260910.log`,
+`/tmp/GetOverHere-visible-android-cadence-20260910.log`,
+`/tmp/GetOverHere-visible-iphone-guide-20260910.jsonl`.
+This is production microphone/decoder/renderer cadence, not acoustic proof or group scale.
+Aware -11992 is still reported independently; mixed Aware is not claimed.
+
+Cleanup verified: iPhone activeRoom empty, audio idle, original discovery false/false;
+Android fixtures completed their finally teardown. No force-stops outside the explicitly
+approved iPhone relaunch, no radio/credential/router changes. Next: separate Android's
+metadata endpoint from admission and retest Android-guide first, preserving the passing
+iPhone-guide baseline. Do not expand debugger scope.
+
+## 2026-09-10 19:41 — normal router-free UI and three-phone transport benchmark
+
+Devices: iPhone12mini `00008101-000C690C3A30001E`, iOS26.5.2; Pixel11Pro
+`66180DLKX006ND` and Pixel7 `2A111FDH2007A1`, both Android17/API37. Xcode27.
+User forgot the iPhone Wi-Fi network. USB access persisted; agent did not modify radios.
+
+Superseding earlier failures: GOL2 separates metadata/admission endpoints; iPhone
+repeated Create/End reproduced bind errno48 and passed five UI cycles after synchronous
+listener retirement. Artifacts `/tmp/GetOverHere-repeat-guide-errno.log` (failed),
+`/tmp/GetOverHere-repeat-guide-fixed.log` (passed). Normal mixed UI passed both guide
+roles, then the final Android-guide rerun joined but stalled at Waiting for Audio.
+Android logs showed repeated native Opus encoder recreation; not fixed or diagnosed
+from those logs alone. After forgetting Wi-Fi, both normal UI roles passed again:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/verify_mixed_normal_ui.py 00008101-000C690C3A30001E 66180DLKX006ND /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --ios-role guest
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/verify_mixed_normal_ui.py 00008101-000C690C3A30001E 66180DLKX006ND /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --ios-role guide
+```
+
+Logs `/tmp/GetOverHere-no-ap-guest.log` and `/tmp/GetOverHere-no-ap-guide.log`, both PASS.
+Their actual normal-UI xcresults and Android logs are in system-temp directories
+`GetOverHereNormalUI-7qjtk44m` and `GetOverHereNormalUI-_h_rr_y3`.
+
+Speed request: added test-only GBB1 to both test targets, through native Bluetooth and
+guide loopback adapters. First iOS selector ran zero tests; rejected. Corrected `()`
+selectors passed actual protocol smoke1/1 and all physical tests. Android loopback
+smoke1/1 passed before radio tests. Mixed16KiB pilot passed, followed by seven64KiB
+Bluetooth configurations: four mixed role orientations, both Android role orientations,
+and one iPhone serving two Androids with independent trial advancement.
+
+Exact commands, OS/build hashes, limitations, per-transfer measurements, and raw RTT
+samples are committed under `benchmarks/2026-09-10/`. Main commands:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/benchmark_three_phones.py --ios 00008101-000C690C3A30001E --android 66180DLKX006ND 2A111FDH2007A1 --manifest /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun
+python3 scripts/benchmark_android_bluetooth.py --guide 66180DLKX006ND --guest 2A111FDH2007A1
+python3 scripts/benchmark_android_aware.py --guide 66180DLKX006ND --guest 2A111FDH2007A1 --profile tiny --millis 3000 --rounds 3 --reuse-installed
+python3 scripts/benchmark_android_aware.py --guide 66180DLKX006ND --guest 2A111FDH2007A1 --millis 5000 --rounds 3 --reuse-installed
+```
+
+All completed. Matrix `/tmp/GetOverHereThreePhones.t3nde1f7`, Android BLE
+`/tmp/GetOverHereAndroidBluetoothSpeed.1c0rrfh2`, Aware tiny
+`/tmp/GetOverHereAwareBenchmark.zicic5jv`, repeated bulk
+`/tmp/GetOverHereAwareBenchmark.fg9h6qy1`. Existing emulator protocol gates passed before
+each Aware profile. Initial one-round Aware pilot retained separately; its test-APK
+manifest predates a concurrent local test build, so repeated runs explicitly verified
+installed hashes. Final benchmarks did not overlap radio experiments on a device.
+
+Final regression command: `xcodebuild ... -destination platform=iOS\ Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4 -parallel-testing-enabled NO -resultBundlePath /tmp/GetOverHere-benchmark-final-regression.xcresult -only-testing:GetOverHereTests/RoomAdmissionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests '-only-testing:GetOverHereTests/BluetoothSpeedTests/protocolSmoke()' test`.
+Actual xcresult:45passed/0failed/0skipped. Android `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :tour-session-core:test :app:testDebugUnitTest`
+returned BUILD SUCCESSFUL with unchanged tasks UP-TO-DATE; verified XML reports76core
+and171app tests, zero failures/errors/skips. These are regression gates, not acoustic,
+locked-phone or group audio qualification. Each radio fixture closes its owned streams
+and stops its radio owner in teardown; the user network was not restored or changed.

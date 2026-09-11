@@ -3,6 +3,18 @@ import Testing
 @testable import TourSessionCore
 
 struct BluetoothLanePSMsTests {
+    @Test func separatedMetadataFixture() throws {
+        let record = try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535, metadata: 130)
+        #expect(record.encode().lowercaseHex == "474f4c32008000810100ffff0082")
+        #expect(try BluetoothLanePSMs.decode(record.encode()) == record)
+        #expect(record.psm(for: .metadata) == 130)
+        for count in 0..<14 {
+            #expect(throws: RoomAdmissionError.self) { try BluetoothLanePSMs.decode(record.encode().prefix(count)) }
+        }
+        #expect(throws: RoomAdmissionError.self) { try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535, metadata: 128) }
+        #expect(throws: RoomAdmissionError.self) { try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535, metadata: 0) }
+    }
+
     @Test func sharedFixtureAndLaneMapping() throws {
         let endpoints = try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535)
         #expect(endpoints.encode().lowercaseHex == "474f4c31008000810100ffff")
