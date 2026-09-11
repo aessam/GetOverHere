@@ -19,6 +19,16 @@ struct ChannelRootView: View {
         .sheet(isPresented: $coord.showCreateChannel) {
             CreateChannelSheet()
         }
+        #if DEBUG
+        .sheet(isPresented: $coord.showDebugControl) {
+            DebugControlPanel()
+        }
+        .onOpenURL { url in
+            guard url.scheme == "goh-debug", url.host == "panel", url.path.isEmpty,
+                  url.query == nil, url.fragment == nil else { return }
+            coordinator.showDebugControl = true
+        }
+        #endif
         .sheet(isPresented: $showWiFiAwareLab) {
             if #available(iOS 26.4, *) {
                 WiFiAwareLabView()

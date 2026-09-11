@@ -1381,3 +1381,63 @@ GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH
 ```
 
 **Result: exit1,1of3 opens.** First native open completed in75.6ms; second and third returned `CBInternalErrorDomain` code24 while the first stayed open. Sequential calls returned from the delegate before the next request, so the failure is not explained solely by our queued callback reentrancy. No meaning is assigned to private error24 or the earlier unknown436. Close/reopen and distinct-PSM probes follow; this observation is device-specific, not a universal Apple API-capacity statement.
+
+## 2026-09-10 — Visible-app debug control bridge (ADR-066)
+
+Environment: Xcode27 at `/Users/aessam/Downloads/Xcode.app/Contents/Developer`,
+iPhone12mini `00008101-000C690C3A30001E`/iOS26.5.2; simulator17Pro/iOS27
+`5CCA0393-1F29-47F3-AC23-CBE1C99533F4`. No trust-store, passcode, radio or router changes.
+Prior mixed-device changes preserved in WIP commit `7c3829b`, not a completion claim.
+
+```sh
+export DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer
+swift test --package-path Packages/AppDebugControl --scratch-path /tmp/GetOverHereDebugControl20260910
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS,id=00008101-000C690C3A30001E' -derivedDataPath /tmp/GetOverHereDebugApp20260910 build-for-testing
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4' -derivedDataPath /tmp/GetOverHereDebugSimulator20260910 -parallel-testing-enabled NO '-only-testing:GetOverHereTests/DebugAppControlTests' test
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -configuration Release -destination 'generic/platform=iOS' -derivedDataPath /tmp/GetOverHereDebugRelease20260910 CODE_SIGNING_ALLOWED=NO build
+python3 scripts/verify_debug_control_release.py /tmp/GetOverHereDebugRelease20260910/Build/Products/Release-iphoneos/GetOverHere.app
+```
+
+Results: package2/2 pass, actual repeated TLS and wrong-key/wrong-pin/replay checks;
+simulator3/3 adapter tests pass, no skipped tests; signed device build exit0; unsigned
+Release exit0 and exclusion check PASS for plist/resources/symbols/strings. Logs:
+`/tmp/GetOverHere-debug-control-repeated-20260910.log`,
+`/tmp/GetOverHere-debug-build-tests-20260910.log`,
+`/tmp/GetOverHere-debug-adapter-tests-20260910.log`,
+`/tmp/GetOverHere-debug-release-exclusion-20260910.log`.
+Simulator result: `/tmp/GetOverHereDebugSimulator20260910/Logs/Test/Test-GetOverHere-2026.09.10_18-12-30--0700.xcresult`.
+Existing actor-isolation/style warnings remain; no warning-free claim.
+
+Retained failures: PSK-only TLS handshake failed with error-9858 in the local fixture;
+empty-password PKCS#12 import returned-25293; named-curve omission caused
+SecKeyCopyExternalRepresentation NULL-key exception. Named P-256 plus random nonempty
+password fixed the actual certificate fixture. No numeric meaning was inferred for
+the physical Wi-Fi Aware/Bluetooth errors. Failed TLS logs retain `smoke`, `psk`,
+`identity-diagnostic`, `identity-password` suffixes under `/tmp/GetOverHere-debug-control-*20260910.log`.
+
+Physical initial build installed/launched using `scripts/start_iphone_debug_control.py`.
+Credentials were created in an owner-only temporary directory and are not recorded here.
+App-container endpoint file reported `192.168.3.132:50999` and169.254.250.98.
+`scripts/goh_control.py ... status` returned foreground=true, screen=rooms, audio=idle,
+role=none, no active room and both nearby toggles=false. Evidence:
+`/tmp/GetOverHere-debug-phone-status-20260910.json` and install/launch logs with matching
+date. This proves one authenticated local-network exchange with the actual scene.
+
+Next show-debug/status calls timed out after8seconds in NWConnection preparing;
+no room was created. Warm devicectl activation did not restore connectivity. Saved
+endpoint still said listening; public lockState reported passcodeRequired=false and
+unlockedSinceBoot=true, not current foreground status. Root cause remains unproven.
+Latest keep-awake update is not installed. Approval to relaunch was requested; complete
+real-network room/UI smoke is pending. Do not claim it passed.
+
+Simulator `simctl openurl ... goh-debug://panel` resolved the Debug URL to GetOverHere
+and displayed the system Open confirmation. Screenshot
+`/tmp/GetOverHere-debug-deeplink-ready-20260910.png` was inspected. This is registration
+evidence only, not panel presentation. Initial screenshot captured boot; retained as
+`/tmp/GetOverHere-debug-deeplink-simulator-20260910.png`. Computer-use surface did not
+offer Simulator, so no unsupported tap injection was used.
+
+Final review removed a redundant direct visual-focus publication from the debug adapter;
+the same SwiftUI selection observer used by the picker publishes it once. Final signed
+`build-for-testing` rerun exited0: `/tmp/GetOverHere-debug-final-build-20260910.log`.
+`git diff --check`, plist validation and Python helper CLI preflights pass.

@@ -10,7 +10,10 @@ struct ChannelDetailView: View {
     @State private var photoImportError: String?
     @State private var mapImportError: String?
     @State private var guestMinimizedSlide = false
-    @State private var selectedFeature: TourFeature = .slides
+    private var selectedFeature: TourFeature {
+        get { coordinator.selectedTourFeature }
+        nonmutating set { coordinator.selectedTourFeature = newValue }
+    }
     @State private var isMapImporterPresented = false
     @State private var pendingTargetCoordinate: CLLocationCoordinate2D?
     @State private var targetLabelDraft = ""
@@ -461,7 +464,7 @@ struct ChannelDetailView: View {
     }
 
     private var featurePicker: some View {
-        Picker("Tour feature", selection: $selectedFeature) {
+        Picker("Tour feature", selection: Binding(get: { selectedFeature }, set: { selectedFeature = $0 })) {
             ForEach(TourFeature.allCases) { feature in
                 Label(feature.title, systemImage: feature.systemImage).tag(feature)
             }
@@ -769,7 +772,7 @@ struct ChannelDetailView: View {
     }
 }
 
-private enum TourFeature: String, CaseIterable, Identifiable {
+enum TourFeature: String, CaseIterable, Identifiable {
     case slides
     case map
     case pointer

@@ -8,6 +8,30 @@
 import XCTest
 
 final class GetOverHereUITests: XCTestCase {
+    /// Observe the installed app without launching a second coordinator or changing permissions.
+    @MainActor
+    func testObserveExistingDebugControlSession() throws {
+        guard ProcessInfo.processInfo.environment["GOH_OBSERVE_DEBUG_CONTROL"] == "1" else {
+            throw XCTSkip("Opt-in only: requires an already running authenticated debug session")
+        }
+        let app = XCUIApplication()
+        app.activate()
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Actual iPhone debug control UI"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let expected = ProcessInfo.processInfo.environment["GOH_DEBUG_EXPECT_SCREEN"] ?? "debug"
+        if expected == "debug" {
+            XCTAssertTrue(app.staticTexts["debugControlState"].waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertEqual(app.staticTexts["debugControlState"].label, "listening")
+        } else if expected == "pointer" {
+            XCTAssertTrue(app.segmentedControls.buttons["Pointer"].waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(app.segmentedControls.buttons["Pointer"].isSelected, app.debugDescription)
+        } else {
+            XCTFail("Unknown expected screen")
+        }
+    }
+
     @MainActor
     func testBluetoothDiscoveryDefaultsOffWithoutPromptingAtLaunch() {
         let app = XCUIApplication()

@@ -1,10 +1,49 @@
 # GetOverHere — Next Session
 
+## September 10 current task — iPhone network debug control
+
+User requested a debug server/library in the iPhone app plus a Mac command client,
+using the actual visible UI/coordinator to complete mixed-device debugging.
+Implementation and usage: [Packages/AppDebugControl/README.md](Packages/AppDebugControl/README.md).
+ADR-066 records its security/lifecycle boundary. Do not confuse debug-network access
+with completion of the tour's mixed Bluetooth transport.
+
+- **A10 implemented:** Debug-only SPM TLS 1.3 server/client, pinned ephemeral certificate,
+  authenticated/replay-bounded commands, actual AppCoordinator adapter, status/watch/wait,
+  room/navigation/audio commands, `goh-debug://panel`, explicit 15-minute activation,
+  bounded foreground keep-awake and Stop. Release excludes the server and URL scheme.
+- **A11 verified:** Two package tests pass with actual repeated TLS connections and
+  wrong-key/wrong-pin/replay rejection. Three simulator adapter tests pass. Signed iPhone
+  build-for-testing and unsigned Release build pass; Release plist/resource/symbol/string
+  check passes. Exact commands/artifacts are in ExperimentLog.
+- **A12 physical partial:** Installed initial bridge on the selected iPhone. Authenticated
+  `status` from the Mac to `192.168.3.132:50999` returned the actual foreground room list,
+  audio idle, both nearby toggles false. Subsequent requests timed out in connection
+  preparation; the saved endpoint file still said listening, which is not a liveness
+  guarantee. Lock-state query said no passcode required; it does not establish whether
+  the screen/app was active. Do not label the timeout's cause as proven.
+- **A13 next:** User approval to relaunch the updated debug app was requested asynchronously.
+  The latest keep-awake update is built but not yet installed/relaunched on the phone.
+  After approval, relaunch with fresh private credentials, run
+  `scripts/verify_iphone_debug_control.py --create-room`, then the opt-in visual observer
+  with `scripts/observe_iphone_debug_control.py`. Verify the debug panel and actual pointer
+  selection on the phone. End the owned test room/microphone. Deep-link registration is
+  confirmed by the simulator's system Open prompt, but panel presentation is not yet
+  visually verified. A manual lock can still suspend the endpoint; no background workaround.
+
+WIP checkpoint `7c3829b` saved prior mixed routing/Bluetooth work before package wiring;
+it is not a verified mixed-product completion commit. Stable LAN tag is unchanged.
+Important newer A8 result: three distinct native PSMs passed, and a four-lane Android
+endpoint map was implemented, but the live Android-guide→iPhone run still fails when
+metadata and admission reuse one PSM. A separate fifth metadata endpoint is the next
+candidate, **not implemented**. Artifact `/tmp/GetOverHereNearbyCross.JWNDfD` retains
+that failure. Use the visible debug bridge to investigate, then return to A8/A9.
+
 ## September 10 active mixed-device repair
 
 The user has reauthorized physical testing and requested **Android and iPhone working together**. The September 8 unavailable-device restriction below is historical, not current. Selected pair: USB iPhone 12 mini `00008101-000C690C3A30001E` (iOS26.5.2) and Pixel11Pro `66180DLKX006ND` (SDK37/full37.0). Other connected devices are not part of this run. Different infrastructure networks do not prove a nearby route: the mixed harness explicitly selects Bluetooth and asserts native provenance. No radio, router, passcode, pairing or credential settings changed.
 
-Starting HEAD is `b3df039`; stable LAN tag remains unchanged at `59b0402`. Current repair work is uncommitted until its software/physical gates finish. Xcode is now `/Users/aessam/Downloads/Xcode.app/Contents/Developer` (27.0), not the historical deleted beta path.
+Starting HEAD was `b3df039`; prior repair is now preserved in WIP checkpoint `7c3829b`, not declared verified. Stable LAN tag remains unchanged at `59b0402`. Xcode is now `/Users/aessam/Downloads/Xcode.app/Contents/Developer` (27.0), not the historical deleted beta path.
 
 - **A6 implemented/software-tested:** narrowly typed LAN admission reachability failure can try the matching nearby endpoint once, only before receiving any challenge bytes. Wrong code, partial/malformed challenges, identity/version rejection and reply failures remain terminal. Admitted nearby route ownership survives later LAN discovery; failed reconnect clears stale adapters without losing nearby intent. Android169 JVM tests passed; scoped iOS38methods/49runs passed. These counts precede subsequent live-test instrumentation. See ADR-064 and the September10 ExperimentLog entry.
 - **A7 physical evidence:** real iPhone guide UI passed Create/open/lock/edit/unlock, microphone startup, Slides/Map/Pointer and End Tour. Mixed protocol iPhone-guide→Pixel passed v2 locked admission, signed pointer, exact512-byte asset and at least100 nonzero decoded frames. This is generated-tone component evidence, not acoustic or live-service completion.

@@ -508,3 +508,20 @@ Physical verification also exposed two test assumptions: a SwiftUI toggle access
 **What happened**: The iPhone-guide protocol fixture passed, while the reversed pair admitted and played its first frame but could not open control/assets. Sequential native opens failed on the same Android PSM; three distinct PSMs succeeded. Separately, the initial production live fixture let Android's activity stop before enabling discovery, which correctly disabled the app's foreground-only scan.
 **Resolution**: Select distinct Android endpoints per persistent lane (ADR-065), preserving every application handshake and legacy path. Native-only probes isolate allocation/opening; the production-service fixture verifies actual foreground/keyguard state before enabling discovery, without overriding that policy. Guide creation intentionally activates nearby discovery, so a BLE-only fixture must apply its Aware selection after asynchronous creation finishes.
 **Decision**: A passing synthetic transport or app startup does not prove the walking-tour loop. Check continuous renderer byte progress and minimum PCM cadence, not a latched first-frame status; acoustic output, locked endurance and group scale remain separate gates. Keep failed artifacts instead of relabeling their cause from incidental error text.
+
+## 91. Debug the visible coordinator and verify certificate packaging on the target stack
+
+**What happened**: A physical fixture could run a coordinator independently of the visible
+SwiftUI app. A new authenticated network bridge reached the real iPhone once, but later
+connections timed out; its saved endpoint file still said listening. Separately, the
+local TLS fixture rejected an empty PKCS#12 password, then Security import crashed on
+LibreSSL's explicit EC parameters.
+**Resolution**: Route commands to the scene-owned coordinator, distinguish action
+acceptance from completion, and retain an opt-in actual-UI observer. Generate a named
+P-256 curve with a nonempty random PKCS#12 password and import only in memory. Repeated
+pinned TLS connections and bad-key/bad-pin/replay checks pass. Add a bounded foreground
+keep-awake session without claiming it proves the unresolved physical timeout's cause.
+**Decision**: A stale endpoint snapshot is not live connectivity. A successful status is
+not a passing create/join/audio loop. Neither a simulator nor a native transport fixture
+replaces the final visible-device test. Record physical partial success and stop at an
+approval boundary rather than silently relaunching a running debug server.

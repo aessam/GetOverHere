@@ -596,3 +596,35 @@
 **Alternatives rejected**: Blind retry/sleep after same-PSM failure; a random endpoint pool; premature full stream multiplexing that would put assets/audio behind one userspace FIFO; treating a native-open probe as a passing tour. No Aware, LAN or application-message format change is required.
 **API basis**: Android's public `listenUsingInsecureL2capChannel()` allocates dynamic PSMs and leaves their disclosure to the app ([Android reference](https://developer.android.com/reference/android/bluetooth/BluetoothAdapter#listenUsingInsecureL2capChannel())). Existing application authentication/encryption remains necessary. Endpoint availability and group capacity require physical qualification.
 **Gate**: Mirrored exact-hex/roundtrip/malformed core fixtures, native lane-selection tests, then both-direction mixed protocol and real production microphone/readiness/playback tests. Exact outcomes are appended in ExperimentLog; the native-only success does not itself satisfy the latter gates.
+
+## ADR-066: Explicit, authenticated debug control of the visible iPhone app
+
+**Date**: 2026-09-10.
+**Context**: Physical fixtures can exercise a second coordinator without controlling the
+visible scene. The user requested a reusable in-app server and external client to drive
+the actual app and inspect its real state across their routed local network.
+**Decision**: Local SPM library `AppDebugControl` plus Mac executable `goh-control`.
+The iOS adapter holds the scene's existing AppCoordinator weakly, executes an allowlist
+on MainActor and reports real service state. Navigation uses the same observable feature
+selection as the SwiftUI picker. Replies acknowledge an action; clients must poll for
+asynchronous completion. No selectors, evaluation, synthetic rooms or permission bypass.
+**Security**: Explicit Debug launch flag, 32-byte random key and ephemeral in-memory
+P-256 identity supplied over the authorized device launch environment. TLS 1.3 pins the
+server certificate; HMAC-SHA256 verifies each request before decoding/execution. UUID
+replay rejection, 32 KiB frames, four connections, 10-second connection deadlines,
+2,048 requests and 15-minute activation. Owner-only credential files; no trust-store or
+keychain edits. State excludes codes/keys. Never expose the listener to the Internet.
+**Lifecycle and release**: Mutations require foreground. The active debug session keeps
+the screen awake and restores the previous idle-timer value on Stop/expiry/failure;
+manual lock or app switching may suspend it. No background mode was added. All server,
+adapter and panel implementations are `#if DEBUG`; Release uses the original Info.plist.
+The separate Debug plist registers `goh-debug://panel`, which only opens diagnostics.
+**Alternatives rejected**: Unauthenticated HTTP command server; mutation/secret-bearing
+deep links; a separate test AppCoordinator; arbitrary UI selector execution; private
+device-control APIs; silently keeping the app alive with audio. TLS-PSK-only handshake
+failed in the local Network.framework smoke, so the implementation uses pinned
+certificates plus application authentication, not downgraded encryption.
+**Evidence and limits**: Actual TLS/auth rejection tests, simulator adapter tests, signed
+device build and Release exclusion checks pass. One physical Mac→iPhone status succeeds;
+later requests time out. Updated keep-awake behavior and complete remote UI/microphone
+smoke remain pending device relaunch approval. This is tooling, not mixed-tour completion.
