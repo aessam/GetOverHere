@@ -1,5 +1,15 @@
 # GetOverHere — Next Session
 
+## September 11 — direct USB network verified
+
+After the user reversed USB roles and enabled Pixel11Pro USB tethering, direct iPhone
+connectivity works: ncm0=10.255.230.95, peer=10.255.230.7; forced ncm0 ping5/5 passed,
+average RTT2.650ms. Wireless ADB remains available at192.168.1.17:33101 (Pixel11Pro)
+and192.168.1.165:42369 (Pixel7); endpoints may change. Attached iPhone USB serial
+00008150001208901AC0401C differs from the earlier12mini. Exact evidence in ExperimentLog.
+Still untested: application TCP/UDP throughput, actual tour relay/audio, Aware alongside
+USB networking, and lock/endurance. Do not disable tethering or radios without direction.
+
 ## September 10, 19:41 — three-phone speed benchmarks complete
 
 Full results and repeat commands: [benchmarks/2026-09-10/README.md](benchmarks/2026-09-10/README.md).

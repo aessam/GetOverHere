@@ -1552,3 +1552,35 @@ returned BUILD SUCCESSFUL with unchanged tasks UP-TO-DATE; verified XML reports7
 and171app tests, zero failures/errors/skips. These are regression gates, not acoustic,
 locked-phone or group audio qualification. Each radio fixture closes its owned streams
 and stops its radio owner in teardown; the user network was not restored or changed.
+
+## 2026-09-11 — direct iPhone/Pixel USB NCM connectivity
+
+User enabled wireless debugging on both Pixels, then directly cabled Pixel11Pro to
+an iPhone. Wireless ADB verified at192.168.1.17:33101 and192.168.1.165:42369.
+USB descriptors identified the attached iPhone serial as00008150001208901AC0401C,
+not the12mini used in the previous day's benchmarks.
+
+Initial state: Pixel data_role=host, detected Apple device1452:4776, configurations
+including PTP and Apple USB Ethernet, but no USB network interface. Descriptor presence
+was not treated as connectivity. Sysfs configuration reads returned Permission denied;
+no root, private protocol implementation or forced driver binding was attempted.
+
+User then selected the connected device as USB controller and enabled Pixel USB
+tethering. Read-only observations: data_role=device, current_mode=ufp, connected=true,
+configured=true, current_functions=0x400, ncm0 UP at10.255.230.95/24, peer10.255.230.7.
+The older sys.usb.config property still reported none and sys.usb.state was empty;
+these properties were not authoritative for the active HAL-managed configuration.
+
+Exact packet check via existing wireless ADB:
+
+```sh
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 192.168.1.17:33101 shell ping -I ncm0 -c 5 -W 2 10.255.230.7
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 192.168.1.17:33101 shell ip neigh show dev ncm0
+```
+
+Result:5 transmitted,5 received,0% loss; RTT min/avg/max/mdev
+2.257/2.650/3.423/0.409ms. IPv4 neighbor REACHABLE on ncm0.
+Explicit interface selection prevents Wi-Fi from supplying this pass. This verifies
+a direct USB IP path on this pair, not TCP/UDP application throughput, tour audio,
+Wi-Fi Aware concurrency, offline tethering prerequisites or locked endurance.
+Tethering remains in the state enabled by the user; agent changed no USB/radio settings.

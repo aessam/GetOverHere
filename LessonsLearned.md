@@ -540,3 +540,14 @@ workload is not a synchronized fan-out test.
 tests. Requiring xcresult passedTests=1 caught this; the method selector needed `()`.
 The corrected loopback and physical fixtures passed. Raw results and limitations are
 in `benchmarks/2026-09-10/README.md`.
+
+## 93. USB role and active interface matter more than advertised configurations
+
+Pixel as host detected the iPhone and its Apple USB Ethernet configuration but created
+no network interface. After the user switched roles and enabled Pixel USB tethering,
+Pixel exposed ncm0 and exchanged five interface-bound pings with the iPhone, averaging
+2.650ms RTT. sys.usb.config still said none despite the working HAL-managed interface.
+Inspect actual USB roles, IP interfaces and forced-route packet delivery; neither a
+descriptor name nor a legacy property proves or disproves connectivity. This pair
+used a different iPhone than the earlier12mini benchmarks. Preserve that distinction
+and do not generalize an ICMP smoke pass into app throughput or Aware coexistence.
