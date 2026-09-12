@@ -11,7 +11,7 @@ nonisolated struct NearbyGuestRoute: Equatable, Sendable {
 
     init(adapterHost: String, transport: SessionTransportRoute, roomID: UUID, routeID: UUID) {
         precondition(adapterHost == "127.0.0.1")
-        precondition(transport == .bluetooth || transport == .wifiAware)
+        precondition(transport == .bluetooth || transport == .wifiAware || transport == .applePeer)
         self.adapterHost = adapterHost
         self.transport = transport
         self.roomID = roomID

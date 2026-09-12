@@ -14,6 +14,19 @@ struct DebugControlPanel: View {
                         .font(.caption)
                     Button("Stop Debug Control", role: .destructive) { app.debugControl?.stop() }
                 }
+                Section("Local gateway observation") {
+                    Text("Records the actual tour for 10 minutes without a Mac connection. Does not keep listeners awake or measure acoustic latency.")
+                        .font(.caption)
+                    Text(app.debugControl?.gatewayRecorder.state ?? "unavailable")
+                    Button("Record Current Tour (10 minutes)") {
+                        do { try app.debugControl?.recordGateway(seconds: 600) }
+                        catch { app.gateway.report(error) }
+                    }
+                    Button("Cancel Recording") { app.debugControl?.gatewayRecorder.cancel() }
+                    if let url = app.debugControl?.gatewayRecorder.evidenceURL {
+                        ShareLink("Export Gateway Evidence", item: url)
+                    }
+                }
             }
             .navigationTitle("Debug Control")
             .toolbar { Button("Done") { app.showDebugControl = false } }

@@ -2,6 +2,11 @@ package com.aessam.toursession.cli
 
 import com.aessam.toursession.AudioReadinessPayload
 import com.aessam.toursession.AudioReadinessStatus
+import com.aessam.toursession.GatewayPairingMessage
+import com.aessam.toursession.GatewayPairingRole
+import com.aessam.toursession.GatewayLaneRequest
+import com.aessam.toursession.GatewayLane
+import com.aessam.toursession.GatewayRoomDescriptor
 
 import com.aessam.toursession.TourSessionFixtures
 import com.aessam.toursession.RealtimeSequenceAudit
@@ -30,6 +35,17 @@ import kotlin.system.exitProcess
 fun main(arguments: Array<String>) {
     try {
         when (val command = arguments.firstOrNull()) {
+            "gateway-fixture" -> gatewayFixture()
+            "gateway-decode" -> {
+                require(arguments.size == 3)
+                println(when (arguments[1]) {
+                    "pairing" -> GatewayPairingMessage.decode(arguments[2].hexToByteArray()).encode().lowercaseHex()
+                    "lane" -> GatewayLaneRequest.decode(arguments[2].hexToByteArray()).encode().lowercaseHex()
+                    "descriptor" -> GatewayRoomDescriptor.decode(arguments[2].hexToByteArray()).encode().lowercaseHex()
+                    "qr" -> GatewayPairingMessage.fromQR(arguments[2]).qrText()
+                    else -> error("Unsupported gateway message kind")
+                })
+            }
             "audio-readiness-fixture" -> println(AudioReadinessPayload(
                 AudioReadinessStatus.PLAYING, 0x0102030405060708uL).encode().lowercaseHex())
             "bluetooth-v2-fixture" -> println(BluetoothRoomRecord(
@@ -151,4 +167,18 @@ fun main(arguments: Array<String>) {
 
 private fun fail(message: String): Nothing {
     throw IllegalArgumentException(message)
+}
+
+private fun gatewayFixture() {
+    val pairing = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")
+    val room = UUID.fromString("10213243-5465-7687-98a9-bacbdcedfe0f")
+    val guide = UUID.fromString("20314253-6475-8697-a8b9-cadbecfd0e1f")
+    val offer = GatewayPairingMessage(GatewayPairingRole.OFFER, pairing, room, guide, 121_000,
+        ByteArray(32) { 0x11 }, ByteArray(32) { 0x22 }, ByteArray(32) { 0x11 }, "10.255.230.7", 50_104)
+    val response = offer.copy(role = GatewayPairingRole.RESPONSE, certificateFingerprint = ByteArray(32) { 0x33 }, host = "", port = 0)
+    println(offer.encode().lowercaseHex()); println(response.encode().lowercaseHex())
+    println(offer.qrText()); println(response.qrText())
+    GatewayLane.entries.forEach { println(GatewayLaneRequest(pairing, room, if (it == GatewayLane.HUB_CONTROL) 0 else 1, it).encode().lowercaseHex()) }
+    println(GatewayRoomDescriptor(3, 5, BluetoothRoomRecord(room, guide, "Tour — جولة", false, true, 2),
+        byteArrayOf(4) + ByteArray(64) { 0x44 }).encode().lowercaseHex())
 }

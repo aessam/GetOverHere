@@ -1,5 +1,51 @@
 # GetOverHere — consolidated field acceptance
 
+## September 11 two-hub acceptance
+
+The current approved mode is specified in `GatewayImplementationPlan.md` (ADR-069).
+Two hubs only, either guide orientation, original guide authority, USB between
+hubs, Apple peer-to-peer iOS listeners and Aware Android listeners. Companion
+keep-awake is permitted; audience keep-awake cannot pass the lock gate. A qualified
+cap below30 is acceptable. No listener relays or invisible LAN/Bluetooth fallback.
+
+Physical gateway status: **NOT RUN**. Initial implementation preflight found both
+Pixels unreachable through their saved wireless ADB endpoints. The historical
+September10 Bluetooth/Aware measurements and September11 USB ping do not qualify
+the combined gateway. Do not erase them or relabel them as these test results.
+
+Use `scripts/verify_gateway_system.py` and its pinned manifest/evidence contract
+with the final coordinated builds. See `scripts/gateway_tools.md` for device
+preflight, authenticated app control, local recording and later evidence export.
+First chain: iPhone guide → USB → Android
+companion → Aware Android listener. Then add an iOS peer listener and reverse
+guide/companion roles. Required full-system minimum is two iPhones and two Androids.
+Retain hardware provenance, certificate rejection, per-leaf identity/readiness,
+exact asset resume and real microphone/acoustic evidence. Progress10min smoke →
+30min stress →90min walking, with the numerical targets from the approved plan.
+Exercise several minutes of silence/pause while listeners stay locked, then
+resume speech. Record both USB power directions. A controller-free test must not
+depend on debug keep-awake or silently route through the management network.
+
+### Current two-hub run, in one device session
+
+| ID | Exercise | Pass evidence |
+|---|---|---|
+| A13 | Record all four devices/build hashes; confirm actual USB data/power roles and wired addresses. Leave Wi-Fi/Bluetooth enabled, with no AP association during strict branch checks. | Correct artifacts, idle apps, physical route evidence; no management-network fallback. |
+| A14 | Create the room on the guide. Open Gateway setup, select the observed wired interface and show the public pairing QR. Companion scans it; guide scans the response and confirms; companion connects. | One original room/guide key, mutually authenticated wired connection. The two QR steps enroll hubs; they are not a mandatory guest room code. |
+| A15 | Join one Android over Aware and one iPhone over Apple peer-to-peer. Exercise open/locked/wrong-code/correct-code and edit/unlock. Speak, change slide/target, and add an uncached asset. | Both actual listeners receive authoritative state and speech. Connected, audio-ready and audible are recorded separately; all asset hashes match. |
+| A16 | Unplug/replug the hub cable during speech and an asset transfer; repeat with a changed wired address. Move a listener out of range/back and end a tour during recovery. | The guide-local branch stays up; companion withdraws on loss; no stale speech/key substitution; state and exact remaining asset bytes recover. Report native link restoration separately from playback recovery. |
+| A17 | Reverse guide/companion roles and repeat A14–A16. | Same application checks and route evidence in the other orientation, not an assumed symmetric result. |
+| A18 | Lock guide/listeners with real speech, several minutes of silence/pause, resumed speech, app switching and supported interruptions. Leave only the companion's explicit production keep-awake enabled. | Continuous actual listening/capture where required, genuine lock/lifecycle evidence, no debugger keep-awake substituted for a locked pass. |
+| A19 | Run10min smoke,30min stress, then90min walking with assets and weak-edge listeners. Increase audience only while measured gates pass; test cap−1/cap/cap+1. | Acoustic reference recording, per-listener loss/readiness, recovery, battery/thermal and bounded resources. Four phones do not establish thirty-listener capacity. |
+| A20 | End only the owned test tours/recorders/debug endpoints; export one evidence bundle with failures and reruns. | Cleanup verified; source/build/device manifest and PASS/FAIL/NOT RUN matrix retained. No secrets or unrequested radio restoration. |
+
+The user confirmed on September11 that physical devices will be available again
+after returning to the workstation. Do not request intermediate field runs or
+attempt phone installs while that restriction remains in effect.
+
+The older checklist below remains historical broader-route qualification. Its
+relay/mandatory30 target does not expand this approved two-hub scope.
+
 Status: **not executed**. September 8 coding uses host tests, iOS Simulator and Android emulator only; the user is away from physical devices. This checklist is for one later integrated candidate, not a request to test intermediate builds.
 
 The target is one guide plus 30 mixed listeners, outdoors, no router or Internet dependency. Both radios may remain enabled. System pairing is allowed; the optional editable **Lock Room with Code** remains separate. LAN is the preserved fallback, not a replacement requirement.
@@ -48,7 +94,7 @@ Do not start an automatic retry loop on pairing failures. Capture profile eligib
 ```text
 Candidate commit/builds:
 Device model + full OS + guide/listener role:
-Row A1–A12:
+Row A13–A20 (current two-hub run), or A1–A12 (historical route checklist):
 Expected / observed:
 Actual route (including any fallback):
 AP association / Wi-Fi radio / Bluetooth state:

@@ -42,6 +42,9 @@ enum NearbyConnectionError: Error, LocalizedError {
 @MainActor
 final class NearbyTCPConnection: NearbyByteConnection {
     private let connection: NWConnection
+    var currentPath: NWPath? { connection.currentPath }
+    private(set) var bytesRead: UInt64 = 0
+    private(set) var bytesWritten: UInt64 = 0
     init(_ connection: NWConnection) {
         self.connection = connection
         connection.start(queue: .main)
@@ -55,12 +58,14 @@ final class NearbyTCPConnection: NearbyByteConnection {
         return NWParameters(tls: nil, tcp: tcp)
     }
     func read(maximum: Int) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
+        let bytes: Data = try await withCheckedThrowingContinuation { continuation in
             connection.receive(minimumIncompleteLength: 1, maximumLength: maximum) { data, _, _, error in
                 if let error { continuation.resume(throwing: error) }
                 else { continuation.resume(returning: data ?? Data()) }
             }
         }
+        bytesRead &+= UInt64(bytes.count)
+        return bytes
     }
     func write(_ bytes: Data) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -69,6 +74,7 @@ final class NearbyTCPConnection: NearbyByteConnection {
                 else { continuation.resume() }
             })
         }
+        bytesWritten &+= UInt64(bytes.count)
     }
     func close() { connection.cancel() }
 }
@@ -159,6 +165,8 @@ final class NearbySocketBridge {
     private let budget: NearbyConnectionBudget
     private let localConnect: @MainActor (UInt16) -> any NearbyByteConnection
     private let guestPort: @MainActor (NearbyLaneRequest.Lane) -> UInt16?
+    var guideConnector: (any GuideLaneConnector)?
+    var audioResidenceMilliseconds: UInt64 = NearbyRealtimeQueue.lifetimeMilliseconds
 
     var guestAdaptersReady: Bool {
         listeners.count == 4 && listeners.allSatisfy {
@@ -208,14 +216,21 @@ final class NearbySocketBridge {
                     throw NearbyConnectionError.rejected
                 }
                 try budget.promote(id, lane: request.lane)
-                let local = localConnect(port)
+                let local: any NearbyByteConnection
+                if let guideConnector {
+                    local = try await guideConnector.connect(lane: request.lane, roomID: request.roomID)
+                } else { local = localConnect(port) }
+                guard !Task.isCancelled, connections[id] != nil else {
+                    local.close(); throw CancellationError()
+                }
                 connections[id]?.append(local)
                 try await remote.write(Data([0]))
                 deadline.cancel()
                 let realtime = request.lane == .realtime
                 let framed: any NearbyByteConnection = realtime ? NearbyRealtimeConnection(remote) : remote
                 if realtime { connections[id]?.append(framed) }
-                try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission)
+                try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission,
+                    audioResidenceMilliseconds: audioResidenceMilliseconds)
             } catch {
                 if !Task.isCancelled { report(error) }
             }
@@ -327,12 +342,13 @@ final class NearbySocketBridge {
         }
     }
 
-    private static func pump(_ first: any NearbyByteConnection, _ second: any NearbyByteConnection, realtime: Bool,
-                             drainAdmissionReply: Bool = false) async throws {
+    static func pump(_ first: any NearbyByteConnection, _ second: any NearbyByteConnection, realtime: Bool,
+                             drainAdmissionReply: Bool = false,
+                             audioResidenceMilliseconds: UInt64 = NearbyRealtimeQueue.lifetimeMilliseconds) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { if realtime { try await copyRealtime(first, second) } else { try await copy(first, second) } }
+            group.addTask { if realtime { try await copyRealtime(first, second, lifetime: audioResidenceMilliseconds) } else { try await copy(first, second) } }
             group.addTask {
-                if realtime { try await copyRealtime(second, first) } else { try await copy(second, first) }
+                if realtime { try await copyRealtime(second, first, lifetime: audioResidenceMilliseconds) } else { try await copy(second, first) }
                 // Native close may discard queued writes. Let the admitted guest receive
                 // the final reply and close first; never retain an abandoned peer forever.
                 if drainAdmissionReply {
@@ -346,8 +362,8 @@ final class NearbySocketBridge {
         }
     }
 
-    private static func copyRealtime(_ source: any NearbyByteConnection, _ destination: any NearbyByteConnection) async throws {
-        let queue = NearbyFramePipe()
+    private static func copyRealtime(_ source: any NearbyByteConnection, _ destination: any NearbyByteConnection, lifetime: UInt64) async throws {
+        let queue = NearbyFramePipe(lifetime: lifetime)
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 do {
@@ -435,7 +451,8 @@ private final class NearbyOwnedListener {
 
 @MainActor
 private final class NearbyFramePipe {
-    private var backlog = NearbyRealtimeQueue()
+    private var backlog: NearbyRealtimeQueue
+    init(lifetime: UInt64) { backlog = NearbyRealtimeQueue(lifetimeMilliseconds: lifetime) }
     private var waiter: CheckedContinuation<Void, Never>?
     private var ended = false
     private var now: UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }

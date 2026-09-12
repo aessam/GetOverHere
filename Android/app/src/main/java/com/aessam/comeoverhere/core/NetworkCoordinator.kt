@@ -24,6 +24,7 @@ class NetworkCoordinator(
     )
 
     var activeAudioPlane: AudioPlane? = null; private set
+    fun captureDiagnostics(): Map<String, Any> = (activeAudioPlane as? UDPAudioPlane)?.captureDiagnostics() ?: emptyMap()
 
     val hasIosPeers: Boolean
         get() = controlPlane.connectedPeers.value.any { it.platform == PeerInfo.Platform.IOS }

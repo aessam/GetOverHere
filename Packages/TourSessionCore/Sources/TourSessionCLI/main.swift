@@ -10,6 +10,23 @@ enum TourSessionCLI {
         }
 
         switch command {
+        case "gateway-fixture":
+            do { try gatewayFixture() }
+            catch { fail("gateway fixture failed: \(String(describing: type(of: error)))") }
+        case "gateway-decode":
+            guard arguments.count == 3 else { fail("gateway-decode requires pairing|lane|descriptor HEX or qr TEXT") }
+            do {
+                if arguments[1] == "qr" { print(try GatewayPairingMessage.decodeQR(arguments[2]).qrString) }
+                else {
+                    let bytes = try Data(hex: arguments[2])
+                    switch arguments[1] {
+                    case "pairing": print(try GatewayPairingMessage.decode(bytes).encode().lowercaseHex)
+                    case "lane": print(try GatewayLaneRequest.decode(bytes).encode().lowercaseHex)
+                    case "descriptor": print(try GatewayRoomDescriptor.decode(bytes).encode().lowercaseHex)
+                    default: fail("unknown gateway record kind")
+                    }
+                }
+            } catch { fail("gateway rejected: \(String(describing: type(of: error)))") }
         case "bluetooth-lanes-fixture":
             print(try BluetoothLanePSMs(admission: 128, realtime: 129, control: 256, asset: 65535).encode().lowercaseHex)
         case "audio-readiness-fixture":
@@ -101,6 +118,34 @@ enum TourSessionCLI {
         default:
             fail("unknown command: \(command)")
         }
+    }
+
+    private static func gatewayFixture() throws {
+        let pairing = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!
+        let room = UUID(uuidString: "10213243-5465-7687-98A9-BACBDCEDFE0F")!
+        let guide = UUID(uuidString: "20314253-6475-8697-A8B9-CADBECFD0E1F")!
+        let offer = try GatewayPairingMessage(role: .offer, pairingID: pairing, roomID: room, guideID: guide,
+                                             expiresAtMilliseconds: 121_000,
+                                             certificateFingerprint: Data(repeating: 0x11, count: 32),
+                                             guideKeyFingerprint: Data(repeating: 0x22, count: 32),
+                                             offerCertificateFingerprint: Data(repeating: 0x11, count: 32),
+                                             host: "10.255.230.7", port: GatewayProtocol.servicePort)
+        let response = try GatewayPairingMessage(role: .response, pairingID: pairing, roomID: room, guideID: guide,
+                                                expiresAtMilliseconds: 121_000,
+                                                certificateFingerprint: Data(repeating: 0x33, count: 32),
+                                                guideKeyFingerprint: offer.guideKeyFingerprint,
+                                                offerCertificateFingerprint: offer.certificateFingerprint,
+                                                host: "", port: 0)
+        print(offer.encode().lowercaseHex); print(response.encode().lowercaseHex)
+        print(offer.qrString); print(response.qrString)
+        for lane in GatewayLaneRequest.Lane.allCases {
+            print(try GatewayLaneRequest(pairingID: pairing, roomID: room,
+                                         generation: lane == .hubControl ? 0 : 1, lane: lane).encode().lowercaseHex)
+        }
+        let record = BluetoothRoomRecord(roomID: room, guideID: guide, name: "Tour — جولة", isAndroid: false,
+                                         isLocked: true, admissionVersion: 2)
+        print(try GatewayRoomDescriptor(generation: 3, recordRevision: 5, record: record,
+                                        guidePublicKey: Data([4]) + Data(repeating: 0x44, count: 64)).encode().lowercaseHex)
     }
 
     private static func roomAdmissionV2(_ arguments: [String]) throws {

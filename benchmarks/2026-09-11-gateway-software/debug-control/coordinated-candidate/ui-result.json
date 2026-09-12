@@ -1,0 +1,11 @@
+{
+  "native_tests": {
+    "executed": 22,
+    "failed": 0,
+    "passed": 22,
+    "skipped": 0
+  },
+  "qualification": "No physical USB, Aware, Apple peer or acoustic claim",
+  "scope": "emulator_actual_UI_client_and_recorder_only",
+  "status": "PASS"
+}

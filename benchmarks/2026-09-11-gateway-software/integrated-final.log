@@ -1,0 +1,753 @@
+ANDROID_JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home
+XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer
+[1/9] Swift protocol and registry tests
+Building for debugging...
+[1 / 1]
+Build complete! (0.26 sec)
+Test Suite 'All tests' started at 2026-09-11 20:00:37.930.
+Test Suite 'All tests' passed at 2026-09-11 20:00:37.931.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite RoomAdmissionV2Tests started.
+􀟈  Suite NearbyRealtimeQueueTests started.
+􀟈  Suite BluetoothLanePSMsTests started.
+􀟈  Suite "GOH2 session protocol" started.
+􀟈  Suite "Audio readiness wire contract" started.
+􀟈  Suite SessionCapacityTopologyTests started.
+􀟈  Suite GuideAssetScheduleTests started.
+􀟈  Suite RoomAdmissionTests started.
+􀟈  Suite GatewayProtocolTests started.
+􀟈  Test roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test possessionProofBindsEveryCredentialByteAndFreshTranscript() started.
+􀟈  Test rejectsWrongSelectedGuideAndSignerSession() started.
+􀟈  Test messagesRejectTruncationTrailingBytesAndEveryReplyMutation() started.
+􀟈  Suite SignedGuideFrameTests started.
+􀟈  Test reliableOverflowRejectsInsteadOfLosingHandshake() started.
+􀟈  Test "Handshake fixture is stable" started.
+􀟈  Suite NearbyLaneRequestTests started.
+􀟈  Test dropsStaleAudioButPreservesHandshakeAndRecentFrames() started.
+􀟈  Test rejectsDowngradeWrongCodeAndReplayedTranscript() started.
+􀟈  Test "Plaintext version mismatch carries both majors" started.
+􀟈  Suite BluetoothRoomRecordTests started.
+􀟈  Test "Authentication proofs are stable and reject another tour code" started.
+􀟈  Test "Replay window rejects an accepted frame after sequence eviction" started.
+􀟈  Test "Golden hello frame is stable" started.
+􀟈  Test "Encrypted frame authenticates and preserves the received minor version" started.
+􀟈  Suite "Participant registry" started.
+􀟈  Test "Encoded audio frame and codec negotiation are deterministic" started.
+􀟈  Test "Tour pack ordering is UTF-8 byte order with exact dedup" started.
+􀟈  Test pinSurvivesReconnectAndRejectsAnyIdentityChangeUntilExplicitEnd() started.
+􀟈  Test "State fixture describes every control and asset kind" started.
+􀟈  Test "Credential stretch is a PBKDF2 wire contract" started.
+􀟈  Test "Message kinds cannot enter the wrong lane" started.
+􀟈  Test "Slide manifest ordering is UTF-8 byte order with exact dedup" started.
+􀟈  Test rejectsUnknownAndNonCanonicalPayloads() started.
+􀟈  Test "Realtime audio accumulation and jitter are bounded" started.
+􀟈  Test everyStateAndRevisionRoundTrips() started.
+􀟈  Test "UTF-8 hello roundtrips" started.
+􀟈  Test "Authentication challenge and welcome roundtrip" started.
+􀟈  Test "Encrypted frame rejects tampering and another tour credential" started.
+􀟈  Test "Clocked playout conceals a single gap and resyncs to the oldest frame" started.
+􀟈  Test "Encrypted frame is route-independent, authenticated, and replay-detectable" started.
+􀟈  Test rejectsTruncatedUnknownDuplicateAndZeroEndpoints() started.
+􀟈  Test promotionDuplicateParentsDepthAndStaleRouteCallbacksAreBounded() started.
+􀟈  Test invalidCapacitySelfAttachmentAndUnboundedLeasesReject() started.
+􀟈  Test "Realtime audio frame seals deterministically" started.
+􀟈  Test sharedFixtureAndLaneMapping() started.
+􀟈  Test "Wi-Fi Aware announcement has stable cross-platform bytes" started.
+􀟈  Test "Encrypted protocol rejects legacy majors explicitly" started.
+􀟈  Test case passing 1 argument code → nil to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test leaseRenewalExpiryAndSubtreeRemovalRejectResurrection() started.
+􀟈  Test fairnessPrecedesPerMemberPriorityAndFIFOTies() started.
+􀟈  Test separatedMetadataFixture() started.
+􀟈  Test "Truncated payload fails loudly" started.
+􀟈  Test explicitBluetoothRoutePreservesExistingOrderingAndRawValues() started.
+􀟈  Test memberLimitFairThirtyMemberRoundAndUnknownAdmission() started.
+􀟈  Test aggregateBudgetRetainsFractionalCreditAndCapsIdleBurst() started.
+􀟈  Test boundedWakeAndNoSmallRequestStarvationBypass() started.
+􀟈  Test thirtyListenersIncludeFiveRelaysAndTwentyFiveLeaves() started.
+􀟈  Test softwareBudgetIsNotRadioCapacityAndUpstreamIsSubtractedOnce() started.
+􀟈  Test dedupAndLimitIncludeInflightAndStaleCompletionCannotReleaseReplacement() started.
+􀟈  Test case passing 1 argument code → "My-Tour!42" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test removingNextMemberPreservesFairnessAndResetCancelsAllWork() started.
+􀟈  Test case passing 1 argument code → "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test case passing 1 argument code → "1234" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test explicitDirectStarAndUnknownCapacityNeverInventRelays() started.
+􀟈  Test invalidInputsAndMonotonicRegressionAreRejectedWithoutStateLoss() started.
+􀟈  Test leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() started.
+􀟈  Test invalidCodes(code:) started.
+􀟈  Test roundtrip(code:) started.
+􀟈  Test strictPolicyCannotUseLANOrBluetooth() started.
+􀟈  Test rejectsWrongCodeAndReplay() started.
+􀟈  Test everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test unknownLanesAndWrongGenerationFail() started.
+􀟈  Test signaturePreservesCiphertextAndRejectsEverySingleByteChange() started.
+􀟈  Test lifetimeAndHostShapeAreBounded() started.
+􀟈  Test pinnedKeyAndGuideAndSessionAreMandatory() started.
+􀟈  Test allTruncationsAndTrailingBytesFail() started.
+􀟈  Test pairingBinaryAndQRRoundtrip() started.
+􀟈  Test descriptorKeepsOriginAndRejectsLegacyOrTruncation() started.
+􀟈  Test gatewayQueueDropsByLocalResidenceWithoutChangingBytes() started.
+􀟈  Test deterministicHundredDescriptorRoundtrips() started.
+􀟈  Test responseBindsOfferAndCertificate() started.
+􀟈  Test case passing 1 argument legacyMajor → 2 to "Encrypted protocol rejects legacy majors explicitly" started.
+􀟈  Test case passing 1 argument legacyMajor → 3 to "Encrypted protocol rejects legacy majors explicitly" started.
+􀟈  Test rejectsMalformedAndUnscopedApplicationRequests() started.
+􀟈  Test sharedFixtureAndEveryLaneRoundtrip() started.
+􀟈  Test malformedRecordsFailClosed() started.
+􁁛  Test reliableOverflowRejectsInsteadOfLosingHandshake() passed after 0.028 seconds.
+􀟈  Test sharedFixtureAndRoundtrips() started.
+􀟈  Test "Guide is not counted as a listener" started.
+􀟈  Test "Recovery simulation covers late join, reconnect, missing assets, and target replacement" started.
+􀟈  Test "Reconnect replaces the old connection without incrementing listeners" started.
+􀟈  Test "Target coordinates reject invalid geographic boundaries" started.
+􀟈  Test "Target guidance is calculated only from local inputs" started.
+􀟈  Test "Realtime audit detects loss, duplicate, and reorder" started.
+􀟈  Test "Presentation, bearing, target, and tour pack roundtrip" started.
+􁁛  Test "Golden hello frame is stable" passed after 0.028 seconds.
+􀟈  Test scaleAndChurn(count:) started.
+􀟈  Test "Visual focus is authoritative, versioned, and reconnectable" started.
+􀟈  Test "Target snapshot survives 100 deterministic geographic roundtrips" started.
+􀟈  Test "One route lease owns every session lane" started.
+􀟈  Test "Hybrid routes prefer LAN and fall back to Wi-Fi Aware" started.
+􁁛  Test dropsStaleAudioButPreservesHandshakeAndRecentFrames() passed after 0.028 seconds.
+􁁛  Test "Plaintext version mismatch carries both majors" passed after 0.028 seconds.
+􁁛  Test "Handshake fixture is stable" passed after 0.028 seconds.
+􁁛  Test "Tour pack ordering is UTF-8 byte order with exact dedup" passed after 0.028 seconds.
+􁁛  Test "Message kinds cannot enter the wrong lane" passed after 0.028 seconds.
+􁁛  Test rejectsWrongSelectedGuideAndSignerSession() passed after 0.029 seconds.
+􀟈  Test case passing 1 argument code → "" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "123" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "ab cd" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "é123" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" to invalidCodes(code:) started.
+􁁛  Test "Realtime audio accumulation and jitter are bounded" passed after 0.029 seconds.
+􁁛  Test "Slide manifest ordering is UTF-8 byte order with exact dedup" passed after 0.029 seconds.
+􀟈  Test case passing 1 argument code → nil to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "1234" to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "My-Tour!42" to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" to roundtrip(code:) started.
+􁁛  Test "UTF-8 hello roundtrips" passed after 0.120 seconds.
+􁁛  Test everyStateAndRevisionRoundTrips() passed after 0.120 seconds.
+􁁛  Test "Authentication challenge and welcome roundtrip" passed after 0.120 seconds.
+􁁛  Test "Clocked playout conceals a single gap and resyncs to the oldest frame" passed after 0.120 seconds.
+􀟈  Test case passing 1 argument lane → .hubControl to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .realtime to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .control to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .asset to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .admission to everyLaneUsesOnlyFixedDestination(_:) started.
+􁁛  Test rejectsUnknownAndNonCanonicalPayloads() passed after 0.125 seconds.
+􁁛  Test "Encoded audio frame and codec negotiation are deterministic" passed after 0.125 seconds.
+􁁛  Test promotionDuplicateParentsDepthAndStaleRouteCallbacksAreBounded() passed after 0.130 seconds.
+􁁛  Test invalidCapacitySelfAttachmentAndUnboundedLeasesReject() passed after 0.130 seconds.
+􁁛  Test rejectsTruncatedUnknownDuplicateAndZeroEndpoints() passed after 0.130 seconds.
+􁁛  Test pinSurvivesReconnectAndRejectsAnyIdentityChangeUntilExplicitEnd() passed after 0.131 seconds.
+􁁛  Test sharedFixtureAndLaneMapping() passed after 0.131 seconds.
+􁁛  Test "Wi-Fi Aware announcement has stable cross-platform bytes" passed after 0.132 seconds.
+􁁛  Test messagesRejectTruncationTrailingBytesAndEveryReplyMutation() passed after 0.132 seconds.
+􁁛  Test leaseRenewalExpiryAndSubtreeRemovalRejectResurrection() passed after 0.132 seconds.
+􁁛  Test possessionProofBindsEveryCredentialByteAndFreshTranscript() passed after 0.132 seconds.
+􁁛  Test explicitBluetoothRoutePreservesExistingOrderingAndRawValues() passed after 0.132 seconds.
+􁁛  Test separatedMetadataFixture() passed after 0.132 seconds.
+􁁛  Test "Truncated payload fails loudly" passed after 0.132 seconds.
+􁁛  Test fairnessPrecedesPerMemberPriorityAndFIFOTies() passed after 0.132 seconds.
+􁁛  Test memberLimitFairThirtyMemberRoundAndUnknownAdmission() passed after 0.132 seconds.
+􁁛  Test aggregateBudgetRetainsFractionalCreditAndCapsIdleBurst() passed after 0.132 seconds.
+􁁛  Test boundedWakeAndNoSmallRequestStarvationBypass() passed after 0.132 seconds.
+􁁛  Test thirtyListenersIncludeFiveRelaysAndTwentyFiveLeaves() passed after 0.132 seconds.
+􁁛  Test softwareBudgetIsNotRadioCapacityAndUpstreamIsSubtractedOnce() passed after 0.133 seconds.
+􁁛  Test dedupAndLimitIncludeInflightAndStaleCompletionCannotReleaseReplacement() passed after 0.132 seconds.
+􁁛  Test removingNextMemberPreservesFairnessAndResetCancelsAllWork() passed after 0.133 seconds.
+􁁛  Test explicitDirectStarAndUnknownCapacityNeverInventRelays() passed after 0.132 seconds.
+􁁛  Test invalidInputsAndMonotonicRegressionAreRejectedWithoutStateLoss() passed after 0.132 seconds.
+􀟈  Test case passing 1 argument count → 1 to scaleAndChurn(count:) started.
+􀟈  Test case passing 1 argument count → 8 to scaleAndChurn(count:) started.
+􀟈  Test case passing 1 argument count → 20 to scaleAndChurn(count:) started.
+􀟈  Test case passing 1 argument count → 50 to scaleAndChurn(count:) started.
+􁁛  Test leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() passed after 0.132 seconds.
+􁁛  Test invalidCodes(code:) with 5 test cases passed after 0.132 seconds.
+􁁛  Test "Encrypted protocol rejects legacy majors explicitly" with 2 test cases passed after 0.135 seconds.
+􁁛  Test "Encrypted frame authenticates and preserves the received minor version" passed after 0.135 seconds.
+􁁛  Test strictPolicyCannotUseLANOrBluetooth() passed after 0.132 seconds.
+􁁛  Test everyLaneUsesOnlyFixedDestination(_:) with 5 test cases passed after 0.132 seconds.
+􁁛  Test "Replay window rejects an accepted frame after sequence eviction" passed after 0.135 seconds.
+􁁛  Test unknownLanesAndWrongGenerationFail() passed after 0.132 seconds.
+􁁛  Test lifetimeAndHostShapeAreBounded() passed after 0.131 seconds.
+􁁛  Test "Encrypted frame is route-independent, authenticated, and replay-detectable" passed after 0.135 seconds.
+􁁛  Test allTruncationsAndTrailingBytesFail() passed after 0.131 seconds.
+􁁛  Test pairingBinaryAndQRRoundtrip() passed after 0.127 seconds.
+􁁛  Test descriptorKeepsOriginAndRejectsLegacyOrTruncation() passed after 0.127 seconds.
+􁁛  Test gatewayQueueDropsByLocalResidenceWithoutChangingBytes() passed after 0.127 seconds.
+􁁛  Test deterministicHundredDescriptorRoundtrips() passed after 0.125 seconds.
+􁁛  Test responseBindsOfferAndCertificate() passed after 0.125 seconds.
+􁁛  Test rejectsMalformedAndUnscopedApplicationRequests() passed after 0.109 seconds.
+􁁛  Test sharedFixtureAndEveryLaneRoundtrip() passed after 0.108 seconds.
+􁁛  Test malformedRecordsFailClosed() passed after 0.106 seconds.
+􁁛  Suite NearbyRealtimeQueueTests passed after 0.135 seconds.
+􁁛  Test sharedFixtureAndRoundtrips() passed after 0.106 seconds.
+􁁛  Test "Guide is not counted as a listener" passed after 0.106 seconds.
+􁁛  Test "Recovery simulation covers late join, reconnect, missing assets, and target replacement" passed after 0.106 seconds.
+􁁛  Test "Reconnect replaces the old connection without incrementing listeners" passed after 0.106 seconds.
+􁁛  Test "Target coordinates reject invalid geographic boundaries" passed after 0.106 seconds.
+􁁛  Test "Target guidance is calculated only from local inputs" passed after 0.106 seconds.
+􁁛  Test "Realtime audit detects loss, duplicate, and reorder" passed after 0.106 seconds.
+􁁛  Test "Presentation, bearing, target, and tour pack roundtrip" passed after 0.106 seconds.
+􁁛  Test scaleAndChurn(count:) with 4 test cases passed after 0.106 seconds.
+􁁛  Test "Visual focus is authoritative, versioned, and reconnectable" passed after 0.106 seconds.
+􁁛  Test "Target snapshot survives 100 deterministic geographic roundtrips" passed after 0.106 seconds.
+􁁛  Test "One route lease owns every session lane" passed after 0.106 seconds.
+􁁛  Test "Hybrid routes prefer LAN and fall back to Wi-Fi Aware" passed after 0.106 seconds.
+􁁛  Suite "Audio readiness wire contract" passed after 0.135 seconds.
+􁁛  Suite SessionCapacityTopologyTests passed after 0.135 seconds.
+􁁛  Suite BluetoothLanePSMsTests passed after 0.135 seconds.
+􁁛  Suite GuideAssetScheduleTests passed after 0.135 seconds.
+􁁛  Suite GatewayProtocolTests passed after 0.135 seconds.
+􁁛  Suite NearbyLaneRequestTests passed after 0.135 seconds.
+􁁛  Suite BluetoothRoomRecordTests passed after 0.135 seconds.
+􁁛  Suite "Participant registry" passed after 0.135 seconds.
+􁁛  Test "Credential stretch is a PBKDF2 wire contract" passed after 0.203 seconds.
+􁁛  Test "State fixture describes every control and asset kind" passed after 0.231 seconds.
+􁁛  Test pinnedKeyAndGuideAndSessionAreMandatory() passed after 0.229 seconds.
+􁁛  Test signaturePreservesCiphertextAndRejectsEverySingleByteChange() passed after 0.246 seconds.
+􁁛  Suite SignedGuideFrameTests passed after 0.249 seconds.
+􁁛  Test "Encrypted frame rejects tampering and another tour credential" passed after 0.296 seconds.
+􁁛  Test "Realtime audio frame seals deterministically" passed after 0.296 seconds.
+􁁛  Test roundtrip(code:) with 4 test cases passed after 0.322 seconds.
+􁁛  Test roundtripBindsMediaCredentialAndSigningIdentity(code:) with 4 test cases passed after 0.349 seconds.
+􁁛  Test rejectsDowngradeWrongCodeAndReplayedTranscript() passed after 0.387 seconds.
+􁁛  Suite RoomAdmissionV2Tests passed after 0.387 seconds.
+􁁛  Test "Authentication proofs are stable and reject another tour code" passed after 0.413 seconds.
+􁁛  Suite "GOH2 session protocol" passed after 0.413 seconds.
+􁁛  Test rejectsWrongCodeAndReplay() passed after 0.413 seconds.
+􁁛  Suite RoomAdmissionTests passed after 0.416 seconds.
+􁁛  Test run with 81 tests in 13 suites passed after 0.416 seconds.
+Building for debugging...
+[Computing dependencies]
+[1 / 5]
+Build complete! (0.60 sec)
+Test Suite 'All tests' started at 2026-09-11 20:00:39.790.
+Test Suite 'All tests' passed at 2026-09-11 20:00:39.791.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite LocalLinkSecurityTests started.
+􀟈  Suite LocalLinkTLSTests started.
+􀟈  Test invalidPinCannotConfigureTLS() started.
+􀟈  Test generatedIdentityMatchesKeyAndPin() started.
+􀟈  Test mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test renewingCertificateRequiresNewPinButRestoringDoesNot() started.
+􀟈  Test case passing 1 argument mode → .valid to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test generatedIdentityMatchesKeyAndPin() passed after 0.005 seconds.
+􁁛  Test invalidPinCannotConfigureTLS() passed after 0.005 seconds.
+􁁛  Test renewingCertificateRequiresNewPinButRestoringDoesNot() passed after 0.005 seconds.
+􁁛  Suite LocalLinkSecurityTests passed after 0.005 seconds.
+􀟈  Test case passing 1 argument mode → .wrongServerPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .wrongClientPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .missingClientCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .expiredServerCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test mutualTLSRequiresBothExpectedValidIdentities(_:) with 5 test cases passed after 0.034 seconds.
+􁁛  Suite LocalLinkTLSTests passed after 0.034 seconds.
+􁁛  Test run with 4 tests in 2 suites passed after 0.034 seconds.
+[2/9] Kotlin protocol and registry tests
+> Task :tour-session-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-core:compileKotlin UP-TO-DATE
+> Task :tour-session-core:compileJava NO-SOURCE
+> Task :tour-session-core:processResources NO-SOURCE
+> Task :tour-session-core:classes UP-TO-DATE
+> Task :tour-session-core:jar UP-TO-DATE
+> Task :tour-session-core:compileTestKotlin UP-TO-DATE
+> Task :tour-session-core:compileTestJava NO-SOURCE
+> Task :tour-session-core:processTestResources NO-SOURCE
+> Task :tour-session-core:testClasses UP-TO-DATE
+> Task :tour-session-core:test UP-TO-DATE
+> Task :tour-session-cli:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-cli:compileKotlin UP-TO-DATE
+> Task :tour-session-cli:compileJava NO-SOURCE
+> Task :tour-session-cli:processResources NO-SOURCE
+> Task :tour-session-cli:classes UP-TO-DATE
+> Task :tour-session-cli:jar UP-TO-DATE
+> Task :tour-session-cli:startScripts UP-TO-DATE
+> Task :tour-session-cli:installDist UP-TO-DATE
+
+BUILD SUCCESSFUL in 687ms
+8 actionable tasks: 8 up-to-date
+ok Swift→Kotlin open length=0
+ok Swift→Kotlin locked length=4
+ok Swift→Kotlin locked length=10
+ok Swift→Kotlin locked length=64
+ok Kotlin→Swift open length=0
+ok Kotlin→Swift locked length=4
+ok Kotlin→Swift locked length=10
+ok Kotlin→Swift locked length=64
+Room admission parity passed: 8/8 real key exchanges
+ok Swift→Kotlin open admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin rejected v1-version
+ok Swift→Kotlin rejected wrong-guide
+ok Swift→Kotlin rejected reply-tamper
+ok Swift→Kotlin rejected frame-tamper
+ok Kotlin→Swift open admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift rejected v1-version
+ok Kotlin→Swift rejected wrong-guide
+ok Kotlin→Swift rejected reply-tamper
+ok Kotlin→Swift rejected frame-tamper
+Room admission-v2 parity passed: 8 real key exchanges + 8 explicit rejections
+Swift→Kotlin: 8/8 real signatures; changed/truncated packets rejected
+Kotlin→Swift: 8/8 real signatures; changed/truncated packets rejected
+Guide signature parity passed; app bootstrap and relay integration remain separate
+Gateway protocol parity passed: 10 exact fixture lines; 262/262 roundtrip/rejection cases; 0 skipped. No physical qualification claim.
+[3/9] Exact Swift/Kotlin wire bytes
+[4/9] Cross-language decode and participant churn
+[5/9] Realtime loss, duplicate, and reorder audit
+[6/9] Encrypted production session-path audit
+Encrypted session-path audit passed
+[7/9] Android API-floor and permission lint
+WARNING: We recommend using a newer Android Gradle plugin to use compile SDK version 37.2
+
+This Android Gradle plugin (8.13.2) was tested up to compile SDK version 36.1.
+
+You are strongly encouraged to update your project to use a newer
+Android Gradle plugin that has been tested with compile SDK version 37.2.
+
+If you are already using the latest version of the Android Gradle plugin,
+you may need to wait until a newer version with support for compile SDK version 37.2 is available.
+
+For more information refer to the compatibility table:
+https://d.android.com/r/tools/api-level-support
+
+To suppress this warning, add/update
+    android.suppressUnsupportedCompileSdk=37.2
+to this project's gradle.properties.
+> Task :tour-session-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-core:compileKotlin UP-TO-DATE
+> Task :tour-session-core:compileJava NO-SOURCE
+> Task :tour-session-core:processResources NO-SOURCE
+> Task :tour-session-core:classes UP-TO-DATE
+> Task :tour-session-core:jar UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:generateDebugAndroidTestResValues UP-TO-DATE
+> Task :app:generateDebugAndroidTestLintModel UP-TO-DATE
+> Task :app:extractProguardFiles UP-TO-DATE
+> Task :app:generateDebugLintReportModel UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:generateDebugUnitTestLintModel UP-TO-DATE
+> Task :app:lintAnalyzeDebug UP-TO-DATE
+> Task :app:lintAnalyzeDebugAndroidTest UP-TO-DATE
+> Task :app:lintAnalyzeDebugUnitTest UP-TO-DATE
+> Task :app:lintReportDebug UP-TO-DATE
+> Task :app:lintDebug
+
+BUILD SUCCESSFUL in 600ms
+30 actionable tasks: 1 executed, 29 up-to-date
+[8/9] Android app integration, TCP loopback, and APK
+..Preflight passed: emulator only
+.....usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: choose two distinct physical USB serials
+usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: choose two distinct physical USB serials
+usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: choose two distinct physical USB serials
+..usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: millis must be 100..30000 and rounds 1..5
+usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: millis must be 100..30000 and rounds 1..5
+usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: millis must be 100..30000 and rounds 1..5
+usage: test_benchmark_android_aware.py [-h] [--guide GUIDE] [--guest GUEST]
+                                       [--emulator EMULATOR]
+                                       [--profile {bulk,tiny}]
+                                       [--millis MILLIS] [--rounds ROUNDS]
+                                       [--reuse-installed] [--preflight-only]
+                                       [--smoke-only]
+test_benchmark_android_aware.py: error: argument --profile: invalid choice: 'udp' (choose from bulk, tiny)
+...
+----------------------------------------------------------------------
+Ran 12 tests in 0.002s
+
+OK
+test_fft_roundtrip_and_normalized_peak (test_gateway_tools.AcousticAnalyzerTests.test_fft_roundtrip_and_normalized_peak) ... ok
+test_known_wav_delays_and_inter_listener_skew (test_gateway_tools.AcousticAnalyzerTests.test_known_wav_delays_and_inter_listener_skew) ... ok
+test_percentiles_and_channel_validation (test_gateway_tools.AcousticAnalyzerTests.test_percentiles_and_channel_validation) ... ok
+test_silent_nonfinite_ambiguous_and_weak_samples_rejected (test_gateway_tools.AcousticAnalyzerTests.test_silent_nonfinite_ambiguous_and_weak_samples_rejected) ... ok
+test_android_release_excludes_all_debug_classes (test_gateway_tools.AndroidControlClientTests.test_android_release_excludes_all_debug_classes) ... ok
+test_hmac_envelope_matches_swift_protocol_and_id (test_gateway_tools.AndroidControlClientTests.test_hmac_envelope_matches_swift_protocol_and_id) ... ok
+test_rejects_expired_or_bad_credentials (test_gateway_tools.AndroidControlClientTests.test_rejects_expired_or_bad_credentials) ... ok
+test_inventory_is_read_only_and_not_a_full_preflight (test_gateway_tools.AndroidProbeTests.test_inventory_is_read_only_and_not_a_full_preflight) ... ok
+test_modern_tilde_apk_path_hash_is_verified (test_gateway_tools.AndroidProbeTests.test_modern_tilde_apk_path_hash_is_verified) ... ok
+test_actual_loopback_roundtrip_with_duplicate_injection (test_gateway_tools.FaultProxyTests.test_actual_loopback_roundtrip_with_duplicate_injection) ... ok
+test_reject_unbounded_invalid_and_duplicate_faults (test_gateway_tools.FaultProxyTests.test_reject_unbounded_invalid_and_duplicate_faults) ... ok
+test_seeded_corruption_and_record_identity (test_gateway_tools.FaultProxyTests.test_seeded_corruption_and_record_identity) ... ok
+test_command_timeout_is_bounded_and_retained (test_gateway_tools.GatewayManifestTests.test_command_timeout_is_bounded_and_retained) ... ok
+test_device_lock_prevents_competing_runner (test_gateway_tools.GatewayManifestTests.test_device_lock_prevents_competing_runner) ... ok
+test_dry_run_never_contacts_devices (test_gateway_tools.GatewayManifestTests.test_dry_run_never_contacts_devices) ... ok
+test_duplicate_device_wrong_roles_and_wrong_build_fail (test_gateway_tools.GatewayManifestTests.test_duplicate_device_wrong_roles_and_wrong_build_fail) ... ok
+test_manifest_accepts_explicit_software_unit_fixture (test_gateway_tools.GatewayManifestTests.test_manifest_accepts_explicit_software_unit_fixture) ... ok
+test_physical_requires_routes_and_cleanup (test_gateway_tools.GatewayManifestTests.test_physical_requires_routes_and_cleanup) ... ok
+test_positive_results_and_offline_revalidation (test_gateway_tools.GatewayManifestTests.test_positive_results_and_offline_revalidation) ... ok
+test_preflight_alone_leaves_scenarios_not_run (test_gateway_tools.GatewayManifestTests.test_preflight_alone_leaves_scenarios_not_run) ... ok
+test_probe_does_not_take_over_user_tour_or_accept_self_reported_hash (test_gateway_tools.GatewayManifestTests.test_probe_does_not_take_over_user_tour_or_accept_self_reported_hash) ... ok
+test_resume_retains_failure_and_only_identical_config (test_gateway_tools.GatewayManifestTests.test_resume_retains_failure_and_only_identical_config) ... ok
+test_tampered_evidence_fails_offline_validation (test_gateway_tools.GatewayManifestTests.test_tampered_evidence_fails_offline_validation) ... ok
+test_two_parallel_drivers_cannot_control_one_device (test_gateway_tools.GatewayManifestTests.test_two_parallel_drivers_cannot_control_one_device) ... ok
+test_unbounded_command_and_zero_expected_tests_rejected (test_gateway_tools.GatewayManifestTests.test_unbounded_command_and_zero_expected_tests_rejected) ... ok
+test_unknown_route_and_debugger_lock_do_not_pass (test_gateway_tools.GatewayManifestTests.test_unknown_route_and_debugger_lock_do_not_pass) ... ok
+test_zero_skipped_and_missing_results_never_pass (test_gateway_tools.GatewayManifestTests.test_zero_skipped_and_missing_results_never_pass) ... ok
+test_active_tour_is_not_installed_over (test_gateway_tools.IOSReceiptProbeTests.test_active_tour_is_not_installed_over) ... ok
+test_controlled_install_receipt_and_bundle_digest (test_gateway_tools.IOSReceiptProbeTests.test_controlled_install_receipt_and_bundle_digest) ... ok
+test_read_only_probe_requires_fresh_explicit_radio_observation (test_gateway_tools.IOSReceiptProbeTests.test_read_only_probe_requires_fresh_explicit_radio_observation) ... ok
+test_wrong_device_and_tampered_install_evidence_fail (test_gateway_tools.IOSReceiptProbeTests.test_wrong_device_and_tampered_install_evidence_fail) ... ok
+test_android_recording_maps_same_actual_checks (test_gateway_tools.NativeRecorderCollectorTests.test_android_recording_maps_same_actual_checks) ... ok
+test_room_lock_is_not_screen_lock (test_gateway_tools.NativeRecorderCollectorTests.test_room_lock_is_not_screen_lock) ... ok
+test_sampling_pause_and_build_change_fail (test_gateway_tools.NativeRecorderCollectorTests.test_sampling_pause_and_build_change_fail) ... ok
+test_valid_native_counts_are_observed_not_assumed (test_gateway_tools.NativeRecorderCollectorTests.test_valid_native_counts_are_observed_not_assumed) ... ok
+test_wrong_run_zero_counts_and_missing_result_rejected (test_gateway_tools.NativeRecorderCollectorTests.test_wrong_run_zero_counts_and_missing_result_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 2.924s
+
+OK
+WARNING: We recommend using a newer Android Gradle plugin to use compile SDK version 37.2
+
+This Android Gradle plugin (8.13.2) was tested up to compile SDK version 36.1.
+
+You are strongly encouraged to update your project to use a newer
+Android Gradle plugin that has been tested with compile SDK version 37.2.
+
+If you are already using the latest version of the Android Gradle plugin,
+you may need to wait until a newer version with support for compile SDK version 37.2 is available.
+
+For more information refer to the compatibility table:
+https://d.android.com/r/tools/api-level-support
+
+To suppress this warning, add/update
+    android.suppressUnsupportedCompileSdk=37.2
+to this project's gradle.properties.
+> Task :tour-session-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-core:compileKotlin UP-TO-DATE
+> Task :tour-session-core:compileJava NO-SOURCE
+> Task :tour-session-core:processResources NO-SOURCE
+> Task :tour-session-core:classes UP-TO-DATE
+> Task :tour-session-core:jar UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:testDebugUnitTest UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:dexBuilderDebug UP-TO-DATE
+> Task :app:mergeProjectDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:packageDebug UP-TO-DATE
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug UP-TO-DATE
+
+BUILD SUCCESSFUL in 554ms
+44 actionable tasks: 44 up-to-date
+[9/9] iOS app unit/integration suite in Simulator
+2026-09-11 20:01:25.602 xcodebuild[77054:2744060] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/LocalControlPlane.swift:326:70: warning: conditional cast from '[String : Data]' to '[String : Data]' always succeeds
+324 |     private func handleResolvedService(_ service: NetService) {
+325 |         guard let txtRaw = service.txtRecordData(),
+326 |               let txt = NetService.dictionary(fromTXTRecord: txtRaw) as? [String: Data],
+    |                                                                      `- warning: conditional cast from '[String : Data]' to '[String : Data]' always succeeds
+327 |               let channelName = txt[TXTKey.channelName].flatMap({ String(data: $0, encoding: .utf8) }),
+328 |               let createdBy = txt[TXTKey.createdBy].flatMap({ String(data: $0, encoding: .utf8) }),
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEControlPlane.swift:277:60: warning: main actor-isolated static property 'serviceUUID' can not be referenced from a nonisolated context
+275 |     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
+276 |         guard let services = peripheral.services else { return }
+277 |         for svc in services where svc.uuid == BLEConstants.serviceUUID {
+    |                                                            `- warning: main actor-isolated static property 'serviceUUID' can not be referenced from a nonisolated context
+278 |             peripheral.discoverCharacteristics(
+279 |                 [BLEConstants.commandWriteUUID, BLEConstants.commandNotifyUUID, BLEConstants.peerInfoUUID],
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEConstants.swift:4:16: note: static property declared here
+ 2 |
+ 3 | enum BLEConstants {
+ 4 |     static let serviceUUID = CBUUID(string: "A1B2C3D4-0001-0000-0000-000000000000")
+   |                `- note: static property declared here
+ 5 |     /// Write commands to the remote device's GATT server
+ 6 |     static let commandWriteUUID = CBUUID(string: "A1B2C3D4-0002-0000-0000-000000000000")
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEControlPlane.swift:279:31: warning: main actor-isolated static property 'commandWriteUUID' can not be referenced from a nonisolated context
+277 |         for svc in services where svc.uuid == BLEConstants.serviceUUID {
+278 |             peripheral.discoverCharacteristics(
+279 |                 [BLEConstants.commandWriteUUID, BLEConstants.commandNotifyUUID, BLEConstants.peerInfoUUID],
+    |                               `- warning: main actor-isolated static property 'commandWriteUUID' can not be referenced from a nonisolated context
+280 |                 for: svc
+281 |             )
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEConstants.swift:6:16: note: static property declared here
+ 4 |     static let serviceUUID = CBUUID(string: "A1B2C3D4-0001-0000-0000-000000000000")
+ 5 |     /// Write commands to the remote device's GATT server
+ 6 |     static let commandWriteUUID = CBUUID(string: "A1B2C3D4-0002-0000-0000-000000000000")
+   |                `- note: static property declared here
+ 7 |     /// Receive commands via notifications from the remote device
+ 8 |     static let commandNotifyUUID = CBUUID(string: "A1B2C3D4-0003-0000-0000-000000000000")
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEControlPlane.swift:279:62: warning: main actor-isolated static property 'commandNotifyUUID' can not be referenced from a nonisolated context
+277 |         for svc in services where svc.uuid == BLEConstants.serviceUUID {
+278 |             peripheral.discoverCharacteristics(
+279 |                 [BLEConstants.commandWriteUUID, BLEConstants.commandNotifyUUID, BLEConstants.peerInfoUUID],
+    |                                                              `- warning: main actor-isolated static property 'commandNotifyUUID' can not be referenced from a nonisolated context
+280 |                 for: svc
+281 |             )
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEConstants.swift:8:16: note: static property declared here
+ 6 |     static let commandWriteUUID = CBUUID(string: "A1B2C3D4-0002-0000-0000-000000000000")
+ 7 |     /// Receive commands via notifications from the remote device
+ 8 |     static let commandNotifyUUID = CBUUID(string: "A1B2C3D4-0003-0000-0000-000000000000")
+   |                `- note: static property declared here
+ 9 |     /// Read the peer's identity: "id|displayName|platform"
+10 |     static let peerInfoUUID = CBUUID(string: "A1B2C3D4-0004-0000-0000-000000000000")
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEControlPlane.swift:279:94: warning: main actor-isolated static property 'peerInfoUUID' can not be referenced from a nonisolated context
+277 |         for svc in services where svc.uuid == BLEConstants.serviceUUID {
+278 |             peripheral.discoverCharacteristics(
+279 |                 [BLEConstants.commandWriteUUID, BLEConstants.commandNotifyUUID, BLEConstants.peerInfoUUID],
+    |                                                                                              `- warning: main actor-isolated static property 'peerInfoUUID' can not be referenced from a nonisolated context
+280 |                 for: svc
+281 |             )
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHere/Core/BLEConstants.swift:10:16: note: static property declared here
+ 8 |     static let commandNotifyUUID = CBUUID(string: "A1B2C3D4-0003-0000-0000-000000000000")
+ 9 |     /// Read the peer's identity: "id|displayName|platform"
+10 |     static let peerInfoUUID = CBUUID(string: "A1B2C3D4-0004-0000-0000-000000000000")
+   |                `- note: static property declared here
+11 | }
+12 |
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift (in target 'GetOverHereTests' from project 'GetOverHere')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/ChannelServiceLifecycleTests.swift (in target 'GetOverHereTests' from project 'GetOverHere')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/ChannelServiceTestDoubles.swift (in target 'GetOverHereTests' from project 'GetOverHere')
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:171:95: warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+166 |         }
+167 |
+168 |         func centralManagerDidUpdateState(_ manager: CBCentralManager) {
+    |              `- note: add '@MainActor' to make instance method 'centralManagerDidUpdateState' part of global actor 'MainActor'
+169 |             guard manager === central else { return }
+170 |             switch manager.state {
+171 |             case .poweredOn: manager.scanForPeripherals(withServices: [BluetoothRoomDiscovery.serviceID])
+    |                                                                                               `- warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+172 |             case .unknown, .resetting: break
+173 |             default: failure = ProbeFailure.unavailable
+
+GetOverHere.BluetoothRoomDiscovery.serviceID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let serviceID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:188:59: warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+184 |         }
+185 |
+186 |         func centralManager(_ manager: CBCentralManager, didConnect peer: CBPeripheral) {
+    |              `- note: add '@MainActor' to make instance method 'centralManager(_:didConnect:)' part of global actor 'MainActor'
+187 |             guard peer === peripheral else { return }
+188 |             peer.discoverServices([BluetoothRoomDiscovery.serviceID])
+    |                                                           `- warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+189 |         }
+190 |
+
+GetOverHere.BluetoothRoomDiscovery.serviceID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let serviceID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:206:111: warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+204 |         func peripheral(_ peer: CBPeripheral, didDiscoverServices error: Error?) {
+205 |             guard peer === peripheral else { return }
+206 |             guard error == nil, let service = peer.services?.first(where: { $0.uuid == BluetoothRoomDiscovery.serviceID }) else {
+    |                                                                                                               `- warning: main actor-isolated class property 'serviceID' can not be referenced from a nonisolated context
+207 |                 failure = error ?? ProbeFailure.invalidMetadata; return
+208 |             }
+
+GetOverHere.BluetoothRoomDiscovery.serviceID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let serviceID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:209:66: warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+202 |         }
+203 |
+204 |         func peripheral(_ peer: CBPeripheral, didDiscoverServices error: Error?) {
+    |              `- note: add '@MainActor' to make instance method 'peripheral(_:didDiscoverServices:)' part of global actor 'MainActor'
+205 |             guard peer === peripheral else { return }
+206 |             guard error == nil, let service = peer.services?.first(where: { $0.uuid == BluetoothRoomDiscovery.serviceID }) else {
+207 |                 failure = error ?? ProbeFailure.invalidMetadata; return
+208 |             }
+209 |             peer.discoverCharacteristics([BluetoothRoomDiscovery.recordID, Self.psmsID], for: service)
+    |                                                                  `- warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+210 |         }
+211 |
+
+GetOverHere.BluetoothRoomDiscovery.recordID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let recordID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:215:106: warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+213 |             guard peer === peripheral else { return }
+214 |             guard error == nil,
+215 |                   let record = service.characteristics?.first(where: { $0.uuid == BluetoothRoomDiscovery.recordID }),
+    |                                                                                                          `- warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+216 |                   let selectors = service.characteristics?.first(where: { $0.uuid == Self.psmsID }) else {
+217 |                 failure = error ?? ProbeFailure.invalidMetadata; return
+
+GetOverHere.BluetoothRoomDiscovery.recordID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let recordID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/BluetoothChannelProbeTests.swift:228:66: warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+221 |         }
+222 |
+223 |         func peripheral(_ peer: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+    |              `- note: add '@MainActor' to make instance method 'peripheral(_:didUpdateValueFor:error:)' part of global actor 'MainActor'
+224 |             guard peer === peripheral else { return }
+225 |             do {
+226 |                 if let error { throw error }
+227 |                 guard let bytes = characteristic.value else { throw ProbeFailure.invalidMetadata }
+228 |                 if characteristic.uuid == BluetoothRoomDiscovery.recordID {
+    |                                                                  `- warning: main actor-isolated class property 'recordID' can not be referenced from a nonisolated context
+229 |                     guard try BluetoothRoomRecord.decode(bytes).roomID == room,
+230 |                           let psmsCharacteristic else { throw ProbeFailure.invalidMetadata }
+
+GetOverHere.BluetoothRoomDiscovery.recordID:2:31: note: class property declared here
+1 | class BluetoothRoomDiscovery {
+2 | @MainActor internal class let recordID: CBUUID}
+  |                               `- note: class property declared here
+3 |
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/TourAssetCacheTests.swift:27:30: warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 25 |             bytes: bytes.prefix(firstCount)
+ 26 |         )
+ 27 |         let firstCache = try FileTourAssetCache(rootDirectory: root)
+    |                              `- warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 28 |         #expect(try await firstCache.ingest(first) == .partial(nextOffset: UInt64(firstCount)))
+ 29 |
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/TourAssetCacheTests.swift:30:32: warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 28 |         #expect(try await firstCache.ingest(first) == .partial(nextOffset: UInt64(firstCount)))
+ 29 |
+ 30 |         let resumedCache = try FileTourAssetCache(rootDirectory: root)
+    |                                `- warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 31 |         #expect(try await resumedCache.resumeOffset(
+ 32 |             sha256: hash,
+
+/Users/aessam/tmp/ios-macos-apps/GetOverHere/iOS/GetOverHereTests/TourAssetCacheTests.swift:52:32: warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 50 |
+ 51 |         let corruptRoot = root.appending(path: "corrupt", directoryHint: .isDirectory)
+ 52 |         let corruptCache = try FileTourAssetCache(rootDirectory: corruptRoot)
+    |                                `- warning: main actor-isolated initializer 'init(rootDirectory:fileManager:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 53 |         let corrupt = try AssetChunkPayload(
+ 54 |             sha256: hash,
+2026-09-11 20:02:52.946 xcodebuild[77054:2744060] [MT] IDETestOperationsObserverDebug: 65.301 elapsed -- Testing started completed.
+2026-09-11 20:02:52.946 xcodebuild[77054:2744060] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-11 20:02:52.946 xcodebuild[77054:2744060] [MT] IDETestOperationsObserverDebug: 65.301 sec, +65.301 sec -- end
+Testing started
+Tour session verification passed

@@ -113,15 +113,26 @@ class UDPAudioPlane(
         private var draining = false
         private var discontinuity = 0L
         private var cleaned = false
-        private var sentPacketCount = 0
+        @Volatile private var sentPacketCount = 0
+        @Volatile var submittedCaptureEntries = 0L; private set
         @Volatile private var stopped = false
         @Volatile var droppedCaptureEntries = 0L; private set
+        @Volatile var rejectedCodecInputs = 0L; private set
+        @Volatile var expiredCodecOutputs = 0L; private set
+        @Volatile var encoderResetCount = 0L; private set
+        @Volatile var lastEncoderResetReason: String? = null; private set
         val pendingCaptureEntries: Int get() = synchronized(lock) { pending.size }
+        fun diagnostics(): Map<String, Any> = mapOf("submittedCaptureEntries" to submittedCaptureEntries,
+            "pendingCaptureEntries" to pendingCaptureEntries, "droppedCaptureEntries" to droppedCaptureEntries,
+            "rejectedCodecInputs" to rejectedCodecInputs, "expiredCodecOutputs" to expiredCodecOutputs,
+            "encoderResetCount" to encoderResetCount, "lastEncoderResetReason" to (lastEncoderResetReason ?: "none"),
+            "sentFrameCount" to sentPacketCount)
 
         fun submit(pcm: ByteArray, destinations: Map<SessionAudioCodec, List<BoundedSocketFrameWriter>>) {
             val origin = CaptureOrigin(wallClock(), monotonicClock())
             synchronized(lock) {
                 if (stopped) return
+                submittedCaptureEntries++
                 // Bound retained bytes as well as entry count; production capture submits 320 B.
                 if (pcm.isEmpty() || pcm.size > MAXIMUM_SUBMISSION_BYTES || pcm.size % 2 != 0) {
                     dropEntry(); return
@@ -182,17 +193,6 @@ class UDPAudioPlane(
             closeEncoder(state.encoder)
         }
 
-        private fun resetEncoder(codec: SessionAudioCodec, state: BroadcastCodecState, generation: Long) {
-            closeStateEncoder(state)
-            // Keep streamID and sequence: encoder recreation must never reset nonce/replay identity.
-            state.encoder = codecProvider.makeEncoder(codec)
-            state.encoderClosed = false
-            state.accumulator = PCMFrameAccumulator(state.encoder.inputPCMByteCount)
-            state.partialOrigin = null
-            state.pendingInputs.clear()
-            state.discontinuity = generation
-        }
-
         private fun process(entry: Entry, generation: Long) {
             if (stopped) return
             if (expired(entry.origin)) { synchronized(lock) { dropEntry() }; return }
@@ -202,9 +202,12 @@ class UDPAudioPlane(
                     val state = codecStates.getOrPut(codec) {
                         BroadcastCodecState(codecProvider.makeEncoder(codec), generation)
                     }
-                    if (state.discontinuity != generation || state.partialOrigin?.let(::expired) == true ||
-                        state.pendingInputs.peekFirst()?.let(::expired) == true) {
-                        resetEncoder(codec, state, generation)
+                    if (state.discontinuity != generation || state.partialOrigin?.let(::expired) == true) {
+                        // Capture gaps invalidate partial PCM, not a warmed-up native codec.
+                        // Preserve stamps of accepted inputs until delayed output is drained.
+                        state.accumulator = PCMFrameAccumulator(state.encoder.inputPCMByteCount)
+                        state.partialOrigin = null
+                        state.discontinuity = generation
                     }
                     val partial = state.partialOrigin
                     val frames = state.accumulator.append(entry.pcm)
@@ -213,43 +216,57 @@ class UDPAudioPlane(
                     for ((index, pcmFrame) in frames.withIndex()) {
                         if (stopped) return@forEach
                         val inputOrigin = if (index == 0) partial ?: entry.origin else entry.origin
-                        if (expired(inputOrigin) || state.pendingInputs.size == MAXIMUM_BUFFERED_CODEC_INPUTS) {
+                        if (expired(inputOrigin)) {
                             synchronized(lock) { dropEntry() }
-                            resetEncoder(codec, state, generation)
-                            return@forEach
+                            continue
                         }
-                        // Null can mean retained input or no accepted input. Keep a conservative
-                        // FIFO of every supplied frame; extra old stamps can only drop, never freshen.
-                        state.pendingInputs.addLast(inputOrigin)
-                        val packet = state.encoder.encode(pcmFrame) ?: continue
-                        val outputOrigin = state.pendingInputs.removeFirst()
-                        if (stopped) return@forEach
-                        if (expired(outputOrigin)) {
-                            synchronized(lock) { dropEntry() }
-                            resetEncoder(codec, state, generation)
-                            return@forEach
-                        }
-                        val payload = EncodedAudioFramePayload(
-                            packet.configuration,
-                            outputOrigin.wall,
-                            outputOrigin.wall + FRAME_LIFETIME_NANOSECONDS,
-                            packet.bytes,
-                        )
-                        val logical = SessionEnvelope(
-                            lane = SessionLane.REALTIME,
-                            kind = SessionMessageKind.AUDIO_FRAME,
-                            sequence = state.sequence++,
-                            sessionId = configured.sessionID,
-                            senderId = configured.participantID,
-                            payload = payload.encode(),
-                        )
-                        val frame = configured.authentication.encodeGuide(sealer.seal(logical, state.streamID))
-                        synchronized(lock) {
-                            if (!stopped && generation == discontinuity && !expired(outputOrigin)) {
-                                sentPacketCount++
-                                if (sentPacketCount == 1) Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
-                                emitFrame(frame, writers)
-                            } else if (!stopped) dropEntry()
+                        val result = if (state.pendingInputs.size == MAXIMUM_BUFFERED_CODEC_INPUTS) {
+                            // Do not accept a ninth input, but let a cold codec finally drain.
+                            // Resetting here repeats the same eight-input startup forever.
+                            // This complete PCM frame was never submitted. Do not invalidate
+                            // the earlier accepted frame being drained in the same iteration.
+                            synchronized(lock) { droppedCaptureEntries++ }
+                            RealtimeAudioEncodeResult(false, state.encoder.drainOutput())
+                        } else state.encoder.offer(pcmFrame)
+                        if (result.inputAccepted) state.pendingInputs.addLast(inputOrigin)
+                        else rejectedCodecInputs++
+                        // A warmed codec may release its startup backlog as a burst. Drain
+                        // at most the retained eight inputs now; one output per later capture
+                        // would preserve stale AAC-sized pipeline delay indefinitely.
+                        for (drainIndex in 0 until MAXIMUM_BUFFERED_CODEC_INPUTS) {
+                            val packet = (if (drainIndex == 0) result.packet else {
+                                if (state.pendingInputs.isEmpty()) break
+                                state.encoder.drainOutput()
+                            }) ?: break
+                            val outputOrigin = state.pendingInputs.pollFirst()
+                                ?: error("Encoder produced output without an accepted input")
+                            if (stopped) return@forEach
+                            if (expired(outputOrigin)) {
+                                expiredCodecOutputs++
+                                continue
+                            }
+                            val payload = EncodedAudioFramePayload(
+                                packet.configuration,
+                                outputOrigin.wall,
+                                outputOrigin.wall + FRAME_LIFETIME_NANOSECONDS,
+                                packet.bytes,
+                            )
+                            val logical = SessionEnvelope(
+                                lane = SessionLane.REALTIME,
+                                kind = SessionMessageKind.AUDIO_FRAME,
+                                sequence = state.sequence++,
+                                sessionId = configured.sessionID,
+                                senderId = configured.participantID,
+                                payload = payload.encode(),
+                            )
+                            val frame = configured.authentication.encodeGuide(sealer.seal(logical, state.streamID))
+                            synchronized(lock) {
+                                if (!stopped && generation == discontinuity && !expired(outputOrigin)) {
+                                    sentPacketCount++
+                                    if (sentPacketCount == 1) Log.i(TAG, "TCP: sending first encrypted encoded audio frame")
+                                    emitFrame(frame, writers)
+                                } else if (!stopped) dropEntry()
+                            }
                         }
                     }
                 } catch (error: Exception) {
@@ -365,6 +382,7 @@ class UDPAudioPlane(
     private val handshakeSlots = Semaphore(MAXIMUM_PENDING_HANDSHAKES)
     private var receiveThread: Thread? = null
     @Volatile private var broadcastProcessor: BroadcastProcessor? = null
+    fun captureDiagnostics(): Map<String, Any> = broadcastProcessor?.diagnostics() ?: emptyMap()
     private var receivedPacketCount = 0
 
     var hostIP: String? = null

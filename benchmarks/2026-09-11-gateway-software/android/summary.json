@@ -1,0 +1,18 @@
+{
+  "scope": "Android emulator and JVM software components, not physical qualification",
+  "device": "emulator-5554",
+  "app_jvm": {"suites": 37, "tests": 198, "failures": 0, "errors": 0, "skipped": 0, "xml_directory": "jvm-tests-final"},
+  "native_final": {"tests": 9, "failures": 0, "skipped": 0, "seconds": 12.774, "file": "native-ownership-final.log"},
+  "retained_failed_runs": [
+    {"file": "native-initial-failed.log", "tests": 8, "failures": 1},
+    {"file": "multicast-isolation-failed.log", "tests": 2, "failures": 1},
+    {"file": "discovery-ownership-before.log", "tests": 11, "failures": 2}
+  ],
+  "app_debug_sha256": "33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a",
+  "test_apk_sha256": "ee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c",
+  "app_unsigned_release_sha256": "d37e8b599b8f5002bea767e6aaa164f3c6d826d7afa1d3ce6ce0511441995af8",
+  "build_command": "JAVA_HOME=<Android Studio JBR> ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease",
+  "test_assertions_rebuild_command": "JAVA_HOME=<Android Studio JBR> ./gradlew :app:assembleDebugAndroidTest",
+  "native_command": "adb -s emulator-5554 shell am instrument -w -r -e class com.aessam.comeoverhere.WiredHubTLSIdentityTest,com.aessam.comeoverhere.WiredGatewayAdmissionTest,com.aessam.comeoverhere.WiredRecoveryNativeTest com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner",
+  "not_run": ["physical USB and dynamic address recovery", "USB plus Wi-Fi Aware coexistence", "iOS and Android audience branch audio", "locked-phone audio", "acoustic latency", "30-person capacity", "90-minute endurance"]
+}

@@ -65,6 +65,8 @@ data class NearbyAwareState(
 
 interface NearbyAwareSettings {
     val state: StateFlow<NearbyAwareState>
+    /** User/owner preference, independent of a radio start failure. */
+    val enabledPreference: Boolean get() = state.value.enabled
     fun setEnabled(enabled: Boolean)
     fun pair(peerID: String, pin: String)
 }
@@ -78,6 +80,7 @@ private class WiFiAwareProfileOwner(
     connectionBudget: NearbyConnectionBudget,
     private val pathReservations: AwarePathReservations,
     private val makePairingPIN: () -> String = { "%06d".format(SecureRandom().nextInt(1_000_000)) },
+    private val guideLaneConnector: GuideLaneConnector? = null,
 ) {
     var onRoom: ((BluetoothRoomRecord) -> Unit)? = null
     var onLost: ((UUID) -> Unit)? = null
@@ -88,7 +91,10 @@ private class WiFiAwareProfileOwner(
     private val connectivity = app.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newCachedThreadPool { work -> Thread(work, "aware-room").apply { isDaemon = true } }
-    private val bridge = NearbySocketBridge(connectionBudget = connectionBudget)
+    private val bridge = NearbySocketBridge(connectionBudget = connectionBudget,
+        guideLaneConnector = guideLaneConnector,
+        audioResidenceMilliseconds = if (guideLaneConnector == null) com.aessam.toursession.NearbyRealtimeQueue.LIFETIME_MILLISECONDS
+            else com.aessam.toursession.GatewayProtocol.AUDIO_RESIDENCE_MILLISECONDS)
     private val mutableState = MutableStateFlow(NearbyAwareState())
     val state: StateFlow<NearbyAwareState> = mutableState.asStateFlow()
     @Volatile private var record: BluetoothRoomRecord? = null
@@ -537,6 +543,7 @@ private class WiFiAwareProfileOwner(
 class WiFiAwareRoomTransport(
     context: Context,
     private val connectionBudget: NearbyConnectionBudget = NearbyConnectionBudget.sharedApp,
+    private val guideLaneConnector: GuideLaneConnector? = null,
     private val makePairingPIN: () -> String = { "%06d".format(SecureRandom().nextInt(1_000_000)) },
 ) {
     var onRoom: ((BluetoothRoomRecord) -> Unit)? = null
@@ -578,7 +585,7 @@ class WiFiAwareRoomTransport(
         }
         plan.profiles.forEach { profile ->
             val owner = owners.getOrPut(profile) {
-                WiFiAwareProfileOwner(app, profile, connectionBudget, reservations, makePairingPIN).also { child ->
+                WiFiAwareProfileOwner(app, profile, connectionBudget, reservations, makePairingPIN, guideLaneConnector).also { child ->
                     child.onState = { updateState() }
                     child.onRoom = { record ->
                         records.getOrPut(record.roomID) { mutableMapOf() }[profile] = record

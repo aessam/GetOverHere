@@ -25,6 +25,14 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     private var aware: (any NearbyRoomTransport)?
     private let makeAware: @MainActor () -> (any NearbyRoomTransport)?
     private var awareRooms = Set<UUID>()
+    private let applePeer = ApplePeerRoomTransport()
+    private var applePeerRooms = Set<UUID>()
+    var strictApplePeer = false
+    var applePeerPathObservations: [[String: String]] { Array(applePeer.observedPaths.values) }
+    var onApplePeerState: ((String) -> Void)?
+    var onApplePeerError: ((String) -> Void)?
+    private var companionGeneration: UInt64?
+    private var companionRecord: BluetoothRoomRecord?
     private var hostedRecord: BluetoothRoomRecord?
     private let nearbyBridge: NearbySocketBridge
     private var nearbyGuestRoute: NearbyGuestRoute?
@@ -69,6 +77,23 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
             guard let self else { return }
             self.emit(self.discoveryIndex.remove(id.uuidString, source: .bluetooth))
         }
+        applePeer.onError = { [weak self] in self?.onNearbyError?($0); self?.onApplePeerError?($0) }
+        applePeer.onState = { [weak self] in self?.onApplePeerState?($0) }
+        applePeer.onRoom = { [weak self] record in
+            guard let self, record.guideID != UUID(uuidString: localPeer.id) else { return }
+            applePeerRooms.insert(record.roomID)
+            let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
+                platform: record.isAndroid ? .android : .ios)
+            let announce = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
+                channelName: record.name, createdBy: peer.id, audioQuality: .standard,
+                roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked)
+            emit(discoveryIndex.update(announce, peer: peer, source: .applePeer))
+        }
+        applePeer.onLost = { [weak self] room in
+            guard let self else { return }
+            applePeerRooms.remove(room)
+            emit(discoveryIndex.remove(room.uuidString, source: .applePeer))
+        }
     }
 
     deinit {
@@ -84,6 +109,27 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
 
     func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) {
         bluetooth.setMode(mode)
+    }
+
+    func setApplePeerMode(_ mode: BluetoothDiscoveryMode) {
+        applePeer.publish(hostedRecord)
+        applePeer.setMode(mode)
+    }
+    func pauseApplePeerBrowsing() { applePeer.pauseBrowsing() }
+
+    func publishCompanion(_ record: BluetoothRoomRecord?, connector: (any GuideLaneConnector)?, generation: UInt64? = nil) {
+        let changed = companionGeneration != generation || companionRecord == nil
+        companionRecord = record; companionGeneration = generation
+        applePeer.guideConnector = connector
+        applePeer.publish(record)
+        if record == nil { applePeer.setMode(.off) }
+        else if changed { applePeer.setMode(.advertising) }
+    }
+    func retryApplePeerPublication() {
+        guard companionRecord != nil || hostedRecord != nil else { return }
+        applePeer.setMode(.off)
+        applePeer.publish(companionRecord ?? hostedRecord)
+        applePeer.setMode(.advertising)
     }
 
     func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) {
@@ -111,7 +157,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     }
 
     func canConnectNearby(roomID: UUID) -> Bool {
-        awareRooms.contains(roomID) || (bluetooth as? any BluetoothSessionDiscoveryInterface)?.canConnect(roomID: roomID) == true
+        applePeerRooms.contains(roomID) || (!strictApplePeer && (awareRooms.contains(roomID) || (bluetooth as? any BluetoothSessionDiscoveryInterface)?.canConnect(roomID: roomID) == true))
     }
 
     func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute {
@@ -134,7 +180,13 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         let attempt = routeAttempt
         var connect: NearbySocketBridge.LaneConnect
         var transport: SessionTransportRoute
-        if let aware, awareRooms.contains(roomID) {
+        if applePeerRooms.contains(roomID) {
+            connect = { [applePeer] _ in try await applePeer.connect(roomID: roomID) }
+            transport = .applePeer
+            usesBluetoothGuestRoute = false
+            try await verifyNearbyRecord(roomID: roomID, guideID: expectedGuideID, attempt: attempt, connect: connect)
+        } else if strictApplePeer { throw NearbyConnectionError.unavailable }
+        else if let aware, awareRooms.contains(roomID) {
             connect = { _ in try await aware.connect(roomID: roomID) }
             transport = .wifiAware
             usesBluetoothGuestRoute = false
@@ -190,6 +242,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     func stop() {
         stopNearbyGuest()
         aware?.stop()
+        applePeer.stop()
         bluetooth.stop()
         discoveryIndex = RoomDiscoveryIndex()
         browser.stop()
@@ -227,6 +280,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
             hostedRecord = record
             bluetooth.publish(record)
             aware?.publish(record)
+            applePeer.publish(record)
         }
         let txtData = NetService.data(fromTXTRecord: [
             TXTKey.channelName: Data(announce.channelName.utf8),
@@ -254,6 +308,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     private func unpublishChannel(channelID: String) {
         hostedRecord = nil
         aware?.publish(nil)
+        applePeer.publish(nil)
         bluetooth.publish(nil)
         publishedServices.removeValue(forKey: channelID)?.stop()
         Logger.transport.info("Unpublished local channel")

@@ -10,11 +10,27 @@ struct ChannelSidebar: View {
 
     var body: some View {
         List {
+            Section("Two-phone gateway") {
+                Button(service.isCreator ? "Connect Companion Phone" : "Companion Setup", systemImage: "cable.connector") {
+                    coordinator.showGateway = true
+                }
+                .accessibilityIdentifier("gatewaySetup")
+                if coordinator.gateway.role != .none {
+                    Text("\(coordinator.gateway.role.rawValue.capitalized): \(coordinator.gateway.state)")
+                        .font(.caption)
+                }
+                Toggle("Apple peer-to-peer only", isOn: Binding(get: { service.strictApplePeer }, set: {
+                    service.strictApplePeer = $0
+                    service.applePeerDiscoveryEnabled = true
+                }))
+                .disabled(service.activeChannelID != nil || service.companionModeActive)
+            }
             Section {
                 Button("Find Nearby Tours", systemImage: "antenna.radiowaves.left.and.right") {
                     service.findNearbyTours()
                 }
                 .accessibilityIdentifier("findNearbyTours")
+                .disabled(service.companionModeActive)
                 Text("Keep Bluetooth and Wi-Fi enabled. No Internet connection is needed. Rooms are open unless the guide locks them.")
                     .font(.caption).foregroundStyle(.secondary)
                 if #available(iOS 26.4, *) {
@@ -90,6 +106,7 @@ struct ChannelSidebar: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                 }
+                .disabled(service.companionModeActive)
             }
         }
         .sheet(item: $pendingJoinChannel) { channel in

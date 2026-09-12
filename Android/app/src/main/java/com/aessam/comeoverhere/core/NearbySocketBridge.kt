@@ -43,6 +43,8 @@ class NearbySocketBridge(
     private val localConnect: (Int) -> NearbyByteConnection = { port ->
         NearbyTCPConnection(Socket().apply { connect(InetSocketAddress("127.0.0.1", port), 5_000) })
     },
+    private val guideLaneConnector: GuideLaneConnector? = null,
+    private val audioResidenceMilliseconds: Long = NearbyRealtimeQueue.LIFETIME_MILLISECONDS,
 ) : Closeable {
     var onError: ((String) -> Unit)? = null
     private val generation = AtomicLong()
@@ -78,7 +80,8 @@ class NearbySocketBridge(
                     if (request.lane in NearbyConnectionBudget.persistentLanes) {
                         check(promote(id, attempt, request.lane)) { "Nearby participant capacity reached" }
                     }
-                    val local = localConnect(requireNotNull(request.lane.localPort))
+                    val local = guideLaneConnector?.connect(com.aessam.toursession.GatewayLane.fromNearby(request.lane))
+                        ?: localConnect(requireNotNull(request.lane.localPort))
                     if (!register(id, local, attempt)) return@launch
                     remote.output.write(0); remote.output.flush()
                     deadline.cancel(false)
@@ -89,6 +92,18 @@ class NearbySocketBridge(
                 }
             } finally { deadline.cancel(false) }
         }
+    }
+
+    /** Already-authenticated wired lanes have no native selector/ACK wrapper. Blocks its worker. */
+    internal fun forwardConnected(first: NearbyByteConnection, second: NearbyByteConnection,
+                                  lane: NearbyLaneRequest.Lane) {
+        val (id, attempt) = requireNotNull(reserveGroup(first)) { "Gateway lane capacity reached" }
+        try {
+            check(register(id, second, attempt)) { "Gateway lane cancelled" }
+            if (lane in NearbyConnectionBudget.persistentLanes) check(promote(id, attempt, lane))
+            pump(id, first, second, lane == NearbyLaneRequest.Lane.REALTIME,
+                drainAdmissionReply = lane == NearbyLaneRequest.Lane.ADMISSION)
+        } finally { closeConnections(id) }
     }
 
     @Synchronized fun startGuest(roomID: UUID, connect: () -> NearbyByteConnection): String {
@@ -198,7 +213,7 @@ class NearbySocketBridge(
         val peerFinished = CountDownLatch(1)
         executor.execute {
             try {
-                if (realtime) copyRealtime(id, second, first) else copy(second.input, first.output)
+                if (realtime) copyRealtime(id, second, first) else copy(id, second.input, first.output)
                 // Native close may discard queued writes. The admission server closes after
                 // its reply; let the guest receive it and close first. Bound abandoned peers.
                 if (drainAdmissionReply && !peerFinished.await(5, TimeUnit.SECONDS)) {
@@ -208,13 +223,13 @@ class NearbySocketBridge(
             catch (error: Exception) { if (connections.containsKey(id)) report(error) }
             finally { closeConnections(id) }
         }
-        try { if (realtime) copyRealtime(id, first, second) else copy(first.input, second.output) }
+        try { if (realtime) copyRealtime(id, first, second) else copy(id, first.input, second.output) }
         finally { peerFinished.countDown(); closeConnections(id) }
     }
 
     private fun copyRealtime(id: UUID, source: NearbyByteConnection, destination: NearbyByteConnection) {
         val lock = Object()
-        val backlog = NearbyRealtimeQueue()
+        val backlog = NearbyRealtimeQueue(audioResidenceMilliseconds)
         var ended = false
         var failure: Exception? = null
         executor.execute {
@@ -255,7 +270,7 @@ class NearbySocketBridge(
         }
     }
 
-    private fun copy(input: InputStream, output: OutputStream) {
+    private fun copy(id: UUID, input: InputStream, output: OutputStream) {
         val bytes = ByteArray(16_384)
         var transferred = 0L
         while (!Thread.currentThread().isInterrupted) {
@@ -265,7 +280,9 @@ class NearbySocketBridge(
                 return
             }
             if (count == 0) continue
-            output.write(bytes, 0, count); output.flush()
+            val deadline = timer.schedule({ closeConnections(id) }, 5, TimeUnit.SECONDS)
+            try { output.write(bytes, 0, count); output.flush() }
+            finally { deadline.cancel(false) }
             transferred += count
         }
     }

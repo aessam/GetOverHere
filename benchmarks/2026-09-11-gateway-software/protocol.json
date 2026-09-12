@@ -1,0 +1,1845 @@
+{
+  "schema": 1,
+  "scope": "cross_language_gateway_core_only",
+  "fixture_lines": 10,
+  "executed": 262,
+  "passed": 262,
+  "failed": 0,
+  "skipped": 0,
+  "cases": [
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_13",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_14",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_15",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_13",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_14",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 0,
+      "kind": "pairing",
+      "case": "reject_15",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_13",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 1,
+      "kind": "pairing",
+      "case": "reject_13",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 2,
+      "kind": "qr",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 3,
+      "kind": "qr",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 4,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 5,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 6,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 7,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 8,
+      "kind": "lane",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-swift",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_13",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "cross_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_0",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_1",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_2",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_3",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_4",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_5",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_6",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_7",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_8",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_9",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_10",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_11",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_12",
+      "status": "PASS"
+    },
+    {
+      "binary": "tour-session-cli",
+      "record": 9,
+      "kind": "descriptor",
+      "case": "reject_13",
+      "status": "PASS"
+    }
+  ]
+}

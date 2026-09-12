@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.HandshakeBoundTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:28.367Z" hostname="redacted" time="0.947">
+  <properties/>
+  <testcase name="controlLaneClosesPendingHandshakeBeyondBoundImmediately" classname="com.aessam.comeoverhere.HandshakeBoundTest" time="0.469"/>
+  <testcase name="audioLaneClosesPendingHandshakeBeyondBoundImmediately" classname="com.aessam.comeoverhere.HandshakeBoundTest" time="0.478"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Session: pending handshake bound reached; closing connection
+]]></system-err>
+</testsuite>

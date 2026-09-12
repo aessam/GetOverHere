@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:59:38.333Z" hostname="redacted" time="2.299">
+  <properties/>
+  <testcase name="disconnectedMemberCannotReceiveAChunkWhoseFileReadWasAlreadyStarted" classname="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" time="0.058"/>
+  <testcase name="slowDiskCannotCreateAnUnboundedGuideEventInbox" classname="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" time="0.058"/>
+  <testcase name="guidePayloadPacingAndPerMemberQueueAreBounded" classname="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" time="2.066"/>
+  <testcase name="replacedMemberCannotReceiveAnOldConnectionsPendingFileRead" classname="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" time="0.062"/>
+  <testcase name="stoppedRunCannotSendAChunkWhoseFileReadWasAlreadyStarted" classname="com.aessam.comeoverhere.GuideAssetSchedulingServiceTest" time="0.055"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

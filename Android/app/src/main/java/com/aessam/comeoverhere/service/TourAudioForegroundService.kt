@@ -33,19 +33,23 @@ class TourAudioForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val mode = intent?.getStringExtra(EXTRA_MODE)
-        if (mode != MODE_GUIDE && mode != MODE_GUEST) {
+        if (mode != MODE_GUIDE && mode != MODE_GUEST && mode != MODE_COMPANION) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
         val isGuide = mode == MODE_GUIDE
-        val notification = notification(isGuide)
+        val notification = notification(isGuide, mode == MODE_COMPANION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = if (isGuide) {
+            val audioType = if (mode == MODE_COMPANION) {
+                0
+            } else if (isGuide) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             } else {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             }
+            val type = audioType or if (mode == MODE_COMPANION || intent.getBooleanExtra(EXTRA_CONNECTED, false))
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0
             startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -55,7 +59,7 @@ class TourAudioForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun notification(isGuide: Boolean): Notification {
+    private fun notification(isGuide: Boolean, companion: Boolean): Notification {
         val launchIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -63,8 +67,8 @@ class TourAudioForegroundService : Service() {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val title = if (isGuide) "Broadcasting tour audio" else "Listening to tour audio"
-        val body = if (isGuide) {
+        val title = if (companion) "Forwarding tour to nearby Android phones" else if (isGuide) "Broadcasting tour audio" else "Listening to tour audio"
+        val body = if (companion) "The USB-connected guide owns the microphone and tour." else if (isGuide) {
             "Your microphone is live on the local tour."
         } else {
             "Tour audio continues while the screen is locked."
@@ -86,8 +90,11 @@ class TourAudioForegroundService : Service() {
         private const val EXTRA_MODE = "mode"
         private const val MODE_GUIDE = "guide"
         private const val MODE_GUEST = "guest"
+        private const val MODE_COMPANION = "companion"
+        private const val EXTRA_CONNECTED = "connected-device"
 
-        fun startGuide(context: Context) = start(context, MODE_GUIDE)
+        fun startGuide(context: Context, connectedDevice: Boolean = false) = start(context, MODE_GUIDE, connectedDevice)
+        fun startCompanion(context: Context) = start(context, MODE_COMPANION, true)
 
         fun startGuest(context: Context) = start(context, MODE_GUEST)
 
@@ -95,9 +102,10 @@ class TourAudioForegroundService : Service() {
             context.stopService(Intent(context, TourAudioForegroundService::class.java))
         }
 
-        private fun start(context: Context, mode: String) {
+        private fun start(context: Context, mode: String, connectedDevice: Boolean = false) {
             val intent = Intent(context, TourAudioForegroundService::class.java)
                 .putExtra(EXTRA_MODE, mode)
+                .putExtra(EXTRA_CONNECTED, connectedDevice)
             ContextCompat.startForegroundService(context, intent)
         }
     }

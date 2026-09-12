@@ -52,6 +52,8 @@ dependencies {
     implementation(project(":tour-session-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("org.jmdns:jmdns:3.6.3")
 
     // Compose
     implementation(platform(libs.compose.bom))

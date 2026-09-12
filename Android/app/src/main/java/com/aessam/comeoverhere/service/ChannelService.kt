@@ -46,6 +46,8 @@ sealed interface OfflineMapStatus {
 }
 
 interface ChannelServiceProtocol {
+    val strictAwareOnly: StateFlow<Boolean> get() = MutableStateFlow(false)
+    fun setStrictAwareOnly(value: Boolean) { check(!value) { "Strict routing is unsupported" } }
     val awareSettings: com.aessam.comeoverhere.core.NearbyAwareSettings? get() = null
     fun canJoin(channel: Channel): Boolean = channel.audioHostIP != null || channel.createdBy == localPeerID
     val bluetoothDiscoveryEnabled: StateFlow<Boolean>
@@ -129,6 +131,28 @@ class ChannelService(
     private val reconnectBaseDelayMillis: Long = 1_000L,
     private val roomAdmission: RoomAdmissionInterface = RoomAdmissionTransport(),
 ) : ChannelServiceProtocol {
+    /** Set by the application gateway owner; companion mode never creates another tour. */
+    var companionModeActive: () -> Boolean = { false }
+    private val mutableStrictAwareOnly = MutableStateFlow(false)
+    override val strictAwareOnly = mutableStrictAwareOnly.asStateFlow()
+    override fun setStrictAwareOnly(value: Boolean) {
+        check(activeChannelID.value == null) { "Leave the tour before changing transport policy" }
+        val owner = requireNotNull(coordinator.controlPlane as? NearbyRouteControl)
+        owner.allowedTransportPolicy = if (value) com.aessam.toursession.AllowedTransportPolicy.ANDROID_AWARE_ONLY
+            else com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
+        mutableStrictAwareOnly.value = value
+        if (value) owner.awareSettings?.setEnabled(true)
+    }
+    private var gatewayGuidePublicKey: ByteArray? = null
+    fun captureDiagnostics(): Map<String, Any> = coordinator.captureDiagnostics()
+    fun gatewayGuideDescriptor(): com.aessam.toursession.GatewayRoomDescriptor? {
+        val channel = activeChannel ?: return null
+        val key = gatewayGuidePublicKey ?: return null
+        if (listenState.value != ListenState.BROADCASTING || channel.createdBy != localPeerID) return null
+        return com.aessam.toursession.GatewayRoomDescriptor(1, 1,
+            com.aessam.toursession.BluetoothRoomRecord(UUID.fromString(channel.id), UUID.fromString(localPeerID),
+                channel.name, true, isRoomLocked.value, 2), key.copyOf())
+    }
     override val awareSettings get() = (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.awareSettings
     internal var resolvedGuestRoute: NearbyGuestRoute? = null
         private set
@@ -390,6 +414,7 @@ class ChannelService(
     // MARK: - Channel Management
 
     override fun createChannel(name: String, quality: AudioQuality) {
+        check(!companionModeActive()) { "Stop companion mode before creating a tour" }
         sessionAttempt += 1
         audioQuality = quality
         val channel = Channel(
@@ -428,6 +453,7 @@ class ChannelService(
         try {
             guidePin.endSession()
             val signer = GuideFrameSigner(sessionID, participantID)
+            gatewayGuidePublicKey = signer.publicKey.copyOf()
             mutableGuideKeyFingerprint.value = fingerprint(signer.publicKey)
             val authentication = SessionGuideAuthentication.Guide(signer)
             contentStore.beginPack(sessionID, channel.name)
@@ -522,6 +548,7 @@ class ChannelService(
     }
 
     override fun joinChannel(channel: Channel, tourCode: String) {
+        check(!companionModeActive()) { "Stop companion mode before joining a tour" }
         if (_activeChannelID.value == null && _connectionState.value == SessionConnectionState.CONNECTING) return
         if (channel.roomAdmissionVersion != 2) {
             _tourFeatureError.value = "This room requires a compatible app version. Update the older app and try again."
@@ -577,7 +604,7 @@ class ChannelService(
                         roomAdmission.join(host, sessionID, expectedGuideID, tourCode.ifEmpty { null })
                     }.also { requireCurrentAttempt() }
                 }
-                val lanHost = channel.audioHostIP
+                val lanHost = channel.audioHostIP.takeUnless { strictAwareOnly.value }
                 val admitted = if (lanHost == null) admitAt(prepareNearby()) else {
                     try { admitAt(lanHost) }
                     catch (error: RoomAdmissionTransportError) {
@@ -769,6 +796,7 @@ class ChannelService(
     }
 
     override fun leaveChannel() {
+        gatewayGuidePublicKey = null
         guidePin.endSession()
         mutableGuideKeyFingerprint.value = null
         roomAdmission.stop()
@@ -1191,6 +1219,11 @@ class ChannelService(
             return
         }
         val route = resolvedGuestRoute?.transport ?: SessionTransportRoute.LOCAL_LAN
+        if (strictAwareOnly.value && route != SessionTransportRoute.WIFI_AWARE) {
+            _connectionState.value = SessionConnectionState.FAILED
+            _tourFeatureError.value = "Wi-Fi Aware-only mode forbids LAN or Bluetooth fallback."
+            return
+        }
         if (route in attemptedGuestRoutes) {
             activeGuestRoute = null
             scheduleReconnect("Could not connect to the guide over ${route.name.lowercase().replace('_', ' ')}")

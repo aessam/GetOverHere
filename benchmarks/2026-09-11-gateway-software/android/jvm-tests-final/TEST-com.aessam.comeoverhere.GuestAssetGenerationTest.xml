@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.GuestAssetGenerationTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:59:36.506Z" hostname="redacted" time="1.262">
+  <properties/>
+  <testcase name="stalePartialIngestCannotRequestAnotherOldChunk" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.213"/>
+  <testcase name="staleCompletedIngestCannotMarkOrSendReadiness" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.209"/>
+  <testcase name="staleCacheFailureCannotSendFailureOrPumpOldWork" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.209"/>
+  <testcase name="staleReadyCacheResultCannotMarkOrSendForReplacementRoom" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.208"/>
+  <testcase name="staleChecksumFailureCannotRestartTransferInReplacementRoom" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.21"/>
+  <testcase name="staleResumeOffsetCannotRequestFromReplacementRoom" classname="com.aessam.comeoverhere.GuestAssetGenerationTest" time="0.212"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

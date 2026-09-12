@@ -20,10 +20,17 @@ data class NativeEncodedAudioPacket(
     val bytes: ByteArray,
 )
 
+/** Null output is not evidence that MediaCodec accepted the supplied PCM. */
+data class RealtimeAudioEncodeResult(val inputAccepted: Boolean, val packet: NativeEncodedAudioPacket?)
+
 interface RealtimeAudioEncoderInterface : Closeable {
     val codec: SessionAudioCodec
     val inputPCMByteCount: Int
     fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket?
+    fun offer(pcm16LittleEndian: ByteArray): RealtimeAudioEncodeResult =
+        RealtimeAudioEncodeResult(true, encode(pcm16LittleEndian))
+    /** Drain an already accepted input without growing the bounded timestamp queue. */
+    fun drainOutput(): NativeEncodedAudioPacket? = null
 }
 
 interface RealtimeAudioDecoderInterface : Closeable {
@@ -86,7 +93,10 @@ private class AndroidNativeRealtimeAudioEncoder(
     }
 
     @Synchronized
-    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket? {
+    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket? = offer(pcm16LittleEndian).packet
+
+    @Synchronized
+    override fun offer(pcm16LittleEndian: ByteArray): RealtimeAudioEncodeResult {
         check(!closed) { "native encoder is closed" }
         if (pcm16LittleEndian.size != inputPCMByteCount) {
             throw NativeRealtimeAudioCodecException(
@@ -94,14 +104,22 @@ private class AndroidNativeRealtimeAudioEncoder(
             )
         }
         val inputIndex = mediaCodec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
-        if (inputIndex < 0) return null
-        val input = mediaCodec.getInputBuffer(inputIndex)
+        val accepted = inputIndex >= 0
+        if (accepted) {
+            val input = mediaCodec.getInputBuffer(inputIndex)
             ?: throw NativeRealtimeAudioCodecException("native encoder input buffer is unavailable")
-        input.clear()
-        input.put(pcm16LittleEndian)
-        mediaCodec.queueInputBuffer(inputIndex, 0, pcm16LittleEndian.size, presentationTimeUs, 0)
-        presentationTimeUs += parameters.frameDurationMilliseconds * 1_000L
+            input.clear()
+            input.put(pcm16LittleEndian)
+            mediaCodec.queueInputBuffer(inputIndex, 0, pcm16LittleEndian.size, presentationTimeUs, 0)
+            presentationTimeUs += parameters.frameDurationMilliseconds * 1_000L
+        }
 
+        return RealtimeAudioEncodeResult(accepted, drainOutput())
+    }
+
+    @Synchronized
+    override fun drainOutput(): NativeEncodedAudioPacket? {
+        check(!closed) { "native encoder is closed" }
         repeat(MAX_DRAIN_ATTEMPTS) {
             when (val outputIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)) {
                 MediaCodec.INFO_TRY_AGAIN_LATER -> return null

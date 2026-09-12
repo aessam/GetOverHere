@@ -1584,3 +1584,202 @@ Explicit interface selection prevents Wi-Fi from supplying this pass. This verif
 a direct USB IP path on this pair, not TCP/UDP application throughput, tour audio,
 Wi-Fi Aware concurrency, offline tethering prerequisites or locked endurance.
 Tethering remains in the state enabled by the user; agent changed no USB/radio settings.
+
+## 2026-09-11 — two-hub implementation preflight and shared contracts
+
+Approved detailed plan committed with USB evidence as18d0c46. User chose either
+guide orientation, companion screen-awake acceptable, no audience relays, and a
+physical qualified capacity even if below30. ADR-069/GatewayImplementationPlan.md.
+
+Read-only preflight: `adb devices -l` listed only192.168.1.165:42369 offline;
+`adb mdns services` found none. Explicit `adb connect` to the two previously
+authorized endpoints192.168.1.17:33101 and192.168.1.165:42369 both timed out.
+`xcrun devicectl list devices` reported iPhone17ProMax paired/available,12mini
+unavailable and iPhone17Pro simulator connected. No phone/router/radio settings
+changed. Physical USB+radio coexistence is NOT RUN; user notification sent.
+
+Shared contracts: `swift test --package-path Packages/TourSessionCore --filter
+Gateway` first failed one expected-size assertion (expected171, encoded172 for
+the12-byte test address). Corrected the fixture arithmetic, not the wire format;
+rerun passed10 tests including five parameterized lane cases, truncation, QR,
+expiry,100 deterministic descriptor roundtrips and local dwell tests. The earlier
+compile-only invocation before the new test file existed selected zero tests and
+is NOT counted as verification. Full-suite first invocation hit compiler-cache
+sandbox permissions; rerun uses approved standard SwiftPM cache access with log
+`/tmp/GetOverHereGatewayCore.log`. Integration and physical gates remain pending.
+
+Full shared-core reruns: `swift test --package-path Packages/TourSessionCore`
+passed81 tests in13 suites, including the new gateway contracts. Final invocation
+after the descriptor-acknowledgement constant used
+`/tmp/GetOverHereGatewayCore-final.log` and passed again. Actual built Swift/Kotlin
+CLIs passed `scripts/verify_gateway_protocol.py`:262/262 roundtrip/rejection cases,
+ten exact fixture lines,zero skipped. Raw cases are retained in
+`benchmarks/2026-09-11-gateway-software/protocol.json`.
+
+Baseline CLI security regressions run against those same binaries:
+`verify_room_admission.py`:8/8 real exchanges;
+`verify_room_admission_v2.py`:8 exchanges+8 explicit rejections;
+`verify_guide_signatures.py`:8/8 signatures each direction with changed/truncated
+packets rejected. All exited0. These are core compatibility gates, not native
+transport or physical audience evidence.
+
+New test-only `Packages/GatewayTLSFixture` build initially failed explicit-self
+closure capture requirements. Fixed the fixture captures; rerun passed. Its
+executable uses production LocalLinkSecurity identity/TLS options, with an
+independent Android instrumentation fixture using production HubIdentity. The
+planned ADB tunnels are explicitly not USB Ethernet evidence.
+
+Read-only device recheck during implementation still found no physical Android
+device; only emulator-5554. iPhone17ProMax remained paired/available. No physical
+radio or network settings changed.
+
+Cross-runtime TLS: `python3 scripts/verify_gateway_tls_interop.py --serial
+emulator-5554 --adb /Users/aessam/Library/Android/sdk/platform-tools/adb --binary
+Packages/GatewayTLSFixture/.build/out/Products/Debug/gateway-tls-fixture --output
+/tmp/GetOverHereGatewayTLSInterop-1` exited0. Apple-server/Android-client and
+Android-server/Apple-client both passed exactly one exchange test,65,536 bytes
+round-tripped and verified by each endpoint. No skipped cases. Fixture identities
+and only the created ADB tunnels were removed. Retained results/logs:
+`benchmarks/2026-09-11-gateway-software/tls-interop/`. This uses production
+LocalLinkSecurity/HubIdentity but a test-only payload protocol over ADB; physical
+USB Ethernet, radios and tour audio are NOT RUN by this fixture.
+
+Full shared regression completed with exit0:
+
+```sh
+GOH_ANDROID_JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' GOH_SWIFT_SCRATCH='/tmp/GetOverHereGatewayParitySwift' bash scripts/verify_core_parity.sh
+```
+
+Log `/tmp/GetOverHereGatewayFullParity.log` ends `Core parity passed`, including
+the eight v1 exchanges, eight v2 exchanges/eight rejections, both signature
+directions and262 gateway cases. This uses real compiled Swift/Kotlin programs.
+
+Physical iPhone preflight attempted the public read-only process query:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcrun devicectl device info processes --device 00008150-001208901AC0401C --search GetOverHere --timeout 20 --json-output /tmp/GetOverHereGateway-iPhone-processes.json
+```
+
+It failed with CoreDevice4000 / NWError54 connection reset despite the device
+inventory showing paired/available. No install, relaunch or radio change followed.
+Only the owned Android emulator was accessible. Paired inventory is not a working
+device-control connection; the physical gateway matrix stays NOT RUN.
+
+The first integrated gate invoked `scripts/verify_tour_session.sh` with the current
+Xcode, `/tmp/GetOverHereGatewayParitySwift`,
+`/tmp/GetOverHereTourSessionLinkSecurity`, simulator17Pro and
+`/tmp/GetOverHereGatewayIntegratedDerived`. It passed the core/security/parity
+stages but failed phase5's existing privacy audit: three new iOS log statements
+included `error.localizedDescription`. The following Android audit also identifies
+new raw exception logging. Preserve the guard, redact production log text to
+error type/numeric code and retain actionable on-screen errors. The first run's
+log is `/tmp/GetOverHereGatewayIntegratedGate.log`; this is a failed gate, not a
+complete pass. Final rerun is required after those changes.
+
+Native Android final run1: `/tmp/GetOverHereGatewayNativeFinal-1.log` executed8
+cases;7 passed,1 failed. Mutual TLS/security4, independent admission/flood1,
+real-TLS address-family replacement after enrollment expiry1 and stopped-descriptor
+ownership1 passed. The independent JmDNS browser did not resolve the explicit
+emulator eth0 advertiser within8s. Advertisement readiness alone is not discovery
+evidence. Public multicast delivery is being isolated before attributing the
+failure to the emulator or changing production behavior; this failure is retained.
+
+The second integrated run, `/tmp/GetOverHereGatewayIntegratedGate-2.log`, passed
+the privacy guards but failed Android lint: six calls in the new Aware branch
+wrapper required its existing API34 factory boundary to be declared on the class,
+and GatewayScreen cast LocalContext to Activity instead of using LocalActivity.
+Both were corrected; the guard and app OS floor were retained. The Android owner's
+subsequent lint/unit/debug/test/release build passed. A complete nine-stage rerun
+is still required after the final guide-branch ownership correction.
+
+Native discovery isolation, `/tmp/GetOverHereGatewayMulticastIsolation-1.log`:
+an exact randomized multicast payload looped back on emulator eth0 successfully.
+JmDNS contained the expected PTR/SRV/TXT/A records and public collector data, but
+the fixture's synchronous getServiceInfo call returned null. The fixture now
+uses the same public ServiceListener.serviceResolved callback as production,
+with the unchanged eight-second bound and exact instance/type/address/port
+assertions. `/tmp/GetOverHereGatewayNativeFinal-2.log` passed9/9, zero skipped:
+TLS identity4, independent forwarded admission/flood1, recovery/discovery4.
+No production fallback, custom DNS parser or increased timeout was introduced.
+Actual USB multicast discovery remains NOT RUN.
+
+Final coordinator review found Android guide pairing did not enable the original
+guide's local Aware branch when its preference started false. Separate companion
+discovery suppression also failed to restore previous preferences. The new
+coordinator regressions ran11 cases with2 failures before the correction, then
+11/11 passed. Guide pairing now owns the original service's Aware preference;
+removing the companion keeps that local branch until the tour ends. Companion
+stop restores only its owned discovery preferences. Diagnostics must observe the
+guide's original branch, not the companion proxy branch. This is software proof;
+native radio coexistence remains a physical gate.
+
+## 2026-09-11 — final coordinated gateway software candidate
+
+Source frozen after original Android guide-Aware ownership/diagnostics fixes.
+The final Android coordinator suite contains13 tests; all app JVM suites total
+198 tests across37 suites, zero failures/skips. Native candidate rerun passed9/9
+in12.774s. Retained current and earlier failed evidence is under
+`benchmarks/2026-09-11-gateway-software/android/`; earlier193-test candidates are
+explicitly historical.
+
+Final full-gate command, exit0:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_ANDROID_JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' GOH_SWIFT_SCRATCH=/tmp/GetOverHereGatewayParitySwift GOH_LINK_SECURITY_SCRATCH=/tmp/GetOverHereTourSessionLinkSecurity GOH_IOS_DESTINATION='platform=iOS Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereGatewayIntegratedDerived bash scripts/verify_tour_session.sh
+```
+
+All9 stages passed. Log `/tmp/GetOverHereGatewayIntegratedGate-3.log` is retained
+as `benchmarks/2026-09-11-gateway-software/integrated-final.log`. Swift core81,
+Kotlin core82, LocalLinkSecurity4 definitions/8 cases, gateway parity262 and
+host gateway tools36 pass. Android app198 pass. Xcode printed three unusual
+compiler-driver exit0/no-output diagnostics, but its completed result bundle and
+enclosing command both pass; no speculative code change followed. Public
+xcresult summary reports196 passed definitions/242 actual runs, zero failures,
+four skipped physical Bluetooth fixtures. Simulator device17Pro, iOS27.0/24A434;
+result `/tmp/GetOverHereGatewayIntegratedDerived/Logs/Test/Test-GetOverHere-2026.09.11_20-01-25--0700.xcresult`.
+Exact summary and skipped names are retained in the software report. No skipped
+fixture counts as physical evidence.
+
+On the final installed Android APK pair: production Companion setup UI1/1,
+native authenticated debug/cleanup5/5, visible consent/client/recorder22/22.
+The recorder collected11 observations over10,040ms from the actual guide service;
+there were no listeners, so it does not establish delivered audio. Permissions,
+credentials, scoped forwards and awake ownership were restored. Evidence is in
+`gateway-setup-ui/` and `debug-control/coordinated-candidate/` under the report.
+
+Final cross-runtime TLS command, exit0:
+
+```sh
+python3 scripts/verify_gateway_tls_interop.py --serial emulator-5554 --adb /Users/aessam/Library/Android/sdk/platform-tools/adb --binary Packages/GatewayTLSFixture/.build/out/Products/Debug/gateway-tls-fixture --apk Android/app/build/outputs/apk/debug/app-debug.apk --test-apk Android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk --output /tmp/GetOverHereGatewayTLSInterop-final
+```
+
+Both server-role cases passed,65,536 exact bytes each. The controller checked
+installed APK SHA256 against the selected artifacts before either case:
+app33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a;
+testee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c.
+Apple fixture SHA15076c6f14422fa97902305f34574171c8e9144ceec420ca46c0bc85c2d41af5.
+Both endpoints verified payload SHA4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2.
+Only test identities and the two owned ADB tunnels were removed. Retained
+`tls-interop-final/` includes preflight/result/native logs; whitespace in archived
+console logs is normalized. This is Mac Network.framework/AndroidKeyStore TLS
+over ADB, not an iPhone/USB/radio/codec test.
+
+Independent final artifact checks exited0:
+
+```sh
+python3 scripts/verify_debug_control_release.py /tmp/GetOverHereGatewayIOSRelease/Build/Products/Release-iphoneos/GetOverHere.app
+python3 scripts/verify_debug_control_release.py Android/app/build/outputs/apk/release/app-release-unsigned.apk
+codesign --verify --deep --strict /tmp/GetOverHereGatewayIOSDevice/Build/Products/Debug-iphoneos/GetOverHere.app
+```
+
+Both Release artifacts exclude debug control; the retained signed iPhone build
+passes signature integrity. No phone install or radio change was performed.
+Read-only final normal-UI integration review found no additional blocking guide,
+companion or listener wiring gap. Physical A13–A20 remain NOT RUN until the user
+returns with the devices; no group cap, acoustic or locked-operation claim is made.
+
+Cleanup: selected emulator5554 forward/reverse inventories were empty after the
+final TLS fixture. `adb -s emulator-5554 emu kill` stopped only the emulator this
+session launched; its owning process exited0. Retained builds/evidence were not
+deleted. Existing iOS Simulator and physical phone/radio state were not changed
+by this cleanup. Final `git diff --check` passed.

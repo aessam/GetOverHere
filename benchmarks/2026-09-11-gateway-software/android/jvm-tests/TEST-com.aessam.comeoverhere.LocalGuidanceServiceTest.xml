@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.LocalGuidanceServiceTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:29.324Z" hostname="redacted" time="0.003">
+  <properties/>
+  <testcase name="guidanceUsesLocalPositionWithoutChangingSharedTarget" classname="com.aessam.comeoverhere.LocalGuidanceServiceTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

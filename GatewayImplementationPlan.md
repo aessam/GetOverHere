@@ -65,20 +65,26 @@ slots. Account audience, pending work, proxy halves and radio paths separately.
 
 ## Execution and proof
 
-- [ ] A1: Reproduce/instrument Android encoder startup/reset churn before fixes.
-  Verify ordinary application USB TCP both roles; USB+Aware and USB+Apple P2P
+Software candidate verified September11. Evidence and exact counts:
+`benchmarks/2026-09-11-gateway-software/README.md`. Checked software work does not
+check its physical acceptance row. The user is away from the devices; A6 is NOT RUN.
+
+- [x] A1 software: Reproduce/instrument Android encoder startup/reset churn,
+  correct accepted-input accounting and bounded stale-output drain, retain tests.
+- [ ] A1 physical: Verify ordinary application USB TCP both roles; USB+Aware and USB+Apple P2P
   coexistence without AP/Internet. Record USB power/data roles. Unsupported
   hardware is explicit, not silently routed through LAN.
-- [ ] A2: Mirrored contracts/negative fixtures, TLS enrollment, fixed-lane proxy,
+- [x] A2 software: Mirrored contracts/negative fixtures, TLS enrollment, fixed-lane proxy,
   limits, generation ownership and admission-flood isolation.
-- [ ] A3: Apple native peer adapter, Android Aware companion integration,
+- [x] A3 software: Apple native peer adapter, Android Aware companion integration,
   authoritative metadata publication and strict route policies.
-- [ ] A4: Guide/companion/listener UI; truthful connected versus audio-ready
+- [x] A4 software: Guide/companion/listener UI; truthful connected versus audio-ready
   counts; Android connectedDevice lifecycle; permissions at user intent.
-- [ ] A5: Cable/radio loss and replacement, retained guide pin, state repair and
-  exact asset resume; no stale callbacks or buffered speech after recovery.
-  Freeze one coordinated candidate for consolidated acceptance.
-- [ ] A6: Physical both orientations, capacity, lock, acoustic and endurance
+- [x] A5 software: Loss/replacement lifecycle, retained guide pin, state repair and
+  exact asset resume, stale-callback rejection and bounded audio queues. Real TLS
+  component tests exercise changed addresses; actual cable/radio faults await A6.
+  Coordinated source, builds, tools and evidence are ready for consolidated acceptance.
+- [ ] A6 physical: Both orientations, actual cable/radio recovery, capacity, lock, acoustic and endurance
   qualification. Four phones prove both branches, not capacity.
 
 ## Debugging and reusable tests

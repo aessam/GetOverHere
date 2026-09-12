@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.PresentationServiceTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:47.790Z" hostname="redacted" time="0.511">
+  <properties/>
+  <testcase name="supersededControlCallbackAndWrongRoomLeaveCannotEndReplacementRoom" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.101"/>
+  <testcase name="guideLateJoinRestoresPresentationTargetPinAndPointerSnapshots" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.051"/>
+  <testcase name="connectedGuestCountFollowsControlLaneMembership" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.051"/>
+  <testcase name="audioReadyCountRequiresConnectedGuestAndIncreasingRendererReports" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.05"/>
+  <testcase name="guestIgnoresStalePresentationSnapshots" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.051"/>
+  <testcase name="guidePublishesOnlySelectedTargetCoordinates" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.051"/>
+  <testcase name="authenticatedLeaveDistinguishesSessionEndFromDiscoveryLoss" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.104"/>
+  <testcase name="guidePublishesAndClearsMagneticPointer" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.051"/>
+  <testcase name="discoveryUnavailableRoundtripsSeparatelyFromSessionEnd" classname="com.aessam.comeoverhere.PresentationServiceTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

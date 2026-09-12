@@ -4,12 +4,33 @@ import argparse
 from pathlib import Path
 import plistlib
 import subprocess
+import zipfile
+
+
+def verify_android_apk(path):
+    forbidden = ("GatewayDebugActivity", "GatewayDebugControl", "GatewayScenarioRecorder", "goh.debug.control.v1",
+                 "debug-control/credentials.json", "Enable debug control for 10 minutes")
+    with zipfile.ZipFile(path) as apk:
+        names = apk.namelist()
+        dex = [name for name in names if name.startswith("classes") and name.endswith(".dex")]
+        if not dex or "AndroidManifest.xml" not in names:
+            raise RuntimeError("Not an APK with manifest and executable DEX")
+        for name in ["AndroidManifest.xml", *dex]:
+            if apk.getinfo(name).file_size > 256 * 1024 * 1024:
+                raise RuntimeError("Unexpectedly large Release component")
+            payload = apk.read(name)
+            if any(value.encode() in payload or value.encode("utf-16-le") in payload for value in forbidden):
+                raise RuntimeError(f"Debug control leaked into Release component {name}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     args = parser.parse_args()
+    if args.app.suffix.lower() == ".apk":
+        verify_android_apk(args.app)
+        print("PASS: Android Release manifest and DEX exclude debug control activation, commands and identities")
+        return
     with (args.app / "Info.plist").open("rb") as file:
         info = plistlib.load(file)
     schemes = [scheme for item in info.get("CFBundleURLTypes", []) for scheme in item.get("CFBundleURLSchemes", [])]

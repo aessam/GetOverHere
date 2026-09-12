@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.LocalSessionTransportTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:29.331Z" hostname="redacted" time="5.115">
+  <properties/>
+  <testcase name="audioLaneReportsLegacyProtocolVersionExplicitly" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.073"/>
+  <testcase name="guestAudioLaneReportsGuideClose" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.056"/>
+  <testcase name="twentyFourGuestsAuthenticateAndEachReceivesAControlFrame" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.059"/>
+  <testcase name="stalledGuestDoesNotDelayHealthyGuests" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="2.068"/>
+  <testcase name="independentAssetLaneSupportsTargetedManifestsAndGuestRequests" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.076"/>
+  <testcase name="guestAudioLaneStaysSilentOnLocalStop" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.559"/>
+  <testcase name="audioLaneWrongCodeStaysSilent" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.632"/>
+  <testcase name="controlLaneRejectsGuestWithWrongTourCode" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.376"/>
+  <testcase name="guestReconnectsAfterGuideRestartThreeTimes" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.846"/>
+  <testcase name="authenticatedGuideLeaveIsDeliveredBeforeTransportShutdown" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.079"/>
+  <testcase name="terminalClearErasesLocalSessionCredentials" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.05"/>
+  <testcase name="independentControlLaneAuthenticatesBothDirections" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.053"/>
+  <testcase name="goh2HelloRegistersGuestAndRealtimePayloadArrives" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.082"/>
+  <testcase name="controlLaneReportsLegacyProtocolVersionExplicitly" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.051"/>
+  <testcase name="guideDisconnectsGuestThatForgesGuideSenderId" classname="com.aessam.comeoverhere.LocalSessionTransportTest" time="0.054"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

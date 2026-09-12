@@ -67,6 +67,7 @@ final class ChannelService {
     func findNearbyTours() {
         nearbyError = nil
         bluetoothDiscoveryEnabled = true
+        applePeerDiscoveryEnabled = true
         // The normal mixed-platform flow uses Bluetooth. Aware remains an explicit
         // diagnostics/pairing choice; Find/Create must not force experimental pairing.
     }
@@ -84,7 +85,24 @@ final class ChannelService {
         tourFeatureError = nil
     }
 
-    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery(); updateAwareDiscovery() } }
+    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery() } }
+    var applePeerDiscoveryEnabled = false { didSet { updateApplePeerDiscovery() } }
+    var strictApplePeer = false {
+        didSet { (coordinator.controlPlane as? LocalControlPlane)?.strictApplePeer = strictApplePeer }
+    }
+    var companionModeActive = false
+    var onGuideSessionEnding: (() -> Void)?
+    private func updateApplePeerDiscovery() {
+        guard !companionModeActive else { return }
+        if listenState == .listening, connectionState == .connected {
+            (coordinator.controlPlane as? LocalControlPlane)?.pauseApplePeerBrowsing()
+            return
+        }
+        let mode: BluetoothDiscoveryMode = !applePeerDiscoveryEnabled || (!discoveryForeground && listenState == .idle) ? .off :
+            listenState == .broadcasting ? .advertising :
+            listenState == .listening && connectionState == .connected ? .off : .browsing
+        (coordinator.controlPlane as? LocalControlPlane)?.setApplePeerMode(mode)
+    }
     var awareDiscoveryEnabled = false { didSet { updateAwareDiscovery() } }
     private(set) var nearbyError: String?
     private(set) var guestRoute: NearbyGuestRoute?
@@ -102,12 +120,17 @@ final class ChannelService {
     }
 
     func canJoin(_ channel: Channel) -> Bool {
+        if companionModeActive { return false }
+        if strictApplePeer, channel.createdBy != localPeer.id {
+            guard let room = UUID(uuidString: channel.id) else { return false }
+            return (coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: room) == true
+        }
         if channel.audioHostIP != nil || channel.createdBy == localPeer.id { return true }
         guard let room = UUID(uuidString: channel.id) else { return false }
         return (coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: room) == true
     }
     var bluetoothDiscoveryEnabled = false { didSet { updateBluetoothDiscovery() } }
-    var discoveryForeground = true { didSet { updateBluetoothDiscovery(); updateAwareDiscovery() } }
+    var discoveryForeground = true { didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery() } }
 
     private func updateBluetoothDiscovery() {
         let mode: BluetoothDiscoveryMode
@@ -136,7 +159,7 @@ final class ChannelService {
     private(set) var roomAccessError: String?
     private let roomAdmission: any RoomAdmissionInterface
     private var roomAccessAttempt: UInt64 = 0
-    private(set) var connectionState: ConnectionState = .idle { didSet { updateBluetoothDiscovery() } }
+    private(set) var connectionState: ConnectionState = .idle { didSet { updateBluetoothDiscovery(); updateApplePeerDiscovery() } }
     var audioQuality: AudioQuality = .standard
 
     struct SlideImport: Sendable {
@@ -206,6 +229,14 @@ final class ChannelService {
         }.joined(separator: " ")
     }
 
+    /// Public authority metadata only; the companion never receives credentials or the private signer.
+    var gatewayHostedRoom: (BluetoothRoomRecord, Data)? {
+        guard isCreator, let activeChannel, let roomID = UUID(uuidString: activeChannel.id),
+              let guideID = UUID(uuidString: activeChannel.createdBy), let key = guideSigner?.publicKey else { return nil }
+        return (BluetoothRoomRecord(roomID: roomID, guideID: guideID, name: activeChannel.name,
+            isAndroid: false, isLocked: isRoomLocked, admissionVersion: 2), key)
+    }
+
     static let speakerFeedbackWarningText =
         "Speaker output can feed back into the guide's microphone. Use the earpiece or headphones near the guide."
 
@@ -271,6 +302,7 @@ final class ChannelService {
     // MARK: - Channel Management
 
     func createChannel(name: String) {
+        guard !companionModeActive else { tourFeatureError = "Stop companion mode before creating a tour."; return }
         sessionAttempt &+= 1
         let channel = Channel(
             id: UUID().uuidString,
@@ -401,6 +433,7 @@ final class ChannelService {
     }
 
     func joinChannel(_ channel: Channel, tourCode rawTourCode: String) {
+        guard !companionModeActive else { tourFeatureError = "Stop companion mode before joining a tour."; return }
         guard activeChannelID != nil || connectionState != .connecting else { return }
         sessionAttempt &+= 1
         guard let sessionID = UUID(uuidString: channel.id),
@@ -477,7 +510,7 @@ final class ChannelService {
         hostIP: String, route: NearbyGuestRoute?, credential: SessionCredential, identity: AdmittedGuideIdentity
     ) {
         let nearby = coordinator.controlPlane as? any NearbyRouteControl
-        if let lanHost = channel.audioHostIP {
+        if let lanHost = channel.audioHostIP, !strictApplePeer {
             if activeChannelID == nil { joinStage = .admitting }
             do {
                 let admitted = try await Self.admit(roomAdmission, host: lanHost, sessionID: sessionID,
@@ -876,6 +909,7 @@ final class ChannelService {
     /// survive it (ADR-048).
     private func stopCurrentActivity(discardingPendingStretch: Bool = true, preservingNearbyRoute: Bool = false,
                                      preservingGuidePin: Bool = false) {
+        if guideSigner != nil { onGuideSessionEnding?() }
         guideSigner = nil
         if !preservingGuidePin { guestGuidePin.endSession() }
         audioGeneration &+= 1

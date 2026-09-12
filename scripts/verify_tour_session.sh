@@ -43,6 +43,8 @@ fi
 
 echo "[1/9] Swift protocol and registry tests"
 swift test --disable-sandbox --package-path "$SWIFT_PACKAGE" --scratch-path "$SWIFT_SCRATCH"
+swift test --disable-sandbox --package-path "$PROJECT_ROOT/Packages/LocalLinkSecurity" \
+    --scratch-path "${GOH_LINK_SECURITY_SCRATCH:-/tmp/GetOverHereTourSessionLinkSecurity}"
 
 echo "[2/9] Kotlin protocol and registry tests"
 (
@@ -55,6 +57,7 @@ SWIFT_BIN="$(swift build --disable-sandbox --package-path "$SWIFT_PACKAGE" --scr
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_room_admission_v2.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_guide_signatures.py" "$SWIFT_BIN" "$KOTLIN_CLI"
+JAVA_HOME="$ANDROID_JAVA_HOME" python3 "$PROJECT_ROOT/scripts/verify_gateway_protocol.py" "$SWIFT_BIN" "$KOTLIN_CLI"
 
 run_kotlin() {
     JAVA_HOME="$ANDROID_JAVA_HOME" "$KOTLIN_CLI" "$@"
@@ -345,6 +348,7 @@ echo "[7/9] Android API-floor and permission lint"
 
 echo "[8/9] Android app integration, TCP loopback, and APK"
 PYTHONDONTWRITEBYTECODE=1 python3 "$PROJECT_ROOT/scripts/test_benchmark_android_aware.py"
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$PROJECT_ROOT/scripts" -p 'test_gateway_tools.py' -v
 (
     cd "$ANDROID_ROOT"
     JAVA_HOME="$ANDROID_JAVA_HOME" ./gradlew testDebugUnitTest assembleDebug

@@ -69,7 +69,8 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
+fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenGateway: () -> Unit = {}) {
+    val strictAware by vm.strictAwareOnly.collectAsState()
     val channels by vm.channels.collectAsState()
     val bluetoothEnabled by vm.bluetoothDiscoveryEnabled.collectAsState()
     val activeChannelID by vm.activeChannelID.collectAsState()
@@ -217,6 +218,16 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             pickerError = "Nearby Wi-Fi permission is required for offline device-to-device tours"
         }
     }
+    val strictAwarePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { vm.setStrictAwareOnly(true); pickerError = null }
+        else pickerError = "Nearby Wi-Fi permission is required for the Wi-Fi Aware-only listener."
+    }
+    val setStrictAware: (Boolean) -> Unit = { enabled ->
+        if (enabled && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
+            strictAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+        else vm.setStrictAwareOnly(enabled)
+    }
     val requestLocalGuidance = {
         if (
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -341,6 +352,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             TopAppBar(
                 title = { Text("Megaphone") },
                 actions = {
+                    TextButton(onClick = onOpenGateway) { Text("Companion") }
                     IconButton(onClick = { showNearbySettings = !showNearbySettings }) {
                         Icon(Icons.Default.Settings, "Connection diagnostics")
                     }
@@ -353,6 +365,10 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (activeChannel == null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Two-hub listener: Wi-Fi Aware only", Modifier.weight(1f))
+                    Switch(strictAware, setStrictAware, modifier = Modifier.testTag("gatewayStrictAware"))
+                }
                 Button(onClick = { requestNearby {} }, modifier = Modifier.padding(horizontal = 16.dp).testTag("findNearbyTours")) {
                     Text(if (bluetoothEnabled) "Refresh Nearby Tours" else "Find Nearby Tours")
                 }
@@ -382,6 +398,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         com.aessam.toursession.SessionTransportRoute.LOCAL_LAN -> "Local Wi-Fi"
                         com.aessam.toursession.SessionTransportRoute.WIFI_AWARE -> "Wi-Fi Aware"
                         com.aessam.toursession.SessionTransportRoute.BLUETOOTH -> "Bluetooth"
+                        com.aessam.toursession.SessionTransportRoute.APPLE_PEER -> "Apple peer-to-peer"
                     }
                     Text("Connection: $label", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("sessionTransport"))
                 }

@@ -16,6 +16,8 @@ class AppViewModel(
 ) : ViewModel() {
 
     val channels = channelService.channels
+    val strictAwareOnly = channelService.strictAwareOnly
+    fun setStrictAwareOnly(value: Boolean) = channelService.setStrictAwareOnly(value)
     val awareSettings = channelService.awareSettings
     fun canJoin(channel: Channel) = channelService.canJoin(channel)
     val bluetoothDiscoveryEnabled = channelService.bluetoothDiscoveryEnabled

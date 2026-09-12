@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.TourAssetTransferServiceTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:49.449Z" hostname="redacted" time="1.742">
+  <properties/>
+  <testcase name="currentAndNextPriorityYieldsOnlyAfterBackgroundChunkAndResumesExactOffset" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.092"/>
+  <testcase name="manifestRequestsAreCappedAtTwoInFlight" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.395"/>
+  <testcase name="interruptedTransferResumesAndReportsVerifiedParticipantReadiness" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.43"/>
+  <testcase name="unansweredRequestReleasesSlotAfterDeadline" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.371"/>
+  <testcase name="checksumMismatchIsReRequestedOnceAndRecovers" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.086"/>
+  <testcase name="secondChecksumMismatchSendsFailedStatusAndReleasesSlot" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.29"/>
+  <testcase name="disconnectResetsInFlightRequests" classname="com.aessam.comeoverhere.TourAssetTransferServiceTest" time="0.077"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Asset cache: removed length-mismatched complete entry 07e5f105661c0b8f9c673dad0a0cf458872c197508d0ebc48f8b7193021f7249 (expected 70000, got 10)
+Asset cache: removed length-mismatched complete entry 55d26e28eabdb9bf05cbca0453d08ae982a87134d178ea42ddd348875ff92690 (expected 80000, got 10)
+Asset transfer: checksum mismatch for b438a9247c28dddea624903451454c0032dbf79b01107db786ddd2554304778f (attempt 1 of 2); re-requesting from offset 0
+Asset transfer: checksum mismatch for b438a9247c28dddea624903451454c0032dbf79b01107db786ddd2554304778f (attempt 1 of 2); re-requesting from offset 0
+]]></system-err>
+</testsuite>

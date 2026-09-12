@@ -1,0 +1,310 @@
+ANDROID_JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home
+XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer
+[1/9] Swift protocol and registry tests
+Building for debugging...
+[1 / 13]
+Build complete! (0.27 sec)
+Test Suite 'All tests' started at 2026-09-11 19:43:58.755.
+Test Suite 'All tests' passed at 2026-09-11 19:43:58.756.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite NearbyLaneRequestTests started.
+􀟈  Suite SessionCapacityTopologyTests started.
+􀟈  Suite RoomAdmissionV2Tests started.
+􀟈  Suite "Participant registry" started.
+􀟈  Suite "GOH2 session protocol" started.
+􀟈  Suite GuideAssetScheduleTests started.
+􀟈  Suite RoomAdmissionTests started.
+􀟈  Suite BluetoothLanePSMsTests started.
+􀟈  Suite NearbyRealtimeQueueTests started.
+􀟈  Suite "Audio readiness wire contract" started.
+􀟈  Suite SignedGuideFrameTests started.
+􀟈  Suite GatewayProtocolTests started.
+􀟈  Test rejectsMalformedAndUnscopedApplicationRequests() started.
+􀟈  Suite BluetoothRoomRecordTests started.
+􀟈  Test sharedFixtureAndEveryLaneRoundtrip() started.
+􀟈  Test invalidCapacitySelfAttachmentAndUnboundedLeasesReject() started.
+􀟈  Test promotionDuplicateParentsDepthAndStaleRouteCallbacksAreBounded() started.
+􀟈  Test softwareBudgetIsNotRadioCapacityAndUpstreamIsSubtractedOnce() started.
+􀟈  Test leaseRenewalExpiryAndSubtreeRemovalRejectResurrection() started.
+􀟈  Test explicitBluetoothRoutePreservesExistingOrderingAndRawValues() started.
+􀟈  Test explicitDirectStarAndUnknownCapacityNeverInventRelays() started.
+􀟈  Test pinSurvivesReconnectAndRejectsAnyIdentityChangeUntilExplicitEnd() started.
+􀟈  Test messagesRejectTruncationTrailingBytesAndEveryReplyMutation() started.
+􀟈  Test "Target snapshot survives 100 deterministic geographic roundtrips" started.
+􀟈  Test "Target guidance is calculated only from local inputs" started.
+􀟈  Test "Presentation, bearing, target, and tour pack roundtrip" started.
+􀟈  Test possessionProofBindsEveryCredentialByteAndFreshTranscript() started.
+􀟈  Test "State fixture describes every control and asset kind" started.
+􀟈  Test roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test "Tour pack ordering is UTF-8 byte order with exact dedup" started.
+􀟈  Test rejectsDowngradeWrongCodeAndReplayedTranscript() started.
+􀟈  Test "Hybrid routes prefer LAN and fall back to Wi-Fi Aware" started.
+􀟈  Test "Recovery simulation covers late join, reconnect, missing assets, and target replacement" started.
+􀟈  Test "Truncated payload fails loudly" started.
+􀟈  Test "Wi-Fi Aware announcement has stable cross-platform bytes" started.
+􀟈  Test scaleAndChurn(count:) started.
+􀟈  Test "Encrypted frame is route-independent, authenticated, and replay-detectable" started.
+􀟈  Test "Golden hello frame is stable" started.
+􀟈  Test "Reconnect replaces the old connection without incrementing listeners" started.
+􀟈  Test "Realtime audit detects loss, duplicate, and reorder" started.
+􀟈  Test "Encrypted frame rejects tampering and another tour credential" started.
+􀟈  Test "Guide is not counted as a listener" started.
+􀟈  Test "Visual focus is authoritative, versioned, and reconnectable" started.
+􀟈  Test "UTF-8 hello roundtrips" started.
+􀟈  Test "Credential stretch is a PBKDF2 wire contract" started.
+􀟈  Test rejectsWrongSelectedGuideAndSignerSession() started.
+􀟈  Test "One route lease owns every session lane" started.
+􀟈  Test "Authentication challenge and welcome roundtrip" started.
+􀟈  Test "Encoded audio frame and codec negotiation are deterministic" started.
+􀟈  Test "Realtime audio accumulation and jitter are bounded" started.
+􀟈  Test "Target coordinates reject invalid geographic boundaries" started.
+􀟈  Test thirtyListenersIncludeFiveRelaysAndTwentyFiveLeaves() started.
+􀟈  Test "Message kinds cannot enter the wrong lane" started.
+􀟈  Test "Handshake fixture is stable" started.
+􀟈  Test "Replay window rejects an accepted frame after sequence eviction" started.
+􀟈  Test "Realtime audio frame seals deterministically" started.
+􀟈  Test aggregateBudgetRetainsFractionalCreditAndCapsIdleBurst() started.
+􀟈  Test "Authentication proofs are stable and reject another tour code" started.
+􀟈  Test removingNextMemberPreservesFairnessAndResetCancelsAllWork() started.
+􀟈  Test fairnessPrecedesPerMemberPriorityAndFIFOTies() started.
+􀟈  Test memberLimitFairThirtyMemberRoundAndUnknownAdmission() started.
+􀟈  Test "Plaintext version mismatch carries both majors" started.
+􀟈  Test boundedWakeAndNoSmallRequestStarvationBypass() started.
+􀟈  Test "Encrypted protocol rejects legacy majors explicitly" started.
+􀟈  Test invalidInputsAndMonotonicRegressionAreRejectedWithoutStateLoss() started.
+􀟈  Test "Slide manifest ordering is UTF-8 byte order with exact dedup" started.
+􀟈  Test dedupAndLimitIncludeInflightAndStaleCompletionCannotReleaseReplacement() started.
+􀟈  Test "Encrypted frame authenticates and preserves the received minor version" started.
+􀟈  Test "Clocked playout conceals a single gap and resyncs to the oldest frame" started.
+􀟈  Test rejectsWrongCodeAndReplay() started.
+􀟈  Test roundtrip(code:) started.
+􀟈  Test leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() started.
+􀟈  Test invalidCodes(code:) started.
+􀟈  Test sharedFixtureAndLaneMapping() started.
+􀟈  Test reliableOverflowRejectsInsteadOfLosingHandshake() started.
+􀟈  Test case passing 1 argument code → nil to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test dropsStaleAudioButPreservesHandshakeAndRecentFrames() started.
+􀟈  Test case passing 1 argument code → "1234" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test everyStateAndRevisionRoundTrips() started.
+􀟈  Test case passing 1 argument code → "My-Tour!42" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test separatedMetadataFixture() started.
+􀟈  Test rejectsUnknownAndNonCanonicalPayloads() started.
+􀟈  Test rejectsTruncatedUnknownDuplicateAndZeroEndpoints() started.
+􀟈  Test pinnedKeyAndGuideAndSessionAreMandatory() started.
+􀟈  Test signaturePreservesCiphertextAndRejectsEverySingleByteChange() started.
+􀟈  Test case passing 1 argument count → 1 to scaleAndChurn(count:) started.
+􀟈  Test sharedFixtureAndRoundtrips() started.
+􀟈  Test case passing 1 argument code → "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" to roundtripBindsMediaCredentialAndSigningIdentity(code:) started.
+􀟈  Test case passing 1 argument count → 8 to scaleAndChurn(count:) started.
+􀟈  Test case passing 1 argument count → 20 to scaleAndChurn(count:) started.
+􀟈  Test case passing 1 argument count → 50 to scaleAndChurn(count:) started.
+􀟈  Test allTruncationsAndTrailingBytesFail() started.
+􀟈  Test malformedRecordsFailClosed() started.
+􀟈  Test descriptorKeepsOriginAndRejectsLegacyOrTruncation() started.
+􀟈  Test pairingBinaryAndQRRoundtrip() started.
+􀟈  Test responseBindsOfferAndCertificate() started.
+􀟈  Test deterministicHundredDescriptorRoundtrips() started.
+􀟈  Test gatewayQueueDropsByLocalResidenceWithoutChangingBytes() started.
+􀟈  Test everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test lifetimeAndHostShapeAreBounded() started.
+􀟈  Test unknownLanesAndWrongGenerationFail() started.
+􀟈  Test strictPolicyCannotUseLANOrBluetooth() started.
+􀟈  Test case passing 1 argument legacyMajor → 2 to "Encrypted protocol rejects legacy majors explicitly" started.
+􀟈  Test case passing 1 argument legacyMajor → 3 to "Encrypted protocol rejects legacy majors explicitly" started.
+􁁛  Test "Target guidance is calculated only from local inputs" passed after 0.020 seconds.
+􀟈  Test case passing 1 argument code → nil to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "1234" to roundtrip(code:) started.
+􁁛  Test explicitBluetoothRoutePreservesExistingOrderingAndRawValues() passed after 0.105 seconds.
+􀟈  Test case passing 1 argument code → "My-Tour!42" to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" to roundtrip(code:) started.
+􀟈  Test case passing 1 argument code → "" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "123" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "ab cd" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "é123" to invalidCodes(code:) started.
+􀟈  Test case passing 1 argument code → "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" to invalidCodes(code:) started.
+􁁛  Test leaseRenewalExpiryAndSubtreeRemovalRejectResurrection() passed after 0.114 seconds.
+􁁛  Test "Target snapshot survives 100 deterministic geographic roundtrips" passed after 0.114 seconds.
+􁁛  Test softwareBudgetIsNotRadioCapacityAndUpstreamIsSubtractedOnce() passed after 0.114 seconds.
+􁁛  Test "Hybrid routes prefer LAN and fall back to Wi-Fi Aware" passed after 0.114 seconds.
+􁁛  Test promotionDuplicateParentsDepthAndStaleRouteCallbacksAreBounded() passed after 0.114 seconds.
+􁁛  Test "Recovery simulation covers late join, reconnect, missing assets, and target replacement" passed after 0.114 seconds.
+􁁛  Test rejectsMalformedAndUnscopedApplicationRequests() passed after 0.114 seconds.
+􁁛  Test invalidCapacitySelfAttachmentAndUnboundedLeasesReject() passed after 0.115 seconds.
+􁁛  Test "Truncated payload fails loudly" passed after 0.142 seconds.
+􁁛  Test scaleAndChurn(count:) with 4 test cases passed after 0.142 seconds.
+􁁛  Test "Presentation, bearing, target, and tour pack roundtrip" passed after 0.143 seconds.
+􁁛  Test "Reconnect replaces the old connection without incrementing listeners" passed after 0.143 seconds.
+􁁛  Test "Wi-Fi Aware announcement has stable cross-platform bytes" passed after 0.143 seconds.
+􁁛  Test "Golden hello frame is stable" passed after 0.143 seconds.
+􁁛  Test "Tour pack ordering is UTF-8 byte order with exact dedup" passed after 0.143 seconds.
+􁁛  Test "Realtime audit detects loss, duplicate, and reorder" passed after 0.143 seconds.
+􁁛  Test explicitDirectStarAndUnknownCapacityNeverInventRelays() passed after 0.143 seconds.
+􁁛  Test "Guide is not counted as a listener" passed after 0.143 seconds.
+􁁛  Test "UTF-8 hello roundtrips" passed after 0.146 seconds.
+􁁛  Test "Visual focus is authoritative, versioned, and reconnectable" passed after 0.148 seconds.
+􁁛  Test "One route lease owns every session lane" passed after 0.148 seconds.
+􁁛  Test "Authentication challenge and welcome roundtrip" passed after 0.148 seconds.
+􀟈  Test case passing 1 argument lane → .hubControl to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .realtime to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .control to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .asset to everyLaneUsesOnlyFixedDestination(_:) started.
+􀟈  Test case passing 1 argument lane → .admission to everyLaneUsesOnlyFixedDestination(_:) started.
+􁁛  Test sharedFixtureAndEveryLaneRoundtrip() passed after 0.150 seconds.
+􁁛  Test "Realtime audio accumulation and jitter are bounded" passed after 0.150 seconds.
+􁁛  Test "Encoded audio frame and codec negotiation are deterministic" passed after 0.150 seconds.
+􁁛  Test "Target coordinates reject invalid geographic boundaries" passed after 0.150 seconds.
+􁁛  Test "Message kinds cannot enter the wrong lane" passed after 0.150 seconds.
+􁁛  Test "Handshake fixture is stable" passed after 0.150 seconds.
+􁁛  Test rejectsWrongSelectedGuideAndSignerSession() passed after 0.150 seconds.
+􁁛  Test aggregateBudgetRetainsFractionalCreditAndCapsIdleBurst() passed after 0.150 seconds.
+􁁛  Test thirtyListenersIncludeFiveRelaysAndTwentyFiveLeaves() passed after 0.150 seconds.
+􁁛  Test removingNextMemberPreservesFairnessAndResetCancelsAllWork() passed after 0.150 seconds.
+􁁛  Test fairnessPrecedesPerMemberPriorityAndFIFOTies() passed after 0.150 seconds.
+􁁛  Test memberLimitFairThirtyMemberRoundAndUnknownAdmission() passed after 0.150 seconds.
+􁁛  Test "Plaintext version mismatch carries both majors" passed after 0.150 seconds.
+􁁛  Test boundedWakeAndNoSmallRequestStarvationBypass() passed after 0.150 seconds.
+􁁛  Test messagesRejectTruncationTrailingBytesAndEveryReplyMutation() passed after 0.150 seconds.
+􁁛  Test invalidInputsAndMonotonicRegressionAreRejectedWithoutStateLoss() passed after 0.150 seconds.
+􁁛  Test pinSurvivesReconnectAndRejectsAnyIdentityChangeUntilExplicitEnd() passed after 0.150 seconds.
+􁁛  Test "Slide manifest ordering is UTF-8 byte order with exact dedup" passed after 0.150 seconds.
+􁁛  Test dedupAndLimitIncludeInflightAndStaleCompletionCannotReleaseReplacement() passed after 0.150 seconds.
+􁁛  Test possessionProofBindsEveryCredentialByteAndFreshTranscript() passed after 0.150 seconds.
+􁁛  Test "Clocked playout conceals a single gap and resyncs to the oldest frame" passed after 0.150 seconds.
+􁁛  Test "Encrypted frame authenticates and preserves the received minor version" passed after 0.150 seconds.
+􁁛  Test "Encrypted frame is route-independent, authenticated, and replay-detectable" passed after 0.150 seconds.
+􁁛  Test "Encrypted protocol rejects legacy majors explicitly" with 2 test cases passed after 0.150 seconds.
+􁁛  Test leadingZeroSharedSecretKeepsFixedWidthThroughHKDF() passed after 0.150 seconds.
+􁁛  Test invalidCodes(code:) with 5 test cases passed after 0.149 seconds.
+􁁛  Test sharedFixtureAndLaneMapping() passed after 0.149 seconds.
+􁁛  Test reliableOverflowRejectsInsteadOfLosingHandshake() passed after 0.149 seconds.
+􁁛  Test dropsStaleAudioButPreservesHandshakeAndRecentFrames() passed after 0.149 seconds.
+􁁛  Test everyStateAndRevisionRoundTrips() passed after 0.149 seconds.
+􁁛  Test separatedMetadataFixture() passed after 0.149 seconds.
+􁁛  Test rejectsUnknownAndNonCanonicalPayloads() passed after 0.149 seconds.
+􁁛  Test rejectsTruncatedUnknownDuplicateAndZeroEndpoints() passed after 0.149 seconds.
+􁁛  Test "Replay window rejects an accepted frame after sequence eviction" passed after 0.150 seconds.
+􁁛  Test sharedFixtureAndRoundtrips() passed after 0.149 seconds.
+􁁛  Test allTruncationsAndTrailingBytesFail() passed after 0.148 seconds.
+􁁛  Test malformedRecordsFailClosed() passed after 0.149 seconds.
+􁁛  Test descriptorKeepsOriginAndRejectsLegacyOrTruncation() passed after 0.148 seconds.
+􁁛  Test pairingBinaryAndQRRoundtrip() passed after 0.148 seconds.
+􁁛  Test responseBindsOfferAndCertificate() passed after 0.148 seconds.
+􁁛  Test deterministicHundredDescriptorRoundtrips() passed after 0.148 seconds.
+􁁛  Test gatewayQueueDropsByLocalResidenceWithoutChangingBytes() passed after 0.148 seconds.
+􁁛  Test everyLaneUsesOnlyFixedDestination(_:) with 5 test cases passed after 0.148 seconds.
+􁁛  Test lifetimeAndHostShapeAreBounded() passed after 0.148 seconds.
+􁁛  Test unknownLanesAndWrongGenerationFail() passed after 0.148 seconds.
+􁁛  Test strictPolicyCannotUseLANOrBluetooth() passed after 0.148 seconds.
+􁁛  Suite "Participant registry" passed after 0.151 seconds.
+􁁛  Suite SessionCapacityTopologyTests passed after 0.151 seconds.
+􁁛  Suite NearbyLaneRequestTests passed after 0.151 seconds.
+􁁛  Suite GuideAssetScheduleTests passed after 0.151 seconds.
+􁁛  Suite BluetoothLanePSMsTests passed after 0.151 seconds.
+􁁛  Suite NearbyRealtimeQueueTests passed after 0.151 seconds.
+􁁛  Suite "Audio readiness wire contract" passed after 0.151 seconds.
+􁁛  Suite BluetoothRoomRecordTests passed after 0.151 seconds.
+􁁛  Suite GatewayProtocolTests passed after 0.151 seconds.
+􁁛  Test "Credential stretch is a PBKDF2 wire contract" passed after 0.236 seconds.
+􁁛  Test pinnedKeyAndGuideAndSessionAreMandatory() passed after 0.239 seconds.
+􁁛  Test "State fixture describes every control and asset kind" passed after 0.247 seconds.
+􁁛  Test signaturePreservesCiphertextAndRejectsEverySingleByteChange() passed after 0.268 seconds.
+􁁛  Suite SignedGuideFrameTests passed after 0.270 seconds.
+􁁛  Test roundtrip(code:) with 4 test cases passed after 0.325 seconds.
+􁁛  Test "Encrypted frame rejects tampering and another tour credential" passed after 0.346 seconds.
+􁁛  Test rejectsWrongCodeAndReplay() passed after 0.350 seconds.
+􁁛  Suite RoomAdmissionTests passed after 0.351 seconds.
+􁁛  Test roundtripBindsMediaCredentialAndSigningIdentity(code:) with 4 test cases passed after 0.352 seconds.
+􁁛  Test rejectsDowngradeWrongCodeAndReplayedTranscript() passed after 0.385 seconds.
+􁁛  Suite RoomAdmissionV2Tests passed after 0.386 seconds.
+􁁛  Test "Realtime audio frame seals deterministically" passed after 0.392 seconds.
+􁁛  Test "Authentication proofs are stable and reject another tour code" passed after 0.419 seconds.
+􁁛  Suite "GOH2 session protocol" passed after 0.419 seconds.
+􁁛  Test run with 81 tests in 13 suites passed after 0.419 seconds.
+Building for debugging...
+[Computing dependencies]
+[1 / 5]
+Build complete! (0.47 sec)
+Test Suite 'All tests' started at 2026-09-11 19:44:03.213.
+Test Suite 'All tests' passed at 2026-09-11 19:44:03.214.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite LocalLinkTLSTests started.
+􀟈  Suite LocalLinkSecurityTests started.
+􀟈  Test mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test invalidPinCannotConfigureTLS() started.
+􀟈  Test generatedIdentityMatchesKeyAndPin() started.
+􀟈  Test renewingCertificateRequiresNewPinButRestoringDoesNot() started.
+􀟈  Test case passing 1 argument mode → .valid to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test generatedIdentityMatchesKeyAndPin() passed after 0.005 seconds.
+􁁛  Test invalidPinCannotConfigureTLS() passed after 0.005 seconds.
+􁁛  Test renewingCertificateRequiresNewPinButRestoringDoesNot() passed after 0.005 seconds.
+􁁛  Suite LocalLinkSecurityTests passed after 0.005 seconds.
+􀟈  Test case passing 1 argument mode → .wrongServerPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .wrongClientPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .missingClientCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .expiredServerCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test mutualTLSRequiresBothExpectedValidIdentities(_:) with 5 test cases passed after 0.045 seconds.
+􁁛  Suite LocalLinkTLSTests passed after 0.045 seconds.
+􁁛  Test run with 4 tests in 2 suites passed after 0.045 seconds.
+[2/9] Kotlin protocol and registry tests
+> Task :tour-session-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-core:compileKotlin UP-TO-DATE
+> Task :tour-session-core:compileJava NO-SOURCE
+> Task :tour-session-core:processResources NO-SOURCE
+> Task :tour-session-core:classes UP-TO-DATE
+> Task :tour-session-core:jar UP-TO-DATE
+> Task :tour-session-core:compileTestKotlin UP-TO-DATE
+> Task :tour-session-core:compileTestJava NO-SOURCE
+> Task :tour-session-core:processTestResources NO-SOURCE
+> Task :tour-session-core:testClasses UP-TO-DATE
+> Task :tour-session-core:test UP-TO-DATE
+> Task :tour-session-cli:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :tour-session-cli:compileKotlin UP-TO-DATE
+> Task :tour-session-cli:compileJava NO-SOURCE
+> Task :tour-session-cli:processResources NO-SOURCE
+> Task :tour-session-cli:classes UP-TO-DATE
+> Task :tour-session-cli:jar UP-TO-DATE
+> Task :tour-session-cli:startScripts UP-TO-DATE
+> Task :tour-session-cli:installDist UP-TO-DATE
+
+BUILD SUCCESSFUL in 425ms
+8 actionable tasks: 8 up-to-date
+ok Swift→Kotlin open length=0
+ok Swift→Kotlin locked length=4
+ok Swift→Kotlin locked length=10
+ok Swift→Kotlin locked length=64
+ok Kotlin→Swift open length=0
+ok Kotlin→Swift locked length=4
+ok Kotlin→Swift locked length=10
+ok Kotlin→Swift locked length=64
+Room admission parity passed: 8/8 real key exchanges
+ok Swift→Kotlin open admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin locked admission + pinned guide signature + AEAD
+ok Swift→Kotlin rejected v1-version
+ok Swift→Kotlin rejected wrong-guide
+ok Swift→Kotlin rejected reply-tamper
+ok Swift→Kotlin rejected frame-tamper
+ok Kotlin→Swift open admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift locked admission + pinned guide signature + AEAD
+ok Kotlin→Swift rejected v1-version
+ok Kotlin→Swift rejected wrong-guide
+ok Kotlin→Swift rejected reply-tamper
+ok Kotlin→Swift rejected frame-tamper
+Room admission-v2 parity passed: 8 real key exchanges + 8 explicit rejections
+Swift→Kotlin: 8/8 real signatures; changed/truncated packets rejected
+Kotlin→Swift: 8/8 real signatures; changed/truncated packets rejected
+Guide signature parity passed; app bootstrap and relay integration remain separate
+Gateway protocol parity passed: 10 exact fixture lines; 262/262 roundtrip/rejection cases; 0 skipped. No physical qualification claim.
+[3/9] Exact Swift/Kotlin wire bytes
+[4/9] Cross-language decode and participant churn
+[5/9] Realtime loss, duplicate, and reorder audit
+error: an unredacted runtime error can enter an iOS application log

@@ -662,3 +662,76 @@ monotonic receive timing before accepting a row. Simulator loopback is a protoco
 gate only. The three-phone report lives in `benchmarks/2026-09-10/README.md`.
 **Consequence**: Role-dependent Bluetooth throughput and Aware latency tails stay
 visible. These tests cannot certify microphone-to-speaker latency or thirty guests.
+
+## ADR-069 — Two-hub wired gateway, without listener relays
+**Date**: 2026-09-11
+**Status**: Implemented; software candidate verified September11. Physical gateway qualification NOT RUN.
+**Decision**: Either phone owns the tour; the other is a dedicated USB-connected
+companion. iOS listeners use native Network.framework Apple peer-to-peer; Android
+listeners use Wi-Fi Aware. The user explicitly chose two hubs only and a measured
+audience cap, even if below30. Listener relays/election are excluded. The companion
+may stay awake; locked listener playback remains required. This supersedes the
+platform-island-bridge exclusion in ADR-029 only for this explicit wired mode.
+**Architecture**: Each leaf's admission/realtime/control/asset connection is
+proxied to the original guide's existing services. No second producer, signer,
+room, shared media key on the companion, or participant substitution. Radio-hop
+ACKs do not enter the USB application stream. Fixed lane selection is not an
+arbitrary-address TCP proxy. Admission budgets retain capacity for local guests.
+**Pairing**: Separate hub certificates; mutually pinned TLS1.3; two-way public
+DER-certificate SHA256 fingerprint QR exchange, fresh pairing ID and final guide
+confirmation. Incomplete enrollment expires after120s; a confirmed association
+does not expire merely because that enrollment deadline passes. Certificate
+replacement requires fresh enrollment. GHP1/GHL1/GHD1 are versioned companion-only
+records; existing GOHRv2/GOS1/GOH2 application bytes remain unchanged inside TLS.
+Each GHD1 descriptor has a one-byte zero acknowledgement on hub-control only;
+the guide waits for that reply under the three-second liveness deadline. Successful
+buffered writes alone are not companion liveness evidence.
+Unsigned63-bit bounds keep positive Swift/Kotlin counters aligned. TLS capability
+is gated separately from existing app OS floors. No accept-all certificate phase.
+**Route and freshness boundaries**: USB addresses/interface names are observed,
+not hardcoded. Each Aware socket uses its own Network; never bind the whole app.
+Apple includePeerToPeer permits but does not prove P2P; strict physical runs need
+no AP association and route evidence. The opaque gateway bounds local audio dwell
+(initial50ms), not encrypted source expiry. Qualified audience caps are distinct
+from socket limits and native reported resources. Original guide platform is
+separate from the local provider platform.
+**Verification**: See GatewayImplementationPlan.md for contracts, ordered gates,
+quality targets and failure conditions. USB ICMP evidence alone does not pass
+application throughput, radio coexistence, playback, lock or endurance gates.
+**Confirmed-association recovery**: The initial QR endpoint is bootstrap, not the
+identity of the guide. Replugging USB may replace an address. Preserve pairing ID,
+room/guide IDs and both certificate/guide-key pins independently of the current
+endpoint. Advertise the single service `_goh-hub._tcp`, port50104, with instance
+`goh-` plus the lowercase canonical pairing UUID. Discovery contains no secret or
+room authority. The companion accepts only matching, on-link candidates from its
+selected wired discovery owner; mutual TLS and the fixed-lane request still prove
+the association. A confirmed reconnect creates a new route generation, while old
+lanes close. Ending/removing the association cancels discovery and all retries.
+The guide's own native audience branch remains running during cable loss.
+**Discovery API choice**: Apple uses native Bonjour with a required wired interface.
+Android's NSD Network selector is not sufficient for a tethering downstream whose
+`Network` is null; null requests are not a wired-only interface binding. Use a
+reviewed interface-scoped mDNS implementation with an explicit local address and
+network interface, not default-route NSD or a custom DNS parser. Reject missing
+interfaces and ambiguous/off-link candidates. Source binding is diagnostic evidence,
+not by itself proof of physical USB routing. Android pins `org.jmdns:jmdns:3.6.3`
+(Apache-2.0; transitive `slf4j-api:2.0.7`). Its public fatal-recovery delegate and
+application lifecycle/configuration/close errors feed Android logging; no claim
+is made that every internal SLF4J message is delivered. Configuration supplies a
+non-personal cached hostname to avoid reverse-DNS lookup. See
+[release v3.6.3](https://github.com/jmdns/jmdns/releases/tag/v3.6.3) and
+[published POM](https://repo.maven.apache.org/maven2/org/jmdns/jmdns/3.6.3/jmdns-3.6.3.pom).
+Sources: [Apple requiredInterface](https://developer.apple.com/documentation/network/nwparameters/requiredinterface),
+[Android NsdServiceInfo Network contract](https://developer.android.com/reference/android/net/nsd/NsdServiceInfo#getNetwork()),
+[JmDNS public interface-scoped API](https://jmdns.sourceforge.net/apidocs/javax/jmdns/JmDNS.html).
+**Local branch ownership**: Guide pairing enables the original guide's own native
+publisher, not the companion proxy publisher. Removing a companion preserves the
+original audience branch until the tour ends, then restores the prior preference.
+Companion discovery suppression restores only the preferences it acquired.
+Diagnostics follow the current role's actual publisher. Both normal UI entry
+points and role lifecycles are covered; native radio availability remains physical.
+**Software evidence**: The nine-stage main gate passes; Android198 app tests and
+native9, iOS196 app test definitions/242 runs (four device-only fixtures skipped),
+gateway262 cross-language cases, actual Apple/Android TLS in both server roles,
+visible setup/debug UI and Release exclusion all pass. Full results and retained
+failed attempts are in `benchmarks/2026-09-11-gateway-software/README.md`.

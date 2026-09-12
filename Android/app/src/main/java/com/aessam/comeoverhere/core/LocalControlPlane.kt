@@ -79,6 +79,7 @@ class LocalControlPlane(
     private var discoveryIndex = RoomDiscoveryIndex()
     private val aware = if (Build.VERSION.SDK_INT >= 34) WiFiAwareRoomTransport(context, connectionBudget) else null
     private var awareEnabled = false
+    override var allowedTransportPolicy = com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
     private var hostedRecord: BluetoothRoomRecord? = null
     private val awareRooms = ConcurrentHashMap.newKeySet<UUID>()
     private val nearbyBridge = NearbySocketBridge(connectionBudget = connectionBudget)
@@ -93,6 +94,7 @@ class LocalControlPlane(
     override val awareSettings: NearbyAwareSettings? = aware?.let { transport ->
         object : NearbyAwareSettings {
             override val state = transport.state
+            override val enabledPreference get() = awareEnabled
             override fun setEnabled(enabled: Boolean) {
                 awareEnabled = enabled
                 updateAwareMode()
@@ -113,6 +115,7 @@ class LocalControlPlane(
         withContext(Dispatchers.IO) {
             val cached = synchronized(nearbyOwnerLock) { activeNearbyGuestRoute?.let { it to nearbyGuestConnector } }
             if (cached != null) {
+                check(allowedTransportPolicy.permits(cached.first.transport)) { "Active route is excluded by strict transport policy" }
                 check(cached.first.roomID == roomID) { "Leave the current nearby room before joining another" }
                 try {
                     val connect = requireNotNull(cached.second) { "Nearby adapter owner disappeared" }
@@ -137,8 +140,8 @@ class LocalControlPlane(
             }
             val bluetoothSession = bluetooth as? BluetoothSessionDiscoveryInterface
             val routes = buildList {
-                if (roomID in awareRooms) add(SessionTransportRoute.WIFI_AWARE)
-                if (bluetoothSession?.canConnect(roomID) == true) add(SessionTransportRoute.BLUETOOTH)
+                if (roomID in awareRooms && allowedTransportPolicy.permits(SessionTransportRoute.WIFI_AWARE)) add(SessionTransportRoute.WIFI_AWARE)
+                if (bluetoothSession?.canConnect(roomID) == true && allowedTransportPolicy.permits(SessionTransportRoute.BLUETOOTH)) add(SessionTransportRoute.BLUETOOTH)
             }
             check(routes.isNotEmpty()) { "No nearby route is available" }
             var lastError: Exception? = null
@@ -147,7 +150,7 @@ class LocalControlPlane(
                     val connect = when (route) {
                         SessionTransportRoute.WIFI_AWARE -> requireNotNull(aware).connector(roomID)
                         SessionTransportRoute.BLUETOOTH -> requireNotNull(bluetoothSession).connector(roomID)
-                        SessionTransportRoute.LOCAL_LAN -> error("LAN is not a nearby adapter route")
+                        SessionTransportRoute.LOCAL_LAN, SessionTransportRoute.APPLE_PEER -> error("Unsupported Android nearby adapter route")
                     }
                     // Prove reachability before advertising a loopback adapter as connected. A stale
                     // preferred Aware endpoint may fail here and leave Bluetooth available to try.

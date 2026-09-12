@@ -3,6 +3,17 @@
 **Status:** Authoritative implementation target
 **Date:** 2026-08-22
 
+**Active execution scope (2026-09-11):** The approved two-hub mode in ADR-069 and
+`GatewayImplementationPlan.md` adds an explicitly paired iPhone/Android USB link.
+Either phone is the sole guide; the companion proxies to that guide. iOS listeners
+use Apple peer-to-peer Wi-Fi and Android listeners use Wi-Fi Aware. No audience
+relays are included in this mode. The audience cap is physically qualified and
+may be below30; the companion is not counted as a listener. The companion may
+remain awake, but locked audience playback remains required. This supersedes the
+island-bridge exclusion and mandatory30/relay execution target below only for the
+approved two-hub mode. Existing direct LAN/Bluetooth/Aware functionality remains.
+Implementation and radio/lock/acoustic qualification are separate checkpoints.
+
 **Implementation checkpoint (2026-09-08, in progress):** Direct Bluetooth admission/audio/control/assets and native Aware ownership remain experimental. Admission-bound guide-key pinning and sign-once native lanes are implemented (ADR-059); open-room first contact does not prove human identity. Typed native routes and shared software capacity accounting are implemented, with integration gates recorded in `NextSession.md`. A public Android system-paired subscriber candidate is separate from Android compatibility PIN/NDP; mixed-platform Aware is not complete. Signed native relaying, 30-listener radio capacity and locked-device field requirements remain targets, not delivered claims. The user is away from hardware; current execution is host/simulator/emulator only. One consolidated field checklist is in `FieldAcceptance.md`.
 
 ## Objective

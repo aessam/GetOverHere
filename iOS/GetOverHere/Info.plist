@@ -10,8 +10,12 @@
 	<string>Your location stays on this device and is used only to show your position, distance, and direction relative to the guide's shared pin.</string>
 	<key>NSBonjourServices</key>
 	<array>
+		<string>_goh-hub._tcp</string>
 		<string>_goh-audio._tcp</string>
+		<string>_goh-peer._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan the companion phone's public pairing QR code to verify the wired connection.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.</string>
 	<key>UIBackgroundModes</key>

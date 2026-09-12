@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.NearbyRealtimeConnectionTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:35.034Z" hostname="redacted" time="1.151">
+  <properties/>
+  <testcase name="acknowledgementsNeverEnterApplicationBytesInEitherDirection" classname="com.aessam.comeoverhere.NearbyRealtimeConnectionTest" time="0.043"/>
+  <testcase name="fourFramesInFlightRequireAcknowledgementBeforeFifth" classname="com.aessam.comeoverhere.NearbyRealtimeConnectionTest" time="0.105"/>
+  <testcase name="aPeerThatNeverAcknowledgesIsClosed" classname="com.aessam.comeoverhere.NearbyRealtimeConnectionTest" time="1.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

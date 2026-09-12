@@ -1,0 +1,8 @@
+{
+  "executed": 5,
+  "failed": 0,
+  "log_sha256": "0c3d52c5f6e0fe12aaacf3e849602ca40328059db53e8deacab16ce373cffb75",
+  "passed": 5,
+  "scope": "emulator_debug_adapter_only",
+  "skipped": 0
+}

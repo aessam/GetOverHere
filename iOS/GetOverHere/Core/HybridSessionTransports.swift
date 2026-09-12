@@ -47,7 +47,7 @@ final class HybridAudioPlane: AudioPlane {
             switch routeController.selectedRoute {
             case .localLAN: local.isActive
             case .wifiAware: aware?.isActive == true
-            case .bluetooth, nil: false
+            case .bluetooth, .applePeer, nil: false
             }
         case nil:
             false
@@ -164,7 +164,7 @@ final class HybridAudioPlane: AudioPlane {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case .bluetooth, nil: nil
+        case .bluetooth, .applePeer, nil: nil
         }
     }
 
@@ -323,7 +323,7 @@ final class HybridSessionControlTransport: SessionControlTransport {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case .bluetooth, nil: nil
+        case .bluetooth, .applePeer, nil: nil
         }
     }
 
@@ -470,7 +470,7 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
         switch routeController.selectedRoute {
         case .localLAN: local
         case .wifiAware: aware
-        case .bluetooth, nil: nil
+        case .bluetooth, .applePeer, nil: nil
         }
     }
 

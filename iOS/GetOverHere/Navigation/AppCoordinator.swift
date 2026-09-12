@@ -6,8 +6,10 @@ final class AppCoordinator {
     let coordinator: NetworkCoordinator
     let channelService: ChannelService
     let audioEngine: AudioEngine
+    let gateway: GatewaySessionCoordinator
 
     var showCreateChannel = false
+    var showGateway = false
     var newChannelName = ""
     var selectedTourFeature: TourFeature = .slides
     #if DEBUG
@@ -50,6 +52,10 @@ final class AppCoordinator {
                 contentStore: contentStore,
                 localGuidanceService: localGuidanceService
             )
+            guard let localControl = coordinator.controlPlane as? LocalControlPlane else {
+                fatalError("Gateway requires the application's local control plane")
+            }
+            self.gateway = GatewaySessionCoordinator(service: channelService, control: localControl)
         } catch {
             fatalError("Tour feature storage setup failed: \(error.localizedDescription)")
         }
@@ -73,6 +79,7 @@ final class AppCoordinator {
         debugControl?.stop()
         #endif
         channelService.terminate()
+        gateway.stop()
         coordinator.stop()
     }
 

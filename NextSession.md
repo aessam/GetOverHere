@@ -1,5 +1,62 @@
 # GetOverHere — Next Session
 
+## September 11 — two-hub software candidate verified; physical run next
+
+User approved `GatewayImplementationPlan.md`: either guide orientation, USB
+companion, Apple peer-to-peer iOS branch and Android Aware branch. TWO HUBS ONLY;
+no audience relay tree. Qualified cap may be below30. Companion keep-awake allowed,
+locked listeners still required. Plan/USB evidence checkpoint: `18d0c46`.
+
+The approved two-hub coding is implemented and the final software gate passed.
+This is not physical product qualification.
+GHP1/GHL1/GHD1 contracts, mutually pinned TLS1.3, original-guide fixed-lane
+forwarding, Apple peer/Aware branches, setup UI, debug adapters, native local
+recorders and evidence tools are implemented. Final ownership/recovery regressions
+passed, including Android guide-local Aware activation and preference restoration.
+ADR-069 records the boundaries. The implementation commit follows the `18d0c46`
+plan checkpoint; use `git log -1` for its exact revision. No stable tag was moved.
+Do not mistake a protocol or simulator test for physical gateway qualification.
+
+Device preflight at implementation start: both saved Pixel wireless endpoints
+timed out, `adb mdns services` empty; only Pixel7 remained listed offline. The
+iPhone17ProMax is paired/available; iPhone12mini unavailable. User was notified
+asynchronously; continue software work without waiting or changing radio settings.
+The user subsequently confirmed they are away from the workstation/devices and
+will notify us when back. A read-only iPhone process query also failed with
+CoreDevice4000/NWError54 despite the paired inventory. Do not keep probing,
+installing or asking for intermediate phone tests. Only simulator/emulator work
+is currently available. The consolidated next physical session is A13–A20 in
+`FieldAcceptance.md`; two iPhones and two Androids cover both branches, not capacity.
+
+Current reusable tools and collected software evidence:
+`scripts/gateway_tools.md`, `scripts/verify_tour_session.sh`,
+`scripts/verify_gateway_tls_interop.py`, and
+`benchmarks/2026-09-11-gateway-software/README.md`.
+Final evidence: `verify_tour_session.sh`9/9; Swift core81; Kotlin core82;
+Android app198 and native TLS/admission/recovery9; iOS app196 definitions/242 runs
+passed with four explicit physical-fixture skips. Gateway262 cross-language
+cases, v1/v2 admission and both signature directions pass. Production Gateway UI
+passes on simulator/emulator. Android debug5 plus visible client/recorder22 checks
+pass on the final APK. Actual Apple/Android TLS passes both server roles over
+test-only ADB tunnels with installed APK hashes and65,536 exact bytes each.
+Both Release debug-exclusion audits and the signed iPhone build integrity pass.
+
+Next action when the user returns: execute FieldAcceptance A13–A20 with one frozen
+candidate. Start iPhone guide → USB → Android companion → Android listener, add
+the iOS listener, then reverse hub roles. Do not build another debugger or resume
+the superseded listener-relay work below. Actual USB application routing/discovery,
+radio coexistence, locked speech, acoustic timing, cable/radio recovery, capacity
+and endurance are all NOT RUN. Four phones can validate both branches, not30.
+
+Builds retained locally: Android `app/build/outputs/apk/{debug,androidTest/debug,release}`;
+iPhone `/tmp/GetOverHereGatewayIOSDevice/Build/Products/Debug-iphoneos/GetOverHere.app`;
+iOS Release `/tmp/GetOverHereGatewayIOSRelease/Build/Products/Release-iphoneos/GetOverHere.app`.
+Android final debug SHA256:
+`33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a`.
+The session-owned Android emulator is stopped; test tunnels/credentials were
+removed. Existing physical devices and their radio settings were left untouched.
+All older sections below are chronological history, not the current work queue.
+
 ## September 11 — direct USB network verified
 
 After the user reversed USB roles and enabled Pixel11Pro USB tethering, direct iPhone

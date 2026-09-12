@@ -1,7 +1,8 @@
 package com.aessam.toursession
 
 /** Complete immutable sealed frames; control/handshake frames are never evicted. Caller serializes access. */
-class NearbyRealtimeQueue {
+class NearbyRealtimeQueue(private val lifetimeMilliseconds: Long = LIFETIME_MILLISECONDS) {
+    init { require(lifetimeMilliseconds in 1..LIFETIME_MILLISECONDS) }
     private data class Entry(val bytes: ByteArray, val audio: Boolean, val received: Long)
     private val entries = ArrayDeque<Entry>()
     var dropped: Int = 0
@@ -20,7 +21,7 @@ class NearbyRealtimeQueue {
     fun next(nowMilliseconds: Long): ByteArray? {
         while (entries.isNotEmpty()) {
             val entry = entries.removeFirst()
-            if (entry.audio && nowMilliseconds >= entry.received && nowMilliseconds - entry.received > LIFETIME_MILLISECONDS) {
+            if (entry.audio && nowMilliseconds >= entry.received && nowMilliseconds - entry.received > lifetimeMilliseconds) {
                 dropped++; continue
             }
             return entry.bytes

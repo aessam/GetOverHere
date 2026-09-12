@@ -7,6 +7,58 @@ import TourSessionCore
 @Suite(.serialized)
 @MainActor
 struct NearbySocketBridgeTests {
+    @Test func strictApplePeerCannotSubstituteBluetoothOrAware() async throws {
+        let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Room", isAndroid: false, isLocked: false, admissionVersion: 2)
+        let bluetooth = RouteBluetoothTestRadio(record: record)
+        let aware = RouteAwareTestRadio(); aware.record = record
+        let plane = LocalControlPlane(displayName: "Guest", bluetooth: bluetooth, makeAware: { aware })
+        defer { plane.stop() }
+        plane.setAwareDiscoveryMode(.browsing); aware.onRoom?(record)
+        plane.strictApplePeer = true
+        #expect(!plane.canConnectNearby(roomID: record.roomID))
+        await #expect(throws: NearbyConnectionError.self) {
+            try await plane.prepareNearbyGuest(roomID: record.roomID, expectedGuideID: record.guideID)
+        }
+        #expect(bluetooth.connectCalls == 0)
+    }
+    @Test func companionConnectorPreservesEachLeafAndNeverOpensLocalGuide() async throws {
+        let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Original Android Guide",
+            isAndroid: true, isLocked: false, admissionVersion: 2)
+        let connector = GatewayTestConnector()
+        var localOpened = false
+        let bridge = NearbySocketBridge(budget: NearbyConnectionBudget(), localConnect: { _ in
+            localOpened = true
+            return BufferedNearbyTestConnection(bytes: Data(), waitsForClose: true)
+        })
+        bridge.guideConnector = connector
+        defer { bridge.stop() }
+        var leaves: [BufferedNearbyTestConnection] = []
+        for _ in 0..<2 {
+            let leaf = BufferedNearbyTestConnection(bytes: try NearbyLaneRequest(lane: .control, roomID: record.roomID).encode(), waitsForClose: true)
+            leaves.append(leaf); bridge.accept(leaf) { record }
+        }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(!localOpened)
+        #expect(connector.requests.count == 2)
+        #expect(connector.requests.allSatisfy { $0.0 == .control && $0.1 == record.roomID })
+        #expect(connector.connections.count == 2)
+        #expect(connector.connections[0] !== connector.connections[1])
+        #expect(leaves.allSatisfy { $0.pendingOutput == Data([0]) })
+        bridge.stop()
+        #expect(connector.connections.allSatisfy { $0.closed })
+    }
+
+    @Test func metadataDoesNotOpenAnyWiredApplicationLane() async throws {
+        let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Forwarded", isAndroid: true, isLocked: true)
+        let connector = GatewayTestConnector()
+        let bridge = NearbySocketBridge(budget: NearbyConnectionBudget()); bridge.guideConnector = connector
+        defer { bridge.stop() }
+        let listener = try TestNearbyListener(bridge: bridge, record: record)
+        defer { listener.close() }
+        let port = try await listener.start()
+        #expect(try await NearbySocketBridge.readRecord { NearbyTCPConnection(port: port) } == record)
+        #expect(connector.requests.isEmpty)
+    }
     @Test("Thirty three-lane leases and eight transient leases share one app budget")
     func softwareBudgetIsSharedAndLaneBounded() throws {
         let budget = NearbyConnectionBudget()
@@ -380,6 +432,18 @@ private final class RouteAwareTestRadio: NearbyRoomTransport {
     func setMode(_ mode: BluetoothDiscoveryMode) {}
     func stop() {}
     func publish(_ record: BluetoothRoomRecord?) {}
+}
+
+@MainActor
+private final class GatewayTestConnector: GuideLaneConnector {
+    var requests: [(NearbyLaneRequest.Lane, UUID)] = []
+    var connections: [BufferedNearbyTestConnection] = []
+    func connect(lane: NearbyLaneRequest.Lane, roomID: UUID) async throws -> any NearbyByteConnection {
+        requests.append((lane, roomID))
+        let connection = BufferedNearbyTestConnection(bytes: Data(), waitsForClose: true)
+        connections.append(connection)
+        return connection
+    }
 }
 
 /// Models native output that close can discard before the peer consumes it.

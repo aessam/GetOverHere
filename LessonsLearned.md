@@ -551,3 +551,52 @@ Inspect actual USB roles, IP interfaces and forced-route packet delivery; neithe
 descriptor name nor a legacy property proves or disproves connectivity. This pair
 used a different iPhone than the earlier12mini benchmarks. Preserve that distinction
 and do not generalize an ICMP smoke pass into app throughput or Aware coexistence.
+
+## 94. Verify the actual TLS provider and both certificate roles
+
+**What happened**: Android app compilation succeeded, but emulator TLS tests failed
+before exchanging application bytes. Socket-only alias callbacks did not cover
+Conscrypt's SSLEngine identity selection. Adding those callbacks was insufficient:
+AndroidKeyStore still returned INCOMPATIBLE_DIGEST because the key allowed only
+SHA-256, while TLS signs an already-hashed transcript with NONEwithECDSA.
+**Resolution**: Support both engine and socket key selection and authorize the
+separate TLS identity for the provider's required digest policy. Do not use tour
+signing keys or silently replace a confirmed hub identity. Real Android mutual-TLS,
+wrong-pin and independent admission-proxy tests passed after the correction.
+Apple Network.framework and AndroidKeyStore/JSSE then passed both server roles,
+with65,536 exact bytes round-tripped per case. Raw reports are retained under
+`benchmarks/2026-09-11-gateway-software/tls-interop/`.
+**Decision**: Same-platform certificate tests and successful app builds do not
+prove cross-runtime TLS. Test both server roles before asking for a physical
+gateway run. ADB tunnels establish compatibility, not USB Ethernet routing.
+
+## 95. Drain delayed codec output without restarting the warm encoder
+
+**What happened**: The Android capture pipeline treated accepted PCM without an
+immediate encoded packet like refused input. Delayed output then expired and
+recreated the codec, repeatedly returning to startup. An eight-input bound also
+reset before draining output that became available at that boundary.
+**Resolution**: Distinguish accepted input from backpressure; retain original
+capture timestamps; discard expired output without refreshing its age or resetting
+the warm codec. At the input bound, drain available output without submitting a
+ninth input. Drain a delayed burst within the same eight-packet bound so stale
+packets cannot keep newer speech behind a permanent backlog. Clear partial PCM
+after capture gaps without recreating the codec.
+**Evidence**: Deterministic regressions reproduced the reset and burst cases before
+the changes and passed afterward. The final native capture smoke and physical
+thirty-cycle startup/endurance gates are separate evidence. Do not claim that a
+fake codec or emulator proves microphone quality on either Pixel.
+
+## 96. Test role ownership through the original service, not only the proxy
+
+**What happened**: Android gateway pairing created the wired offer but did not
+enable the guide's ordinary Aware publisher. Companion tests covered its separate
+proxy publisher, so that branch could pass while the guide's local audience saw
+nothing. Companion discovery suppression also lost the user's earlier settings.
+**Resolution**: Own the guide's existing Aware preference from pairing intent
+until the tour ends, including after companion removal. Keep companion publishing
+separate and restore only preferences acquired by that role. Report the branch
+that the current role actually uses. Two deterministic failures were reproduced
+before the correction; all11 coordinator tests passed afterward.
+**Decision**: Verify guide, companion and listener entry points independently.
+A healthy proxy test does not prove the normal guide UI enabled its local radio.

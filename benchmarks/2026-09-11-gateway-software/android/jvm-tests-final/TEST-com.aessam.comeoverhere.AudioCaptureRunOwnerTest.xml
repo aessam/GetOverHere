@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.AudioCaptureRunOwnerTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:59:30.593Z" hostname="redacted" time="0.056">
+  <properties/>
+  <testcase name="oldCleanupCannotReleaseReplacementGuideResourcesOrFocus" classname="com.aessam.comeoverhere.AudioCaptureRunOwnerTest" time="0.002"/>
+  <testcase name="stopClosesCaptureWhoseFlowWasNeverCollectedExactlyOnce" classname="com.aessam.comeoverhere.AudioCaptureRunOwnerTest" time="0.0"/>
+  <testcase name="blockedCaptureConsumerRetainsOnlyNewestBufferAndCountsDroppedBuffers" classname="com.aessam.comeoverhere.AudioCaptureRunOwnerTest" time="0.051"/>
+  <testcase name="oldCleanupCannotAbandonReplacementGuestFocus" classname="com.aessam.comeoverhere.AudioCaptureRunOwnerTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

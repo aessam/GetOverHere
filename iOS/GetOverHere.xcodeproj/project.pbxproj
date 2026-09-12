@@ -7,9 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A30000000000000000000001 /* AppDebugControl in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000003 /* AppDebugControl */; };
+		4FB443DEBCD075AED5820E98 /* LocalLinkSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */; };
 		A10000000000000000000001 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000003 /* TourSessionCore */; };
 		A20000000000000000000001 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* MapLibre */; };
+		A30000000000000000000001 /* AppDebugControl in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000003 /* AppDebugControl */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,8 +40,8 @@
 		D95FA6202F71F52300456E8F /* Exceptions for "GetOverHere" folder in "GetOverHere" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
 				Info.Debug.plist,
+				Info.plist,
 			);
 			target = D95FA5E52F71F52100456E8F /* GetOverHere */;
 		};
@@ -75,6 +76,7 @@
 				A30000000000000000000001 /* AppDebugControl in Frameworks */,
 				A10000000000000000000001 /* TourSessionCore in Frameworks */,
 				A20000000000000000000001 /* MapLibre in Frameworks */,
+				4FB443DEBCD075AED5820E98 /* LocalLinkSecurity in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +140,7 @@
 				A30000000000000000000003 /* AppDebugControl */,
 				A10000000000000000000003 /* TourSessionCore */,
 				A20000000000000000000003 /* MapLibre */,
+				FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */,
 			);
 			productName = GetOverHere;
 			productReference = D95FA5E62F71F52100456E8F /* GetOverHere.app */;
@@ -160,8 +163,6 @@
 				D95FA5F82F71F52100456E8F /* GetOverHereTests */,
 			);
 			name = GetOverHereTests;
-			packageProductDependencies = (
-			);
 			productName = GetOverHereTests;
 			productReference = D95FA5F52F71F52100456E8F /* GetOverHereTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -183,8 +184,6 @@
 				D95FA6022F71F52200456E8F /* GetOverHereUITests */,
 			);
 			name = GetOverHereUITests;
-			packageProductDependencies = (
-			);
 			productName = GetOverHereUITests;
 			productReference = D95FA5FF2F71F52200456E8F /* GetOverHereUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -225,6 +224,7 @@
 				A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */,
 				A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */,
 				A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
+				0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D95FA5E72F71F52100456E8F /* Products */;
@@ -615,13 +615,17 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */ = {
+		0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../Packages/AppDebugControl;
+			relativePath = ../Packages/LocalLinkSecurity;
 		};
 		A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Packages/TourSessionCore;
+		};
+		A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/AppDebugControl;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -637,11 +641,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A30000000000000000000003 /* AppDebugControl */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */;
-			productName = AppDebugControl;
-		};
 		A10000000000000000000003 /* TourSessionCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
@@ -651,6 +650,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
 			productName = MapLibre;
+		};
+		A30000000000000000000003 /* AppDebugControl */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */;
+			productName = AppDebugControl;
+		};
+		FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */;
+			productName = LocalLinkSecurity;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

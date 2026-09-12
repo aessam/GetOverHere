@@ -8,9 +8,12 @@ public struct NearbyRealtimeQueue: Sendable {
     public static let capacity = 8
     public static let maximumFrameSize = 16_384
     public static let lifetimeMilliseconds: UInt64 = 150
+    private let maximumResidenceMilliseconds: UInt64
     public private(set) var dropped = 0
     public var count: Int { entries.count }
-    public init() {}
+    public init(lifetimeMilliseconds: UInt64 = Self.lifetimeMilliseconds) {
+        maximumResidenceMilliseconds = lifetimeMilliseconds
+    }
 
     public mutating func offer(_ bytes: Data, audio: Bool, nowMilliseconds: UInt64) throws {
         guard !bytes.isEmpty, bytes.count <= Self.maximumFrameSize else { throw RoomAdmissionError.invalidMessage }
@@ -25,7 +28,7 @@ public struct NearbyRealtimeQueue: Sendable {
         while !entries.isEmpty {
             let entry = entries.removeFirst()
             if entry.audio, nowMilliseconds >= entry.received,
-               nowMilliseconds - entry.received > Self.lifetimeMilliseconds { dropped += 1; continue }
+               nowMilliseconds - entry.received > maximumResidenceMilliseconds { dropped += 1; continue }
             return entry.bytes
         }
         return nil

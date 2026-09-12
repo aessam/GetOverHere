@@ -41,10 +41,15 @@ class RealtimeCaptureInboxTest {
         } finally { h.close() }
     }
 
-    @Test fun retainedNativeInputsAreBoundedAndOverflowResetsEncoder() {
+    @Test fun eightAcceptedColdInputsDrainWithoutAcceptingNinthOrRestartingEncoder() {
         val supplied = java.util.concurrent.LinkedBlockingQueue<Int>()
-        val provider = InboxCodecProvider { instance, call, pcm ->
-            if (instance == 1) { supplied.add(call); null } else inboxPacket(pcm)
+        val drained = CountDownLatch(1)
+        val outputAvailable = java.util.concurrent.atomic.AtomicBoolean(true)
+        val provider = InboxCodecProvider(drain = {
+            drained.countDown()
+            if (outputAvailable.getAndSet(false)) inboxPacket(byteArrayOf(1, 2, 3, 4)) else null
+        }) {
+            _, call, pcm -> supplied.add(call); if (call <= 8) null else inboxPacket(pcm)
         }
         val h = InboxHarness(provider)
         try {
@@ -53,11 +58,13 @@ class RealtimeCaptureInboxTest {
                 assertEquals(index + 1, supplied.poll(3, TimeUnit.SECONDS))
             }
             h.submit(byteArrayOf(5, 6, 7, 8))
-            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
-            h.submit(byteArrayOf(9, 10, 11, 12))
+            assertTrue(drained.await(3, TimeUnit.SECONDS))
             assertTrue(h.output.await(3, TimeUnit.SECONDS))
             assertEquals(8, provider.encoders.first().calls)
-            assertArrayEquals(byteArrayOf(9, 10, 11, 12), h.payloads().single().encodedBytes)
+            assertEquals(1, provider.encoders.size)
+            assertEquals(0, provider.encoders.first().closeCount)
+            assertEquals(0, h.processor.encoderResetCount)
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4), h.payloads().single().encodedBytes)
         } finally { h.close() }
     }
 
@@ -86,6 +93,31 @@ class RealtimeCaptureInboxTest {
         } finally { release.countDown(); h.close() }
     }
 
+    @Test fun coldBurstBacklogDrainsExpiredOutputsWithoutFresheningCaptureTimes() {
+        val supplied = java.util.concurrent.LinkedBlockingQueue<Int>()
+        val nextOutput = java.util.concurrent.atomic.AtomicInteger()
+        val provider = InboxCodecProvider(drain = {
+            val index = nextOutput.getAndIncrement()
+            if (index < 8) inboxPacket(byteArrayOf(index.toByte(), 2, 3, 4)) else null
+        }) { _, call, _ -> supplied.add(call); null }
+        val h = InboxHarness(provider, expectedOutputs = 2)
+        try {
+            repeat(8) { index ->
+                h.time.set(index * 64_000_000L)
+                h.submit(byteArrayOf(1, 2, 3, 4))
+                assertEquals(index + 1, supplied.poll(3, TimeUnit.SECONDS))
+            }
+            h.time.set(512_000_000)
+            h.submit(byteArrayOf(5, 6, 7, 8))
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            assertEquals(1, provider.encoders.size)
+            assertEquals(0, h.processor.encoderResetCount)
+            assertEquals(6, h.processor.expiredCodecOutputs)
+            assertEquals(listOf(384_000_000L, 448_000_000L),
+                h.payloads().map { it.capturedAtNanoseconds - InboxHarness.WALL_BASE })
+        } finally { h.close() }
+    }
+
     @Test fun staleEncoderOutputIsDroppedAndQueuedExpiredInputIsNeverEncoded() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -99,8 +131,8 @@ class RealtimeCaptureInboxTest {
             h.submit(byteArrayOf(5, 6, 7, 8))
             h.time.set(200_000_000)
             release.countDown()
-            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
             h.processor.stop()
+            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
             assertTrue(h.frames.isEmpty())
             assertEquals(1, provider.encoders.sumOf { it.calls })
         } finally { release.countDown(); h.close() }
@@ -120,10 +152,12 @@ class RealtimeCaptureInboxTest {
         } finally { h.close() }
     }
 
-    @Test fun expiredBufferedNilInputRecreatesEncoderBeforeFreshInput() {
+    @Test fun delayedNativeOutputIsDiscardedWithoutRestartingWarmEncoder() {
         val firstInput = CountDownLatch(1)
-        val provider = InboxCodecProvider { instance, _, pcm ->
-            if (instance == 1) { firstInput.countDown(); null } else inboxPacket(pcm)
+        val supplied = java.util.concurrent.LinkedBlockingQueue<Int>()
+        val provider = InboxCodecProvider { _, call, pcm ->
+            supplied.add(call)
+            if (call == 1) { firstInput.countDown(); null } else inboxPacket(pcm)
         }
         val h = InboxHarness(provider)
         try {
@@ -131,12 +165,36 @@ class RealtimeCaptureInboxTest {
             assertTrue(firstInput.await(3, TimeUnit.SECONDS))
             h.time.set(200_000_000)
             h.submit(byteArrayOf(5, 6, 7, 8))
+            assertEquals(1, supplied.poll(3, TimeUnit.SECONDS))
+            assertEquals(2, supplied.poll(3, TimeUnit.SECONDS))
+            h.submit(byteArrayOf(9, 10, 11, 12))
             assertTrue(h.output.await(3, TimeUnit.SECONDS))
-            assertEquals(2, provider.encoders.size)
-            assertEquals(1, provider.encoders.first().closeCount)
+            assertEquals(1, provider.encoders.size)
+            assertEquals(0, provider.encoders.first().closeCount)
+            assertEquals(1, h.processor.expiredCodecOutputs)
             val payload = h.payloads().single()
-            assertArrayEquals(byteArrayOf(5, 6, 7, 8), payload.encodedBytes)
+            assertArrayEquals(byteArrayOf(9, 10, 11, 12), payload.encodedBytes)
             assertEquals(InboxHarness.WALL_BASE + 200_000_000, payload.capturedAtNanoseconds)
+        } finally { h.close() }
+    }
+
+    @Test fun coldStartLongerThanFrameDeadlineDoesNotCauseEndlessEncoderRecreation() {
+        val supplied = java.util.concurrent.LinkedBlockingQueue<Int>()
+        lateinit var h: InboxHarness
+        val provider = InboxCodecProvider { _, call, pcm ->
+            if (call == 1) h.time.addAndGet(200_000_000)
+            supplied.add(call)
+            inboxPacket(pcm)
+        }
+        h = InboxHarness(provider)
+        try {
+            h.submit(byteArrayOf(1, 2, 3, 4))
+            assertEquals(1, supplied.poll(3, TimeUnit.SECONDS))
+            h.submit(byteArrayOf(5, 6, 7, 8))
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            assertEquals(1, provider.encoders.size)
+            assertEquals(0, h.processor.encoderResetCount)
+            assertEquals(1, h.processor.expiredCodecOutputs)
         } finally { h.close() }
     }
 
@@ -152,7 +210,7 @@ class RealtimeCaptureInboxTest {
         } finally { h.close() }
     }
 
-    @Test fun discontinuityRecreatesCodecWithoutResettingSequenceOrStream() {
+    @Test fun discontinuityPreservesWarmCodecSequenceAndStream() {
         val h = InboxHarness(InboxCodecProvider { _, _, pcm -> inboxPacket(pcm) })
         try {
             h.submit(byteArrayOf(1, 2, 3, 4))
@@ -167,6 +225,24 @@ class RealtimeCaptureInboxTest {
             val opener = SessionFrameOpener(h.credential)
             val sequence = sealed.map { (opener.open(it) as SessionFrameOpenResult.Opened).envelope.sequence }
             assertEquals(listOf(0L, 1L), sequence)
+        } finally { h.close() }
+    }
+
+    @Test fun rejectedNativeInputsDoNotAccumulatePhantomTimestamps() {
+        val supplied = java.util.concurrent.LinkedBlockingQueue<Int>()
+        val provider = InboxCodecProvider(action = { _, call, pcm ->
+            supplied.add(call); if (call <= 9) null else inboxPacket(pcm)
+        }, accepted = { call -> call > 9 })
+        val h = InboxHarness(provider)
+        try {
+            repeat(10) { index ->
+                h.submit(byteArrayOf(1, 2, 3, 4))
+                assertEquals(index + 1, supplied.poll(3, TimeUnit.SECONDS))
+            }
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            assertEquals(1, provider.encoders.size)
+            assertEquals(9, h.processor.rejectedCodecInputs)
+            assertEquals(0, h.processor.encoderResetCount)
         } finally { h.close() }
     }
 }
@@ -198,7 +274,11 @@ private class InboxHarness(provider: InboxCodecProvider, expectedOutputs: Int = 
     override fun close() { processor.stop(); writer.close() }
 }
 
-private class InboxCodecProvider(private val action: (Int, Int, ByteArray) -> NativeEncodedAudioPacket?) : RealtimeAudioCodecProvider {
+private class InboxCodecProvider(
+    private val accepted: (Int) -> Boolean = { true },
+    private val drain: () -> NativeEncodedAudioPacket? = { null },
+    private val action: (Int, Int, ByteArray) -> NativeEncodedAudioPacket?,
+) : RealtimeAudioCodecProvider {
     val encoders = CopyOnWriteArrayList<Encoder>()
     val firstClosed = CountDownLatch(1)
     override fun sessionCapabilities() = 0L
@@ -214,6 +294,11 @@ private class InboxCodecProvider(private val action: (Int, Int, ByteArray) -> Na
             calls++
             return action(instance, calls, pcm16LittleEndian)
         }
+        override fun offer(pcm16LittleEndian: ByteArray): com.aessam.comeoverhere.core.RealtimeAudioEncodeResult {
+            val packet = encode(pcm16LittleEndian)
+            return com.aessam.comeoverhere.core.RealtimeAudioEncodeResult(accepted(calls), packet)
+        }
+        override fun drainOutput(): NativeEncodedAudioPacket? = drain()
         override fun close() { closeCount++; firstClosed.countDown() }
     }
 }

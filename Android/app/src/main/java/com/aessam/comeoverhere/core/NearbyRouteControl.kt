@@ -37,6 +37,9 @@ data class NearbyGuestRoute(
 }
 
 interface NearbyRouteControl {
+    var allowedTransportPolicy: com.aessam.toursession.AllowedTransportPolicy
+        get() = com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
+        set(value) { check(value == com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC) { "Strict nearby route policy unsupported" } }
     val usesBluetoothGuestRoute: Boolean
     val activeNearbyGuestRoute: NearbyGuestRoute? get() = null
     val awareSettings: NearbyAwareSettings?

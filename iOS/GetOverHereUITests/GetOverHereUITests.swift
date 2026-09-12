@@ -9,6 +9,28 @@ import XCTest
 
 final class GetOverHereUITests: XCTestCase {
     @MainActor
+    func testGatewaySetupRejectsMalformedPairingWithoutCreatingTour() {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["gatewaySetup"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["gatewaySetup"].tap()
+        XCTAssertTrue(app.staticTexts["gatewayState"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["gatewayState"].label, "stopped")
+        let field = app.textFields["gatewayPairingInput"]
+        let input = field.exists ? field : app.textViews["gatewayPairingInput"]
+        input.tap(); input.typeText("goh-hub:1:not-a-valid-message")
+        app.buttons["gatewayReadPairing"].tap()
+        XCTAssertTrue(app.staticTexts["gatewayError"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["gatewayState"].label, "stopped")
+        XCTAssertFalse(app.buttons["gatewayConfirm"].exists)
+        XCTAssertFalse(app.buttons["gatewayConnect"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Gateway malformed enrollment fails closed"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testRepeatedPhysicalGuideCreationThroughNormalUI() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Requires physical microphone capture")

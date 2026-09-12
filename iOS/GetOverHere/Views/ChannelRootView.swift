@@ -19,6 +19,7 @@ struct ChannelRootView: View {
         .sheet(isPresented: $coord.showCreateChannel) {
             CreateChannelSheet()
         }
+        .sheet(isPresented: $coord.showGateway) { GatewaySetupView() }
         #if DEBUG
         .sheet(isPresented: $coord.showDebugControl) {
             DebugControlPanel()

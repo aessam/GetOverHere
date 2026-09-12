@@ -413,6 +413,7 @@ struct ChannelDetailView: View {
         return switch service.guestRoute?.transport {
         case .bluetooth: "Bluetooth"
         case .wifiAware: "Wi-Fi Aware"
+        case .applePeer: "Apple peer-to-peer"
         case .localLAN, nil: "Local network"
         }
     }

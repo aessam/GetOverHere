@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:24.212Z" hostname="redacted" time="0.025">
+  <properties/>
+  <testcase name="cableLossWithdrawsBranchAndMakesFiveBoundedSameAddressRetries" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.018"/>
+  <testcase name="guideTourEndingRemovesCompanionAssociation" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.002"/>
+  <testcase name="stopDuringOfferCannotCommitOrReactivateNativeAssociation" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.0"/>
+  <testcase name="authenticatedAssociationAndReconnectRemainValidAfterEnrollmentDeadline" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.002"/>
+  <testcase name="confirmedButNeverConnectedGuideStillExpiresWhenQRHidden" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.001"/>
+  <testcase name="repeatedHeartbeatDoesNotRestartFailedBranchOrEraseItsError" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.001"/>
+  <testcase name="queuedOldDescriptorCannotReopenBranchAfterStop" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.001"/>
+  <testcase name="synchronousFirstDescriptorCannotBeOverwrittenByConnectingResult" classname="com.aessam.comeoverhere.GatewaySessionCoordinatorTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

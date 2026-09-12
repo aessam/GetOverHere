@@ -27,3 +27,17 @@ Android/local.properties
 !Packages/TourSessionCore/**
 Packages/TourSessionCore/.build/
 Packages/TourSessionCore/.swiftpm/
+
+# Local gateway security and test-fixture package build products.
+Packages/LocalLinkSecurity/.build/
+Packages/LocalLinkSecurity/.swiftpm/
+Packages/GatewayTLSFixture/.build/
+Packages/GatewayTLSFixture/.swiftpm/
+
+# Preserve the resolved graph for the new TLS dependency and the app consuming it.
+!Packages/LocalLinkSecurity/Package.resolved
+!Packages/GatewayTLSFixture/Package.resolved
+!iOS/GetOverHere.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Sanitized, bounded verification logs are evidence, not disposable build output.
+!benchmarks/2026-09-11-gateway-software/**/*.log

@@ -1,0 +1,14 @@
+{
+  "execution": {
+    "elapsed_s": 8.704,
+    "exit_code": 0
+  },
+  "qualification": "No physical USB, radio, pairing, or acoustic claim",
+  "scope": "emulator_production_gateway_setup_ui_only",
+  "tests": {
+    "executed": 1,
+    "failed": 0,
+    "passed": 1,
+    "skipped": 0
+  }
+}
