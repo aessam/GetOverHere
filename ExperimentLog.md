@@ -1783,3 +1783,90 @@ final TLS fixture. `adb -s emulator-5554 emu kill` stopped only the emulator thi
 session launched; its owning process exited0. Retained builds/evidence were not
 deleted. Existing iOS Simulator and physical phone/radio state were not changed
 by this cleanup. Final `git diff --check` passed.
+
+## 2026-09-15 — independent gateway security/code review, devices unavailable
+
+Reviewed unchanged production HEAD ec1b0b8 and supplied F1–F10. Added isolated
+review-only test sources and a runner; no production source/configuration edits,
+phone queries/installs/radio changes, commit or push. Additional source findings:
+F11 per-read timeout is not an absolute pre-authentication deadline; F12 local
+socket is not cleaned if the accepted-reply write throws before its inner finally.
+Neither additional finding is labeled an executed native exploit.
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer bash scripts/review/gateway/run.sh
+```
+
+Exit1, with actual test failures rather than build/environment failures. Evidence
+directory `/tmp/GetOverHereSecurityReview.RpOF5q`: Swift1 selected/1 failed with
+`.expired`; Android3 selected/3 failed (same skew plus terminal and stalled
+encoder replacement). Fixed input: offer issued1,000,000ms, expiry1,120,000ms,
+scan after3s with companion10s behind gives993,000ms and127,000ms remaining.
+Encoder fixtures drive24 actual processor submissions over6s of virtual monotonic
+time; no physical/native codec quality is claimed. The codec provider is an
+explicit fault fixture and does not replace production capture-owner code.
+
+Independent baseline reruns, both exit0:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer swift test --disable-sandbox --package-path Packages/LocalLinkSecurity --scratch-path /tmp/GetOverHereTourSessionLinkSecurity
+# Working directory: Android
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :tour-session-core:test
+```
+
+Normal Android app198 tests/37 suites passed without review injection. Kotlin
+core was UP-TO-DATE, not newly executed. LocalLinkSecurity4 definitions/8 cases
+passed, including actual valid TLS and wrong/missing/expired peer rejection.
+Console logs retained in `benchmarks/2026-09-15-security-review/*.txt`.
+The full review records corrections to the supplied review's scope/severity,
+dependency advisory sources, no-go verdict and software-versus-physical work.
+All commands completed; the ephemeral TLS fixture listeners were closed and no
+emulators were started for this review.
+
+## 2026-09-15 — implement review repairs without physical devices
+
+User authorized completing software and using all available host/simulator/emulator
+tools while phones are absent. Implemented F1–F12, preserving wire formats and the
+two-hub scope. No physical devices queried or installed. Full command manifest,
+counts, source disposition and retained raw output are in
+`benchmarks/2026-09-15-security-review/README.md`.
+
+Executed `DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer bash
+scripts/review/gateway/run.sh`: final output `/tmp/GetOverHereSecurityReview.017tuj`,
+exit0, Swift1/Android3 original regressions green. Normal source-set restoration:
+from Android, `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home'
+./gradlew :app:testDebugUnitTest :tour-session-core:test`; final log
+`/tmp/GetOverHereGatewayReview-final-units.log`, app205/core83, no failures/skips.
+
+Full `scripts/verify_tour_session.sh` with the README's Xcode/Java/scratch/destination
+environment passed all9 stages: `/tmp/GetOverHereGatewayReview-full-gate-2.log`.
+Swift core84; LocalLinkSecurity6 definitions/10 cases; wire262 cases/10 exact
+fixtures; host tools12+36; serial iOS201 definitions/248 passing runs/four explicit
+hardware-only skips. Final xcresult and two passing UI tests are recorded in the
+README and exported JSON summaries. UI command used `-parallel-testing-enabled NO`,
+`-collect-test-diagnostics never`, and selected gateway setup/deeplink tests.
+
+Retained unsuccessful attempts: `/tmp/GetOverHereGatewayReview-1.log` from the
+ad-hoc parallel run, canceled with SIGINT then SIGTERM after it stalled; first
+serial gate `/tmp/GetOverHereGatewayReview-full-gate.log` failed one pre-skew expiry
+assertion. It now checks rejection beyond the bounded allowance. No failed run is
+counted as passing; final full serial gate exited0.
+
+Started only local AVD GetOverHere_API_36, emulator-5554, no-window/no-audio,
+no-snapshot-save. Installed exact current Debug/test APKs and ran native gateway
+faults12/12, codec/reconnect8/8, setup/debug UI6/6. Scoped native tests clean their
+generated KeyStore aliases. Real Mac↔emulator TLS ran both server roles with
+65,536 byte-identical round trips; `tls-interop.json` retains SHA256s. ADB tunnels
+were owned/closed by the runner. Visible consent/client/recorder smoke passed22
+checks and reported no cleanup errors; it closed the room/endpoint and restored
+the microphone permission it granted. None of this proves USB/radio/acoustics.
+
+Built Android Release and generic iOS Release; `scripts/verify_debug_control_release.py`
+passes both. Built signed generic iPhone Debug without a phone; `codesign --verify
+--deep --strict /tmp/GetOverHereGatewayReviewDevice/Build/Products/Debug-iphoneos/GetOverHere.app`
+exited0. Artifact hashes and paths are retained in the evidence README. Existing
+compiler/deprecation warnings remain; no dependency update or broad cleanup made.
+After all tests, stopped the task-owned emulator with `adb -s emulator-5554 emu kill`
+(OK). Moved only the generated untracked `Android/.kotlin` session-marker directory
+to `/tmp/GetOverHereGatewayReview-kotlin-sessions-20260915`. No user data deleted.
+Stable tag verified unchanged at `59b0402c91cfabb3eb839800b2b8521be90854e0`.

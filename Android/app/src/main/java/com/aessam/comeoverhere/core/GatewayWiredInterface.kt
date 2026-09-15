@@ -4,11 +4,16 @@ import com.aessam.toursession.BluetoothRoomRecord
 import com.aessam.toursession.GatewayPairingMessage
 import com.aessam.toursession.GatewayRoomDescriptor
 
+enum class GatewayRecoveryState { IDLE, CONNECTING, WAITING, EXHAUSTED, CONNECTED }
+
 /** Testable ownership boundary; production uses native certificate-pinned TLS. */
 interface GatewayWiredInterface {
     var onDescriptor: ((GatewayRoomDescriptor?) -> Unit)?
     var onError: ((String) -> Unit)?
     var onConnected: ((Boolean) -> Unit)?
+    var onRecoveryChanged: ((GatewayRecoveryState) -> Unit)?
+        get() = null
+        set(_) {}
     val isConnected: Boolean
     val automaticRecoveryEnabled: Boolean get() = false
     val routeDescription: String?

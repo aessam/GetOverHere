@@ -28,6 +28,67 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 class RealtimeCaptureInboxTest {
+    @Test fun terminalFailureReplacesEncoderAndResumesSignedEncryptedFramesWithFreshStream() {
+        val provider = InboxCodecProvider { instance, call, pcm ->
+            if (instance == 1 && call > 1) error("Injected terminal codec failure")
+            inboxPacket(pcm)
+        }
+        val h = InboxHarness(provider, signed = true)
+        try {
+            h.submit(byteArrayOf(1, 2, 3, 4))
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            h.submit(byteArrayOf(5, 6, 7, 8))
+            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
+            val resumed = CountDownLatch(1)
+            h.afterOutput = { resumed.countDown() }
+            h.submit(byteArrayOf(9, 10, 11, 12))
+            assertTrue(resumed.await(3, TimeUnit.SECONDS))
+            val frames = h.frames.map(h.authentication::decodeGuide)
+            assertTrue(frames.first().streamId != frames.last().streamId)
+            assertArrayEquals(byteArrayOf(9, 10, 11, 12), h.payloads().last().encodedBytes)
+            assertEquals(1, h.processor.encoderResetCount)
+            assertEquals(1, provider.encoders.first().closeCount)
+        } finally { h.close() }
+    }
+
+    @Test fun permanentStallIsReplacedButNormalColdStartIsNot() {
+        val offered = java.util.concurrent.LinkedBlockingQueue<Unit>()
+        val provider = InboxCodecProvider { instance, _, pcm ->
+            offered.add(Unit)
+            if (instance == 1) null else inboxPacket(pcm)
+        }
+        val h = InboxHarness(provider, signed = true)
+        try {
+            h.submit(byteArrayOf(1, 2, 3, 4))
+            assertTrue(offered.poll(3, TimeUnit.SECONDS) != null)
+            h.time.set(2_000_000_000)
+            h.submit(byteArrayOf(1, 2, 3, 4))
+            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
+            h.submit(byteArrayOf(9, 10, 11, 12))
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            assertArrayEquals(byteArrayOf(9, 10, 11, 12), h.payloads().single().encodedBytes)
+            assertEquals(1, h.processor.encoderResetCount)
+        } finally { h.close() }
+    }
+
+    @Test fun repeatedTerminalFailuresStopAfterThreeReplacementsAndReportOnce() {
+        val failed = CountDownLatch(1)
+        val errors = CopyOnWriteArrayList<String>()
+        val provider = InboxCodecProvider { _, _, _ -> error("Injected terminal codec failure") }
+        val h = InboxHarness(provider, failure = { errors += it; failed.countDown() })
+        try {
+            // One submission can contain several complete PCM frames, but failure must retire
+            // the instance and discard the remainder before the next capture entry.
+            repeat(8) { h.submit(byteArrayOf(1, 2, 3, 4)) }
+            assertTrue(failed.await(3, TimeUnit.SECONDS))
+            h.close()
+            assertEquals(4, provider.encoders.size)
+            assertEquals(3, h.processor.encoderResetCount)
+            assertEquals(1, errors.size)
+            assertTrue(provider.encoders.all { it.closeCount == 1 })
+        } finally { h.close() }
+    }
+
     @Test fun invalidOrOversizedInputIsRejectedBeforeRetainingOrEncoding() {
         val provider = InboxCodecProvider { _, _, pcm -> inboxPacket(pcm) }
         val h = InboxHarness(provider)
@@ -247,27 +308,33 @@ class RealtimeCaptureInboxTest {
     }
 }
 
-private class InboxHarness(provider: InboxCodecProvider, expectedOutputs: Int = 1) : AutoCloseable {
+private class InboxHarness(provider: InboxCodecProvider, expectedOutputs: Int = 1,
+    signed: Boolean = false, failure: (String) -> Unit = {}) : AutoCloseable {
     companion object { const val WALL_BASE = 1_000_000_000L }
     val time = AtomicLong(0)
     val frames = CopyOnWriteArrayList<ByteArray>()
     val output = CountDownLatch(expectedOutputs)
     @Volatile var afterOutput: (() -> Unit)? = null
     private val room = UUID.randomUUID()
+    private val guide = UUID.randomUUID()
+    private val signer = com.aessam.toursession.GuideFrameSigner(room, guide)
+    val authentication = if (signed) SessionGuideAuthentication.Guest(
+        com.aessam.toursession.GuideFrameVerifier(signer.publicKey, room, guide)) else SessionGuideAuthentication.LegacyFixture
     val credential = SessionCredential.derive("23456789AB", room)
     private val writer = BoundedSocketFrameWriter(Socket(), 1, "inbox-test-unused-socket", 1,
         SocketFrameOverflowPolicy.DROP_OLDEST, 100) { _, _ -> error("No socket writes in processor component test") }
     val processor = UDPAudioPlane.BroadcastProcessor(
-        UDPAudioPlane.SessionConfiguration(room, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID,
-            credential, SessionGuideAuthentication.LegacyFixture), provider,
+        UDPAudioPlane.SessionConfiguration(room, guide, "Guide", ParticipantPlatform.ANDROID,
+            credential, if (signed) SessionGuideAuthentication.Guide(signer) else SessionGuideAuthentication.LegacyFixture), provider,
         wallClock = { WALL_BASE + time.get() }, monotonicClock = time::get,
         emitFrame = { bytes, _ -> frames += bytes; output.countDown(); afterOutput?.invoke() },
+        onEncoderFailure = failure,
     )
     fun submit(bytes: ByteArray) = processor.submit(bytes, mapOf(SessionAudioCodec.OPUS to listOf(writer)))
     fun payloads(): List<EncodedAudioFramePayload> {
         val opener = SessionFrameOpener(credential)
         return frames.map { bytes ->
-            val envelope = (opener.open(SealedSessionEnvelope.decode(bytes)) as SessionFrameOpenResult.Opened).envelope
+            val envelope = (opener.open(authentication.decodeGuide(bytes)) as SessionFrameOpenResult.Opened).envelope
             EncodedAudioFramePayload.decode(envelope.payload)
         }
     }

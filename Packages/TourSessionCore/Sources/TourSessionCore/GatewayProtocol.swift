@@ -6,6 +6,7 @@ public enum GatewayProtocol {
     public static let servicePort: UInt16 = 50_104
     public static let maximumControlFrameSize = 4_096
     public static let enrollmentLifetimeMilliseconds: UInt64 = 120_000
+    public static let enrollmentClockSkewMilliseconds: UInt64 = 30_000
     public static let heartbeatMilliseconds: UInt64 = 1_000
     public static let heartbeatTimeoutMilliseconds: UInt64 = 3_000
     /// Every validated hub-control descriptor is acknowledged with this byte.
@@ -66,6 +67,20 @@ public struct GatewayPairingMessage: Equatable, Sendable {
     public func validate(nowMilliseconds: UInt64) throws {
         guard expiresAtMilliseconds > nowMilliseconds,
               expiresAtMilliseconds - nowMilliseconds <= GatewayProtocol.enrollmentLifetimeMilliseconds else {
+            throw GatewayProtocolError.expired
+        }
+    }
+
+    /// Only the companion uses this bounded skew allowance. The guide still
+    /// rejects expired responses using its own clock and original offer.
+    public func validateReceivedOffer(nowMilliseconds: UInt64) throws {
+        guard role == .offer else { throw GatewayProtocolError.mismatchedPairing }
+        let skew = GatewayProtocol.enrollmentClockSkewMilliseconds
+        if expiresAtMilliseconds > nowMilliseconds {
+            guard expiresAtMilliseconds - nowMilliseconds <= GatewayProtocol.enrollmentLifetimeMilliseconds + skew else {
+                throw GatewayProtocolError.expired
+            }
+        } else if nowMilliseconds - expiresAtMilliseconds >= skew {
             throw GatewayProtocolError.expired
         }
     }

@@ -11,6 +11,38 @@ import TourSessionCore
 /// `createChannel`/`joinChannel` polls with a real wait before emitting fake lane events (RSK-4).
 @Suite("ChannelService lifecycle", .serialized)
 struct ChannelServiceLifecycleTests {
+    @Test @MainActor func gatewayReconnectExhaustionCanBeRetriedWithoutNewEnrollment() async throws {
+        let h = try Harness()
+        let control = LocalControlPlane(displayName: "Gateway recovery fixture")
+        var delays: [Duration] = []
+        let gateway = GatewaySessionCoordinator(service: h.service, control: control,
+            reconnectSleep: { delays.append($0); await Task.yield() })
+        defer { gateway.stop(); control.stop(); h.service.terminate(); h.close() }
+        // No wired interface exists in this simulator-only recovery fixture.
+        #expect(gateway.wiredInterfaces.selected == nil)
+        let offer = try GatewayPairingMessage(role: .offer, pairingID: UUID(), roomID: UUID(), guideID: UUID(),
+            expiresAtMilliseconds: LiveWiredCompanionTransport.wallMilliseconds + 120_000,
+            certificateFingerprint: Data(repeating: 1, count: 32), guideKeyFingerprint: Data(repeating: 2, count: 32),
+            offerCertificateFingerprint: Data(repeating: 1, count: 32), host: "192.0.2.1", port: GatewayProtocol.servicePort)
+        try gateway.receivePairingQR(offer.qrString)
+        gateway.transport.onError?("Injected cable outage")
+        for _ in 0..<1_000 {
+            if gateway.state == "wired-reconnect-exhausted" { break }
+            await Task.yield()
+        }
+        #expect(delays == [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(8)])
+        #expect(gateway.state == "wired-reconnect-exhausted")
+        #expect(throws: NearbyConnectionError.self) { try gateway.retryWiredConnection() }
+        // Deliberate retry resets the budget even though the cable is still absent.
+        gateway.transport.onError?("Still disconnected")
+        for _ in 0..<1_000 {
+            if delays.count == 10 && gateway.state == "wired-reconnect-exhausted" { break }
+            await Task.yield()
+        }
+        #expect(delays.count == 10)
+        #expect(gateway.offer?.pairingID == offer.pairingID)
+    }
+
     @Test @MainActor
     func findNearbyDoesNotForceExperimentalAware() throws {
         let h = try Harness()

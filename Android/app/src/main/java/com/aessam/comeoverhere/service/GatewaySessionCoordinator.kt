@@ -1,9 +1,12 @@
 package com.aessam.comeoverhere.service
 
+import com.aessam.toursession.GatewayProtocol
+
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.aessam.comeoverhere.core.GatewayWiredInterface
+import com.aessam.comeoverhere.core.GatewayRecoveryState
 import com.aessam.comeoverhere.core.NearbyAwareState
 import com.aessam.comeoverhere.core.WiFiAwareRoomTransport
 import com.aessam.comeoverhere.core.WiredCompanionTransport
@@ -28,7 +31,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 enum class GatewayRole { NONE, GUIDE, COMPANION }
-enum class GatewayState { IDLE, OFFER, RESPONSE, AWAITING_CONFIRMATION, CONNECTING, CONNECTED, FAILED }
+enum class GatewayState { IDLE, OFFER, RESPONSE, AWAITING_CONFIRMATION, CONNECTING, CONNECTED, FAILED, EXHAUSTED }
 data class GatewayStatus(val role: GatewayRole = GatewayRole.NONE, val state: GatewayState = GatewayState.IDLE,
     val enrollmentQR: String? = null, val roomName: String? = null, val route: String? = null,
     val error: String? = null, val keepAwake: Boolean = false, val branchError: String? = null)
@@ -67,6 +70,17 @@ class GatewaySessionCoordinator internal constructor(private val tour: GatewayTo
     private var branchGeneration: Long? = null
 
     init {
+        wired.onRecoveryChanged = { recovery -> val callbackGeneration = generation; scope.launch {
+            if (generation == callbackGeneration && mutableStatus.value.role == GatewayRole.COMPANION) {
+                val next = when (recovery) {
+                    GatewayRecoveryState.CONNECTING, GatewayRecoveryState.WAITING -> GatewayState.CONNECTING
+                    GatewayRecoveryState.EXHAUSTED -> GatewayState.EXHAUSTED
+                    GatewayRecoveryState.CONNECTED -> GatewayState.CONNECTED
+                    GatewayRecoveryState.IDLE -> GatewayState.FAILED
+                }
+                mutableStatus.value = mutableStatus.value.copy(state = next)
+            }
+        } }
         tour.setCompanionGuard { mutableStatus.value.role == GatewayRole.COMPANION }
         wired.onDescriptor = { descriptor -> val callbackGeneration = generation; scope.launch {
             if (generation != callbackGeneration) return@launch
@@ -132,7 +146,7 @@ class GatewaySessionCoordinator internal constructor(private val tour: GatewayTo
 
     fun scanEnrollment(text: String, address: WiredInterfaceAddress?) = perform {
         val message = GatewayPairingMessage.fromQR(text)
-        message.validate(now())
+        if (message.role == GatewayPairingRole.OFFER) message.validateReceivedOffer(now()) else message.validate(now())
         when (message.role) {
             GatewayPairingRole.OFFER -> {
                 check(tour.listenState.value == ListenState.IDLE && mutableStatus.value.role == GatewayRole.NONE) { "Leave the active tour or association first" }
@@ -220,7 +234,8 @@ class GatewaySessionCoordinator internal constructor(private val tour: GatewayTo
                 result.enrollmentQR?.let { qr ->
                     if (expiryJob == null) expiryJob = scope.launch {
                         val expiry = GatewayPairingMessage.fromQR(qr).expiresAtMilliseconds
-                        delay((expiry - now()).coerceAtLeast(0))
+                        delay(if (result.role == GatewayRole.COMPANION) GatewayProtocol.ENROLLMENT_LIFETIME_MILLISECONDS
+                            else (expiry - now()).coerceAtLeast(0))
                         if (generation == attempt && !authenticatedOnce) {
                             stop(); report("Incomplete companion enrollment expired. Start again.")
                         }

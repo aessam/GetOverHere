@@ -81,6 +81,7 @@ class UDPAudioPlane(
         val pendingInputs = java.util.ArrayDeque<CaptureOrigin>()
         val streamID: UUID = UUID.randomUUID()
         var sequence: Long = 0
+        var waitingSince: Long? = null
     }
 
     /**
@@ -94,12 +95,15 @@ class UDPAudioPlane(
         private val wallClock: () -> Long = ::wallClockNanoseconds,
         private val monotonicClock: () -> Long = System::nanoTime,
         private val emitFrame: (ByteArray, List<BoundedSocketFrameWriter>) -> Unit = { frame, writers -> writers.forEach { it.enqueue(frame) } },
+        private val onEncoderFailure: (String) -> Unit = {},
     ) {
         private companion object {
             const val MAXIMUM_PENDING_ENTRIES = 8
             const val MAXIMUM_BUFFERED_CODEC_INPUTS = 8
             const val MAXIMUM_SUBMISSION_BYTES = 32_000
             const val MAXIMUM_CAPTURE_AGE_NANOSECONDS = 150_000_000L
+            const val MAXIMUM_CODEC_STALL_NANOSECONDS = 2_000_000_000L
+            const val MAXIMUM_ENCODER_REPLACEMENTS = 3
         }
         private val executor = Executors.newSingleThreadExecutor { body ->
             Thread(body, "audio-encode-seal").apply { isDaemon = true }
@@ -107,6 +111,8 @@ class UDPAudioPlane(
         private val sealer = SessionFrameSealer(configured.credential)
         // Confined to the executor thread.
         private val codecStates = mutableMapOf<SessionAudioCodec, BroadcastCodecState>()
+        private val replacementCounts = mutableMapOf<SessionAudioCodec, Int>()
+        private val failedCodecs = mutableSetOf<SessionAudioCodec>()
         private data class Entry(val pcm: ByteArray, val destinations: Map<SessionAudioCodec, List<BoundedSocketFrameWriter>>, val origin: CaptureOrigin)
         private val lock = Any()
         private val pending = java.util.ArrayDeque<Entry>()
@@ -193,11 +199,29 @@ class UDPAudioPlane(
             closeEncoder(state.encoder)
         }
 
+        private fun retireEncoder(codec: SessionAudioCodec, reason: String) {
+            codecStates.remove(codec)?.let(::closeStateEncoder)
+            val replacements = replacementCounts[codec] ?: 0
+            lastEncoderResetReason = reason
+            if (replacements >= MAXIMUM_ENCODER_REPLACEMENTS) {
+                if (failedCodecs.add(codec)) {
+                    val message = "Audio encoder $codec failed after $replacements recovery attempts. Restart the tour audio."
+                    Log.e(TAG, message)
+                    onEncoderFailure(message)
+                }
+            } else {
+                replacementCounts[codec] = replacements + 1
+                encoderResetCount++
+                Log.e(TAG, "TCP: replacing $codec encoder ($reason, attempt ${replacements + 1})")
+            }
+            // A replacement gets a fresh stream UUID; sequence zero never reuses the old stream's nonce.
+        }
+
         private fun process(entry: Entry, generation: Long) {
             if (stopped) return
             if (expired(entry.origin)) { synchronized(lock) { dropEntry() }; return }
             entry.destinations.forEach { (codec, writers) ->
-                if (writers.isEmpty()) return@forEach
+                if (writers.isEmpty() || codec in failedCodecs) return@forEach
                 try {
                     val state = codecStates.getOrPut(codec) {
                         BroadcastCodecState(codecProvider.makeEncoder(codec), generation)
@@ -220,6 +244,7 @@ class UDPAudioPlane(
                             synchronized(lock) { dropEntry() }
                             continue
                         }
+                        if (state.waitingSince == null) state.waitingSince = monotonicClock()
                         val result = if (state.pendingInputs.size == MAXIMUM_BUFFERED_CODEC_INPUTS) {
                             // Do not accept a ninth input, but let a cold codec finally drain.
                             // Resetting here repeats the same eight-input startup forever.
@@ -240,6 +265,8 @@ class UDPAudioPlane(
                             }) ?: break
                             val outputOrigin = state.pendingInputs.pollFirst()
                                 ?: error("Encoder produced output without an accepted input")
+                            // Even expired output proves codec progress. Capture expiry alone is not a stall.
+                            state.waitingSince = if (state.pendingInputs.isEmpty()) null else monotonicClock()
                             if (stopped) return@forEach
                             if (expired(outputOrigin)) {
                                 expiredCodecOutputs++
@@ -268,10 +295,15 @@ class UDPAudioPlane(
                                 } else if (!stopped) dropEntry()
                             }
                         }
+                        if (state.waitingSince?.let { monotonicClock() - it >= MAXIMUM_CODEC_STALL_NANOSECONDS } == true) {
+                            retireEncoder(codec, "no output for 2 seconds")
+                            return@forEach
+                        }
                     }
                 } catch (error: Exception) {
                     Log.e(TAG, "TCP: encoded audio frame failed (${error.javaClass.simpleName})")
                     synchronized(lock) { dropEntry() }
+                    retireEncoder(codec, error.javaClass.simpleName)
                 }
             }
         }
@@ -460,9 +492,10 @@ class UDPAudioPlane(
             serverSocket = server
             Log.i(TAG, "TCP: GOH2 server listening on 0.0.0.0:$audioPort")
             // Constructed after the bind so a bind failure cannot leak the encode executor (DSCN-28).
-            broadcastProcessor = BroadcastProcessor(configured, codecProvider)
-
             val runEventHandler = sessionEventHandler
+            broadcastProcessor = BroadcastProcessor(configured, codecProvider, onEncoderFailure = { message ->
+                if (isRunActive(epoch)) runEventHandler?.invoke(AudioSessionEvent.Failed(message))
+            })
             acceptExecutor.execute {
                 while (isRunActive(epoch)) {
                     val socket = try {

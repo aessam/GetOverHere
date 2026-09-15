@@ -39,6 +39,10 @@ enum NearbyConnectionError: Error, LocalizedError {
     }
 }
 
+struct NearbyReliableWriteTimeout: Error, LocalizedError {
+    var errorDescription: String? { "Reliable gateway lane write timed out. Reopen and resume the lane." }
+}
+
 @MainActor
 final class NearbyTCPConnection: NearbyByteConnection {
     private let connection: NWConnection
@@ -230,7 +234,8 @@ final class NearbySocketBridge {
                 let framed: any NearbyByteConnection = realtime ? NearbyRealtimeConnection(remote) : remote
                 if realtime { connections[id]?.append(framed) }
                 try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission,
-                    audioResidenceMilliseconds: audioResidenceMilliseconds)
+                    audioResidenceMilliseconds: audioResidenceMilliseconds,
+                    reliableWriteTimeoutMilliseconds: guideConnector == nil ? nil : 5_000)
             } catch {
                 if !Task.isCancelled { report(error) }
             }
@@ -344,11 +349,12 @@ final class NearbySocketBridge {
 
     static func pump(_ first: any NearbyByteConnection, _ second: any NearbyByteConnection, realtime: Bool,
                              drainAdmissionReply: Bool = false,
-                             audioResidenceMilliseconds: UInt64 = NearbyRealtimeQueue.lifetimeMilliseconds) async throws {
+                             audioResidenceMilliseconds: UInt64 = NearbyRealtimeQueue.lifetimeMilliseconds,
+                             reliableWriteTimeoutMilliseconds: UInt64? = nil) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { if realtime { try await copyRealtime(first, second, lifetime: audioResidenceMilliseconds) } else { try await copy(first, second) } }
+            group.addTask { if realtime { try await copyRealtime(first, second, lifetime: audioResidenceMilliseconds) } else { try await copy(first, second, timeout: reliableWriteTimeoutMilliseconds) } }
             group.addTask {
-                if realtime { try await copyRealtime(second, first, lifetime: audioResidenceMilliseconds) } else { try await copy(second, first) }
+                if realtime { try await copyRealtime(second, first, lifetime: audioResidenceMilliseconds) } else { try await copy(second, first, timeout: reliableWriteTimeoutMilliseconds) }
                 // Native close may discard queued writes. Let the admitted guest receive
                 // the final reply and close first; never retain an abandoned peer forever.
                 if drainAdmissionReply {
@@ -413,12 +419,26 @@ final class NearbySocketBridge {
         return try SealedSessionEnvelope.decode(sealed).kind == .audioFrame
     }
 
-    private static func copy(_ source: any NearbyByteConnection, _ destination: any NearbyByteConnection) async throws {
+    private static func copy(_ source: any NearbyByteConnection, _ destination: any NearbyByteConnection, timeout: UInt64?) async throws {
         while !Task.isCancelled {
             let data = try await source.read(maximum: 16_384)
             if data.isEmpty { return }
-            try await destination.write(data)
+            try await writeReliable(data, to: destination, timeout: timeout)
         }
+    }
+
+    static func writeReliable(_ bytes: Data, to destination: any NearbyByteConnection, timeout: UInt64?) async throws {
+        guard let timeout else { try await destination.write(bytes); return }
+        var expired = false
+        let deadline = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(timeout)) } catch { return }
+            expired = true
+            destination.close()
+        }
+        defer { deadline.cancel() }
+        do { try await destination.write(bytes) }
+        catch { if expired { throw NearbyReliableWriteTimeout() }; throw error }
+        if expired { throw NearbyReliableWriteTimeout() }
     }
 
     private func finish(_ id: UUID) {

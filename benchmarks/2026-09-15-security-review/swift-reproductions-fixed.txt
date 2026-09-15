@@ -1,0 +1,37 @@
+Building for debugging...
+[Planning deferred tasks]
+[27 / 50]
+[28 / 51] TourSessionCore
+[37 / 106]
+[40 / 106]
+[43 / 106]
+[48 / 106]
+[49 / 106]
+[53 / 106]
+[54 / 106]
+[56 / 106]
+[59 / 106]
+[62 / 106]
+[63 / 106]
+[64 / 106]
+[65 / 106]
+[83 / 106] TourSessionCore
+[91 / 106] GatewaySecurityReviewTests-product
+[91 / 106] TourSessionCore
+[93 / 106] TourSessionCore
+[96 / 107] GatewaySecurityReviewTests-product
+[97 / 112]
+[101 / 112] GatewaySecurityReviewTests-product
+[108 / 112] GatewaySecurityReviewTests-product
+Build complete! (9.23 sec)
+Test Suite 'All tests' started at 2026-09-15 08:46:12.148.
+Test Suite 'All tests' passed at 2026-09-15 08:46:12.149.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite GatewaySecurityReviewTests started.
+􀟈  Test freshOfferSurvivesTenSecondCompanionClockSkew() started.
+􁁛  Test freshOfferSurvivesTenSecondCompanionClockSkew() passed after 0.001 seconds.
+􁁛  Suite GatewaySecurityReviewTests passed after 0.001 seconds.
+􁁛  Test run with 1 test in 1 suite passed after 0.001 seconds.

@@ -69,6 +69,28 @@ class WiredHubTLSIdentityTest {
         } finally { store.deleteEntry(alias) }
     }
 
+    @Test fun expiredIdentityRequiresNewEnrollmentBeforePinChanges() {
+        val alias = "goh.test.expired.${UUID.randomUUID()}"
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        try {
+            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").apply {
+                initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
+                    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                    .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256)
+                    .setCertificateNotBefore(java.util.Date(System.currentTimeMillis() - 86_400_000))
+                    .setCertificateNotAfter(java.util.Date(System.currentTimeMillis() - 60_000)).build())
+                generateKeyPair()
+            }
+            val before = store.getCertificate(alias).encoded
+            val failure = runCatching { HubIdentity(alias) }.exceptionOrNull()
+            assertTrue(failure?.message.orEmpty().contains("expired"))
+            assertArrayEquals(before, store.getCertificate(alias).encoded)
+            val renewed = HubIdentity(alias, renewExpiredForEnrollment = true)
+            assertTrue(!before.contentEquals(store.getCertificate(alias).encoded))
+            assertArrayEquals(renewed.fingerprint, HubIdentity(alias).fingerprint)
+        } finally { store.deleteEntry(alias) }
+    }
+
     @Test fun mutuallyPinnedTLS13RoundTripsRealBytes() = identities { guide, companion ->
         exchange(guide, companion, wrongGuidePin = false)
     }

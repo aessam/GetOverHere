@@ -181,7 +181,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         var connect: NearbySocketBridge.LaneConnect
         var transport: SessionTransportRoute
         if applePeerRooms.contains(roomID) {
-            connect = { [applePeer] _ in try await applePeer.connect(roomID: roomID) }
+            connect = try applePeer.connector(roomID: roomID)
             transport = .applePeer
             usesBluetoothGuestRoute = false
             try await verifyNearbyRecord(roomID: roomID, guideID: expectedGuideID, attempt: attempt, connect: connect)

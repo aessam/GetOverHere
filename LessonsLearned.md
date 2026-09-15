@@ -600,3 +600,43 @@ that the current role actually uses. Two deterministic failures were reproduced
 before the correction; all11 coordinator tests passed afterward.
 **Decision**: Verify guide, companion and listener entry points independently.
 A healthy proxy test does not prove the normal guide UI enabled its local radio.
+
+## 97. Passing happy-path gates did not establish gateway failure recovery
+
+September15 independent review of ec1b0b8 reproduced four isolated failures:
+both cores reject a fresh offer with a companion clock10s behind, and Android's
+capture owner never replaces either a terminally failing or permanently stalled
+encoder. Normal Android198 tests and the actual TLS identity suite still pass.
+The old encoderResetCount assertions expected zero while no production path
+could increment it. Factory lifetime/progress assertions expose the missing work.
+
+The earlier claim that all coding was complete was too strong. Freeze claims
+must include failure transitions, alternate endpoint ownership, exhausted retry
+state, and exception-path resource accounting, not only totals and valid TLS.
+Source review also found missing absolute Android pre-authentication deadlines
+and a loopback socket cleanup gap if the acceptance write fails. Those two need
+targeted native/fault injection before repair claims; no exploit was run.
+Report, narrowed supplied findings and ordered repair gates:
+`SecurityCodeReview-2026-09-15.md`. No production fix was made during review.
+
+## 98. Recovery tests must assert resumed traffic and exception-path ownership
+
+September15 repairs separate expired capture from a genuinely stuck encoder:
+two seconds without output or a thrown exception retires the instance, with at
+most three replacements and an explicit terminal error. Tests verify signed,
+AEAD-opened output and a new stream identity after recovery, not only a reset
+counter. Existing warm-up and expired-backlog behavior remains tested.
+
+The gateway acceptance boundary now reserves shared capacity before ACK 0 and
+keeps rejection writable. Socket ownership starts at allocation, covering failed
+connect/ACK as well as forwarding. SO_TIMEOUT alone did not bound a slowly
+advancing request; native TLS trickle tests now exercise the absolute deadline.
+Emulator accept-loop failure and certificate-expiry fixtures exercise the native
+implementation, while controlled callbacks/sleep cover coordinator exhaustion.
+
+Use `scripts/verify_tour_session.sh` for the broad iOS suite: it sets serial test
+execution and disables automatic diagnostic collection. A standalone parallel
+launch in this session stalled and failed networking tests; the log is retained,
+not counted as a pass. The serial run exposed one old expiry assertion that
+needed to move outside the deliberate companion clock-skew window. Final gate
+and component evidence: `benchmarks/2026-09-15-security-review/README.md`.

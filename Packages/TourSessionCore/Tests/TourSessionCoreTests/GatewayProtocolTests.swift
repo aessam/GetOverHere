@@ -3,6 +3,24 @@ import Testing
 @testable import TourSessionCore
 
 @Suite struct GatewayProtocolTests {
+    @Test(arguments: [970_000, 993_000, 1_013_000, 1_149_999] as [UInt64])
+    func receivedOfferAllowsBoundedSkew(now: UInt64) throws {
+        try offer(expiry: 1_120_000).validateReceivedOffer(nowMilliseconds: now)
+    }
+
+    @Test(arguments: [0, 969_999, 1_150_000, UInt64.max] as [UInt64])
+    func receivedOfferRejectsOutsideSkewWindow(now: UInt64) throws {
+        #expect(throws: GatewayProtocolError.expired) {
+            try offer(expiry: 1_120_000).validateReceivedOffer(nowMilliseconds: now)
+        }
+    }
+
+    @Test func companionToleranceDoesNotExtendGuideAcceptance() throws {
+        let value = try offer(expiry: 1_120_000)
+        try value.validateReceivedOffer(nowMilliseconds: 1_120_001)
+        #expect(throws: GatewayProtocolError.expired) { try value.validate(nowMilliseconds: 1_120_001) }
+    }
+
     private let pairing = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!
     private let room = UUID(uuidString: "10213243-5465-7687-98A9-BACBDCEDFE0F")!
     private let guide = UUID(uuidString: "20314253-6475-8697-A8B9-CADBECFD0E1F")!

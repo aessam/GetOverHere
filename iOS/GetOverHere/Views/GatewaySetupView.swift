@@ -78,6 +78,9 @@ struct GatewaySetupView: View {
                 Section("Tour") {
                     Text("iOS listener branch: \(gateway.nativeBranchState)")
                     if let error = gateway.nativeBranchError { Text(error).foregroundStyle(.red) }
+                    if gateway.state == "wired-reconnect-exhausted" {
+                        Button("Retry USB Connection") { perform { try gateway.retryWiredConnection() } }
+                    }
                     Button("Retry iOS Listener Branch") { gateway.retryNativeBranch() }.disabled(gateway.role == .none)
                     Text(gateway.roomName.isEmpty ? "No forwarded room" : gateway.roomName)
                     Text("One guide owns the microphone and presentation. Companion mode only forwards authenticated traffic.")

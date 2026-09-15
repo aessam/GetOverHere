@@ -10,6 +10,7 @@ object GatewayProtocol {
     const val PORT = 50_104
     const val MAXIMUM_DESCRIPTOR_SIZE = 4_096
     const val ENROLLMENT_LIFETIME_MILLISECONDS = 120_000L
+    const val ENROLLMENT_CLOCK_SKEW_MILLISECONDS = 30_000L
     const val HEARTBEAT_MILLISECONDS = 1_000L
     const val HEARTBEAT_TIMEOUT_MILLISECONDS = 3_000
     const val FORWARDED_ADMISSION_LIMIT = 4
@@ -36,6 +37,17 @@ data class GatewayPairingMessage(
         require(nowMilliseconds >= 0)
         require(expiresAtMilliseconds > nowMilliseconds &&
             expiresAtMilliseconds - nowMilliseconds <= GatewayProtocol.ENROLLMENT_LIFETIME_MILLISECONDS) { "Enrollment expired or clock invalid" }
+    }
+
+    /** Companion-only allowance. Response acceptance on the issuing guide remains strict. */
+    fun validateReceivedOffer(nowMilliseconds: Long) {
+        validateShape()
+        require(role == GatewayPairingRole.OFFER && nowMilliseconds >= 0)
+        val remaining = expiresAtMilliseconds - nowMilliseconds
+        require(remaining > -GatewayProtocol.ENROLLMENT_CLOCK_SKEW_MILLISECONDS &&
+            remaining <= GatewayProtocol.ENROLLMENT_LIFETIME_MILLISECONDS + GatewayProtocol.ENROLLMENT_CLOCK_SKEW_MILLISECONDS) {
+            "Enrollment expired or clock skew exceeds 30 seconds"
+        }
     }
 
     private fun validateShape() {

@@ -665,7 +665,9 @@ visible. These tests cannot certify microphone-to-speaker latency or thirty gues
 
 ## ADR-069 — Two-hub wired gateway, without listener relays
 **Date**: 2026-09-11
-**Status**: Implemented; software candidate verified September11. Physical gateway qualification NOT RUN.
+**Status**: September15 review repairs implemented; all nine software gates pass.
+Native emulator, cross-runtime TLS and simulator evidence are indexed in
+`benchmarks/2026-09-15-security-review/README.md`. Physical gateway qualification NOT RUN.
 **Decision**: Either phone owns the tour; the other is a dedicated USB-connected
 companion. iOS listeners use native Network.framework Apple peer-to-peer; Android
 listeners use Wi-Fi Aware. The user explicitly chose two hubs only and a measured
@@ -735,3 +737,32 @@ native9, iOS196 app test definitions/242 runs (four device-only fixtures skipped
 gateway262 cross-language cases, actual Apple/Android TLS in both server roles,
 visible setup/debug UI and Release exclusion all pass. Full results and retained
 failed attempts are in `benchmarks/2026-09-11-gateway-software/README.md`.
+
+## ADR-070 — Bounded gateway recovery and enrollment clocks
+**Date**: 2026-09-15
+**Status**: Implemented; software gates pass. Physical acceptance deferred.
+**Context**: Review F1–F12 exposed recovery/resource failures despite the earlier
+happy-path gates. Offline peers need not have equal wall clocks; codec capture
+expiry is not equivalent to terminal codec failure.
+**Decision**: Keep the two-hub architecture and existing wire formats. Companion
+offer validation permits at most30s skew; the issuer still validates its original
+response expiry strictly. Local enrollment timers use bounded monotonic durations.
+Expired hub certificates may renew only during an explicitly started new two-way
+QR enrollment, never underneath an existing confirmed pin.
+**Recovery**: Replace Android encoders after exceptions or2s without output,
+allowing at most3 replacements per codec per tour, then report an actionable
+failure. New instances use new stream IDs. Retain warm encoders across ordinary
+capture expiry. Selected Apple connectors own endpoints independently of scan
+tasks; multiple candidates repair advertisement loss. One native Android owner
+controls retries; both platforms expose exhaustion and deliberate retry.
+**Resource contract**: Shared lane capacity precedes acceptance. Ownership covers
+allocation, connect, ACK and forwarding. Android TLS/header/open work has an
+absolute5s deadline; gateway reliable writes use a reported5s deadline on both
+platforms. Ordinary baseline nearby copying is unchanged by that gateway policy.
+**Alternatives rejected**: Removing all codec recovery; restarting on each expired
+frame; globally weakening issuer expiry; silently rotating confirmed pins;
+accepting then discovering capacity failure; two competing reconnect loops.
+**Consequences**: Hardware qualification can still expose radio/codec behavior
+outside these software fixtures. Physical group cap, locks, acoustic timing and
+endurance remain unqualified. Evidence and exact commands:
+`benchmarks/2026-09-15-security-review/README.md`.

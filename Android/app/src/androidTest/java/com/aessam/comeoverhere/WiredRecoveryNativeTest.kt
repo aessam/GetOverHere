@@ -33,6 +33,32 @@ import javax.jmdns.ServiceListener
 /** Emulator software components; injected link loss is not cable/physical address-change evidence. */
 @RunWith(AndroidJUnit4::class)
 class WiredRecoveryNativeTest {
+    @Test fun failedAcceptLoopRelistensOnUnchangedInterface() {
+        val aliases = List(2) { "goh.accept-recovery.test.${UUID.randomUUID()}" }
+        val local = InetAddress.getByName("127.0.0.1")
+        val address = WiredInterfaceAddress(NetworkInterface.getByInetAddress(local).name, local, 8)
+        val injected = java.util.concurrent.atomic.AtomicBoolean(false)
+        val failure = CountDownLatch(1); val connected = CountDownLatch(1)
+        val guide = WiredCompanionTransport(aliases[0], discovery = ControlledDiscovery(), availableInterfaces = { listOf(address) },
+            beforeAccept = { if (injected.compareAndSet(false, true)) throw java.io.IOException("Injected accept failure") })
+        val companion = WiredCompanionTransport(aliases[1], discovery = ControlledDiscovery(), availableInterfaces = { listOf(address) })
+        val room = UUID.randomUUID(); val guideID = UUID.randomUUID(); val signer = GuideFrameSigner(room, guideID)
+        val record = BluetoothRoomRecord(room, guideID, "Accept recovery fixture", true, false, 2)
+        try {
+            guide.onError = { if (it.contains("Injected accept failure")) failure.countDown() }
+            val offer = guide.makeOffer(record, signer.publicKey, address) { GatewayRoomDescriptor(1, 1, record, signer.publicKey) }
+            guide.confirmResponse(companion.answerOffer(offer, address))
+            assertTrue(failure.await(5, TimeUnit.SECONDS))
+            companion.onDescriptor = { if (it != null) connected.countDown() }
+            companion.startCompanion()
+            assertTrue("Dead listener was not recreated on the same interface", connected.await(12, TimeUnit.SECONDS))
+            assertTrue(companion.isConnected && guide.isConnected)
+        } finally {
+            companion.close(); guide.close()
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null); aliases.forEach(::deleteEntry) }
+        }
+    }
+
     @Test fun explicitEmulatorEthernetMulticastSocketLoopsBackExactPayload() {
         val nic = requireNotNull(NetworkInterface.getByName("eth0")) { "This software fixture requires the test emulator eth0" }
         val local = requireNotNull(nic.interfaceAddresses.firstOrNull { it.address.address.size == 4 }).address

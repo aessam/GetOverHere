@@ -8,6 +8,18 @@ import java.security.MessageDigest
 import java.util.UUID
 
 class GatewayProtocolTest {
+    @Test fun receivedOfferAllowsOnlyBoundedClockSkewAndDoesNotExtendGuideAcceptance() {
+        val value = offer.copy(expiresAtMilliseconds = 1_120_000)
+        listOf(970_000L, 993_000L, 1_013_000L, 1_149_999L).forEach(value::validateReceivedOffer)
+        listOf(-1L, 0L, 969_999L, 1_150_000L, Long.MAX_VALUE).forEach { now ->
+            assertThrows(IllegalArgumentException::class.java) { value.validateReceivedOffer(now) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { value.validate(1_120_001) }
+        assertThrows(IllegalArgumentException::class.java) {
+            value.validateResponse(response.copy(expiresAtMilliseconds = value.expiresAtMilliseconds), 1_120_001)
+        }
+    }
+
     private val key = byteArrayOf(4) + ByteArray(64) { 7 }
     private val offer = GatewayPairingMessage(GatewayPairingRole.OFFER, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
         121_000, ByteArray(32) { 1 }, MessageDigest.getInstance("SHA-256").digest(key), ByteArray(32) { 1 }, "10.0.0.1", 50_104)

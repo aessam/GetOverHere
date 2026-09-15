@@ -109,7 +109,9 @@ fun GatewayScreen(coordinator: GatewaySessionCoordinator, onBack: () -> Unit) {
         if (status.role == GatewayRole.COMPANION) {
             Text("USB association: ${if (status.state == GatewayState.CONNECTED) "connected" else "not connected"}. Android branch status is separate below.")
             if (status.state != GatewayState.CONNECTED && status.state != GatewayState.CONNECTING)
-                Button(onClick = { coordinator.connectCompanion() }, modifier = Modifier.testTag("gatewayConnect")) { Text("Guide confirmed — connect") }
+                Button(onClick = { coordinator.connectCompanion() }, modifier = Modifier.testTag("gatewayConnect")) {
+                    Text(if (status.state == GatewayState.EXHAUSTED) "Retry USB connection" else "Guide confirmed — connect")
+                }
             Row { Text("Keep screen awake while forwarding"); Switch(status.keepAwake, coordinator::setKeepAwake) }
             if (aware.enabled) {
                 Text("Android branch: ${if (aware.hosting) "advertising via Wi-Fi Aware" else "not advertising"}")

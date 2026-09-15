@@ -33,6 +33,8 @@ class NearbyTCPConnection(private val socket: Socket) : NearbyByteConnection {
     override fun close() = socket.close()
 }
 
+internal class NearbyLaneCapacityException : IllegalStateException("Gateway lane capacity reached")
+
 /**
  * A bounded adapter into the existing authenticated lanes. No arbitrary destination,
  * plaintext payload path, credential copy, nonce allocation or unbounded message queue.
@@ -45,6 +47,7 @@ class NearbySocketBridge(
     },
     private val guideLaneConnector: GuideLaneConnector? = null,
     private val audioResidenceMilliseconds: Long = NearbyRealtimeQueue.LIFETIME_MILLISECONDS,
+    private val reliableWriteTimeoutMilliseconds: Long? = if (guideLaneConnector == null) null else 5_000,
 ) : Closeable {
     var onError: ((String) -> Unit)? = null
     private val generation = AtomicLong()
@@ -96,11 +99,15 @@ class NearbySocketBridge(
 
     /** Already-authenticated wired lanes have no native selector/ACK wrapper. Blocks its worker. */
     internal fun forwardConnected(first: NearbyByteConnection, second: NearbyByteConnection,
-                                  lane: NearbyLaneRequest.Lane) {
-        val (id, attempt) = requireNotNull(reserveGroup(first)) { "Gateway lane capacity reached" }
+                                  lane: NearbyLaneRequest.Lane, accepted: () -> Unit = {}) {
+        // Keep the remote socket with the caller until promotion succeeds so
+        // capacity rejection can still be written before it is closed.
+        val (id, attempt) = reserveGroup(null) ?: throw NearbyLaneCapacityException()
         try {
             check(register(id, second, attempt)) { "Gateway lane cancelled" }
-            if (lane in NearbyConnectionBudget.persistentLanes) check(promote(id, attempt, lane))
+            if (lane in NearbyConnectionBudget.persistentLanes && !promote(id, attempt, lane)) throw NearbyLaneCapacityException()
+            check(register(id, first, attempt)) { "Gateway lane cancelled" }
+            accepted() // Every resource and shared budget is owned before the peer receives ACK 0.
             pump(id, first, second, lane == NearbyLaneRequest.Lane.REALTIME,
                 drainAdmissionReply = lane == NearbyLaneRequest.Lane.ADMISSION)
         } finally { closeConnections(id) }
@@ -280,9 +287,14 @@ class NearbySocketBridge(
                 return
             }
             if (count == 0) continue
-            val deadline = timer.schedule({ closeConnections(id) }, 5, TimeUnit.SECONDS)
+            val deadline = reliableWriteTimeoutMilliseconds?.let { timeout -> timer.schedule({
+                if (connections.containsKey(id)) {
+                    report(java.net.SocketTimeoutException("Reliable gateway lane write exceeded ${timeout}ms; reopen and resume the lane"))
+                    closeConnections(id)
+                }
+            }, timeout, TimeUnit.MILLISECONDS) }
             try { output.write(bytes, 0, count); output.flush() }
-            finally { deadline.cancel(false) }
+            finally { deadline?.cancel(false) }
             transferred += count
         }
     }

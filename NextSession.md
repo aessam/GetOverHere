@@ -1,5 +1,81 @@
 # GetOverHere — Next Session
 
+## September 15 — review repairs implemented and software verified
+
+User approved finishing the software with unit tests, simulator/emulator and
+available local tools; physical phones remain deferred. F1–F12 are implemented.
+Branch `fix/deep-dive-2026-09-02`; reviewed base `ec1b0b8`. The repair commit
+contains this section (`git log -1 --oneline`). Stable LAN tag remains unchanged;
+no push or new tag was requested for this repair.
+
+Current evidence and artifact hashes:
+`benchmarks/2026-09-15-security-review/README.md`. The original report now starts
+with a per-finding repair disposition; original findings/red logs are retained.
+
+- All nine repository gates pass. Android app205, Kotlin core83, Swift core84;
+  iOS201 definitions/248 passing runs, four explicit hardware-only skips.
+- Emulator native gateway12, codec/reconnect8, setup/debug UI6; visible
+  consent/network-client/recorder22 checks pass. iOS setup/deeplink UI2 pass.
+- Mac↔Android native TLS passes both server orientations with exact65,536-byte
+  round trips. Stored certificate renewal and failed/expired TLS tests pass.
+- Both Release builds exclude debug control; generic signed iPhone Debug build
+  passes signature verification. No physical devices queried or installed.
+
+Repairs: bounded Android encoder replacement with signed-output regressions;
+companion-only bounded clock skew and local enrollment deadlines; new-enrollment
+certificate renewal; Apple route/candidate ownership; pre-ACK shared capacity;
+absolute TLS/header deadlines and failed-ACK cleanup; gateway-only reported write
+timeouts; visible/exhaustible native-owned recovery and explicit retries.
+
+Next is **physical qualification**, not another transport rewrite. Run
+`FieldAcceptance.md` A13–A20 with either original guide orientation, USB companion,
+Apple P2P iOS audience and Android Aware audience. Prove route provenance,
+ordinary room create/join and microphone-to-renderer/audio, slides/pointer/assets,
+cable/radio recovery, locked listeners, endurance and the actual supported cap.
+Any physical failure may require more fixes; no software gate promises otherwise.
+Do not ask for phones or probe them until the user says they are back.
+
+Useful artifacts: signed iPhone app at
+`/tmp/GetOverHereGatewayReviewDevice/Build/Products/Debug-iphoneos/GetOverHere.app`;
+Android APKs in the normal Debug/androidTest output paths. Exact commands and
+result bundles are in the evidence README. The first ad-hoc parallel simulator
+run was canceled after failures; use the existing serial main gate. An old
+companion-expiry assertion was corrected to the deliberate skew boundary and
+the full serial gate rerun successfully. Research archives and two-hub scope
+remain unchanged. No paid resources were started.
+The task-owned Android emulator was stopped after verification. Generated Kotlin
+session-marker cache was moved to `/tmp/GetOverHereGatewayReview-kotlin-sessions-20260915`;
+source files and evidence were retained. No shared simulator service was restarted.
+
+## September 15 — original review phase, before the repairs above
+
+Current HEAD remains `ec1b0b8`, branch `fix/deep-dive-2026-09-02`. User has no
+devices and requested an independent deep security/code review before further
+implementation. No production fixes or commit/push were performed this review.
+Report: `SecurityCodeReview-2026-09-15.md`, preserving supplied finding IDs F1–F10
+and adding F11 absolute TLS deadlines and F12 failed-ACK socket cleanup.
+
+The September11 passing baseline is not evidence that coding is complete.
+Isolated actual-code regressions now reproduce F1 terminal/stalled encoders and
+F2 clock-skew rejection on both platforms: Android3 failures, Swift1 failure.
+Run `bash scripts/review/gateway/run.sh`; intentionally red until corrected.
+Review tests are injected only with their Gradle init script/separate Swift
+package, not into the normal suites. Normal Android app198 tests and actual
+LocalLinkSecurity4 definitions/8 cases pass. Raw evidence is retained under
+`benchmarks/2026-09-15-security-review/`. All review jobs have finished.
+
+Next software work, after the review checkpoint: A1–A6 in the review report
+(codec recovery; skew/identity renewal; Apple endpoint ownership; atomic lane
+reservation/deadlines/cleanup; native-owned recovery state; full coordinated
+regressions). No transport rewrite, listener mesh or new debugger is required.
+Several supplied claims were narrowed: ordinary LAN bypasses the nearby copy
+deadline; a group is one lane; native Android recovery exists; iOS companion
+manual retry need not reenroll; two iOS hubs are outside the approved topology.
+
+Physical FieldAcceptance A13–A20 is still NOT RUN. Do not ask for phones or probe
+them while the user is away. The older candidate/build hashes below remain
+historical and must be rebuilt after fixes before the consolidated device run.
+
 ## September 11 — two-hub software candidate verified; physical run next
 
 User approved `GatewayImplementationPlan.md`: either guide orientation, USB

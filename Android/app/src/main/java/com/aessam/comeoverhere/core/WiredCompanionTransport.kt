@@ -93,11 +93,17 @@ internal class HubCertificateTrust(expected: ByteArray) : X509TrustManager {
     }
 }
 
-internal class HubIdentity(private val alias: String = DEFAULT_ALIAS) {
+internal class HubIdentity(private val alias: String = DEFAULT_ALIAS, renewExpiredForEnrollment: Boolean = false) {
     private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     init {
         check(Build.VERSION.SDK_INT >= 29) { "Companion mode requires Android 10 TLS 1.3" }
-        if (!store.containsAlias(alias)) {
+        val existing = store.getCertificate(alias) as? X509Certificate
+        val expired = existing?.notAfter?.let { !it.after(Date()) } == true
+        check(!expired || renewExpiredForEnrollment) {
+            "Companion certificate expired. Remove the association and start a new two-way enrollment."
+        }
+        if (existing != null && !expired) existing.checkValidity()
+        if (!store.containsAlias(alias) || expired) {
             KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").apply {
                 initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
                     .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -151,12 +157,15 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     private val discovery: WiredHubDiscoveryInterface = WiredHubDiscovery(),
     private val availableInterfaces: () -> List<WiredInterfaceAddress> = WiredInterfaceAddress::available,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val beforeDescriptorCommit: () -> Unit = {}) : Closeable, GuideLaneConnector,
+    private val beforeDescriptorCommit: () -> Unit = {},
+    private val beforeAccept: () -> Unit = {}) : Closeable, GuideLaneConnector,
     GatewayWiredInterface {
     override var onDescriptor: ((GatewayRoomDescriptor?) -> Unit)? = null
     override var onError: ((String) -> Unit)? = null
     override var onConnected: ((Boolean) -> Unit)? = null
-    private val identity by lazy { HubIdentity(identityAlias) }
+    override var onRecoveryChanged: ((GatewayRecoveryState) -> Unit)? = null
+    private var enrolledIdentity: HubIdentity? = null
+    private val identity: HubIdentity get() = enrolledIdentity ?: HubIdentity(identityAlias).also { enrolledIdentity = it }
     private val io = Executors.newCachedThreadPool { body -> Thread(body, "wired-hub").apply { isDaemon = true } }
     private val timer = Executors.newSingleThreadScheduledExecutor { body -> Thread(body, "wired-deadline").apply { isDaemon = true } }
     private val recoveryMonitor = Executors.newSingleThreadScheduledExecutor { body -> Thread(body, "wired-interface-monitor").apply { isDaemon = true } }
@@ -166,7 +175,8 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     private val pendingHandshake = Semaphore(8)
     private val pendingAdmission = Semaphore(GatewayProtocol.FORWARDED_ADMISSION_LIMIT)
     private val persistent = Semaphore(90) // 30 listeners × 3 independent persistent application lanes.
-    private val ingress = NearbySocketBridge(audioResidenceMilliseconds = GatewayProtocol.AUDIO_RESIDENCE_MILLISECONDS)
+    private val ingress = NearbySocketBridge(audioResidenceMilliseconds = GatewayProtocol.AUDIO_RESIDENCE_MILLISECONDS,
+        reliableWriteTimeoutMilliseconds = 5_000)
     private var server: SSLServerSocket? = null
     @Volatile private var offer: GatewayPairingMessage? = null
     @Volatile private var response: GatewayPairingMessage? = null
@@ -183,6 +193,7 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     private var nextReconnectAt = 0L
     private var reconnectFailures = 0
     private var associationAuthenticated = false
+    private var enrollmentStartedAt = 0L
     @Volatile private var peerHost: String? = null
     override val automaticRecoveryEnabled: Boolean get() = enableAddressRecovery && recoveryTask != null
     override val routeDescription: String? get() = selectedInterface?.displayName
@@ -216,6 +227,8 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     @Synchronized override fun makeOffer(record: com.aessam.toursession.BluetoothRoomRecord, key: ByteArray,
                                 address: WiredInterfaceAddress, current: () -> GatewayRoomDescriptor?): GatewayPairingMessage {
         stop()
+        enrolledIdentity = HubIdentity(identityAlias, renewExpiredForEnrollment = true)
+        enrollmentStartedAt = System.nanoTime()
         selectedInterface = address; guideDescriptor = current
         enrolledInterfaceName = address.interfaceName; enrolledAddressSize = address.address.address.size
         return GatewayPairingMessage(GatewayPairingRole.OFFER, UUID.randomUUID(), record.roomID, record.guideID,
@@ -225,7 +238,9 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     }
 
     @Synchronized override fun answerOffer(message: GatewayPairingMessage, address: WiredInterfaceAddress): GatewayPairingMessage {
-        stop(); message.validate(clock())
+        stop(); message.validateReceivedOffer(clock())
+        enrolledIdentity = HubIdentity(identityAlias, renewExpiredForEnrollment = true)
+        enrollmentStartedAt = System.nanoTime()
         require(message.role == GatewayPairingRole.OFFER)
         val peer = numericAddress(message.host, address)
         require(address.contains(peer)) { "Scanned guide is not on the selected wired interface" }
@@ -260,12 +275,21 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
         io.execute {
             try {
                 while (operation.get() == attempt) {
+                    beforeAccept()
                     val socket = listener.accept() as SSLSocket
                     if (!pendingHandshake.tryAcquire()) { socket.close(); continue }
                     sockets.add(socket)
                     io.execute { receive(socket, attempt) }
                 }
-            } catch (error: Exception) { synchronized(this) { if (operation.get() == attempt) fail(error) } }
+            } catch (error: Exception) { synchronized(this) {
+                if (operation.get() == attempt && server === listener) {
+                    server = null; sockets.remove(listener)
+                    try { listener.close() } catch (closeError: Exception) {
+                        Log.w("WiredHub", "Failed listener cleanup (${closeError.javaClass.simpleName})")
+                    }
+                    fail(error) // The recovery monitor can now bind a replacement on the same interface.
+                }
+            } }
         }
     }
 
@@ -273,13 +297,20 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
         startCompanionAttempt(resetBudget = true)
     }
     @Synchronized private fun startCompanionAttempt(resetBudget: Boolean) {
-        if (!associationAuthenticated) requireNotNull(offer).validate(clock())
+        // UI retry is idempotent while the native owner is already connecting.
+        if (control != null || connectingControl) return
+        if (!associationAuthenticated) {
+            requireNotNull(offer).validateReceivedOffer(clock())
+            check(System.nanoTime() - enrollmentStartedAt < TimeUnit.MILLISECONDS.toNanos(GatewayProtocol.ENROLLMENT_LIFETIME_MILLISECONDS)) {
+                "Incomplete companion enrollment expired. Scan a new QR."
+            }
+        }
         if (resetBudget) reconnectFailures = 0
         startRecovery()
         val attempt = operation.get()
         check(response != null && guideDescriptor == null) { "Scan the guide offer before connecting" }
-        check(control == null && !connectingControl) { "Companion already connected or connecting" }
         connectingControl = true
+        onRecoveryChanged?.invoke(GatewayRecoveryState.CONNECTING)
         io.execute {
             var authenticated = false
             var ownedUpstream: SSLSocket? = null
@@ -315,6 +346,7 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
                     synchronized(this) {
                         check(operation.get() == attempt && control === upstream) { "Descriptor acknowledgement belongs to a replaced USB association" }
                         onDescriptor?.invoke(next); onConnected?.invoke(true)
+                        onRecoveryChanged?.invoke(GatewayRecoveryState.CONNECTED)
                     }
                 }
             } catch (error: Exception) {
@@ -326,7 +358,11 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
                         else fail(error)
                     }
                 }
-            } finally { synchronized(this) { if (operation.get() == attempt) connectingControl = false } }
+            } finally { synchronized(this) { if (operation.get() == attempt) {
+                connectingControl = false
+                if (!isConnected) onRecoveryChanged?.invoke(
+                    if (reconnectFailures >= 5) GatewayRecoveryState.EXHAUSTED else GatewayRecoveryState.WAITING)
+            } } }
         }
     }
 
@@ -360,6 +396,9 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
         require(local.contains(peer)) { "Guide address left the selected wired subnet" }
         validatePeerRoute(local, peer)
         val socket = target.context.socketFactory.createSocket() as SSLSocket
+        val deadline = timer.schedule({
+            try { socket.close() } catch (error: Exception) { Log.w("WiredHub", "Open deadline cleanup failed (${error.javaClass.simpleName})") }
+        }, 5, TimeUnit.SECONDS)
         try {
             synchronized(this) { check(operation.get() == attempt); sockets.add(socket) }
             socket.enabledProtocols = arrayOf("TLSv1.3"); socket.tcpNoDelay = true; socket.soTimeout = 5_000
@@ -376,12 +415,20 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
             socket.soTimeout = 0
             return socket
         } catch (error: Exception) { sockets.remove(socket); socket.close(); throw error }
+        finally { deadline.cancel(false) }
     }
 
     private fun receive(socket: SSLSocket, attempt: Long) {
         var lease: Semaphore? = null
         var handshakeReleased = false
         var tlsAuthenticated = false
+        val pendingLocal = java.util.concurrent.atomic.AtomicReference<Socket?>()
+        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+        val deadline = timer.schedule({
+            timedOut.set(true)
+            try { socket.close() } catch (error: Exception) { Log.w("WiredHub", "Handshake deadline cleanup failed (${error.javaClass.simpleName})") }
+            try { pendingLocal.get()?.close() } catch (error: Exception) { Log.w("WiredHub", "Local connect deadline cleanup failed (${error.javaClass.simpleName})") }
+        }, 5, TimeUnit.SECONDS)
         try {
             socket.enabledProtocols = arrayOf("TLSv1.3"); socket.needClientAuth = true
             socket.tcpNoDelay = true; socket.soTimeout = 5_000; socket.startHandshake()
@@ -398,6 +445,7 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
                 }
                 if (!accepted) { socket.outputStream.write(2); socket.outputStream.flush(); return }
                 socket.outputStream.write(0); socket.outputStream.flush()
+                deadline.cancel(false)
                 pendingHandshake.release(); handshakeReleased = true
                 socket.soTimeout = GatewayProtocol.HEARTBEAT_TIMEOUT_MILLISECONDS
                 val generation = (SecureRandom().nextLong() and Long.MAX_VALUE).coerceAtLeast(1)
@@ -427,17 +475,27 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
                 require(isConnected && request.generation == active.generation)
                 lease = if (request.lane == GatewayLane.ADMISSION) pendingAdmission else persistent
                 if (!lease.tryAcquire()) { lease = null; socket.outputStream.write(2); return }
-                val local = Socket().apply { tcpNoDelay = true; connect(InetSocketAddress("127.0.0.1", requireNotNull(request.lane.localPort)), 5_000) }
+                val local = Socket()
+                pendingLocal.set(local)
                 sockets.add(local)
-                socket.outputStream.write(0); socket.outputStream.flush(); socket.soTimeout = 0
-                pendingHandshake.release(); handshakeReleased = true
                 val lane = com.aessam.toursession.NearbyLaneRequest.Lane.entries.single { it.localPort == request.lane.localPort }
-                try { ingress.forwardConnected(NearbyTCPConnection(socket), NearbyTCPConnection(local), lane) }
+                try {
+                    check(!timedOut.get()) { "Gateway handshake deadline expired" }
+                    local.tcpNoDelay = true
+                    local.connect(InetSocketAddress("127.0.0.1", requireNotNull(request.lane.localPort)), 5_000)
+                    ingress.forwardConnected(NearbyTCPConnection(socket), NearbyTCPConnection(local), lane) {
+                        socket.outputStream.write(0); socket.outputStream.flush(); socket.soTimeout = 0
+                        deadline.cancel(false)
+                        pendingHandshake.release(); handshakeReleased = true
+                    }
+                }
                 finally { sockets.remove(local); local.close() }
             }
         } catch (error: Exception) {
             if (operation.get() == attempt) {
-                if (tlsAuthenticated && !handshakeReleased) try { socket.outputStream.write(1); socket.outputStream.flush() }
+                if (tlsAuthenticated && !handshakeReleased && !timedOut.get()) try {
+                    socket.outputStream.write(if (error is NearbyLaneCapacityException) 2 else 1); socket.outputStream.flush()
+                }
                 catch (replyError: Exception) { Log.w("WiredHub", "Lane rejection reply failed (${replyError.javaClass.simpleName})") }
                 if (control === socket) synchronized(this) { if (operation.get() == attempt && control === socket) fail(error) }
                 else {
@@ -450,6 +508,7 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
             }
         }
         finally {
+            deadline.cancel(false)
             if (!handshakeReleased) pendingHandshake.release()
             lease?.release(); sockets.remove(socket)
             try { socket.close() } catch (error: Exception) { Log.w("WiredHub", "Socket close failed (${error.javaClass.simpleName})") }
@@ -488,7 +547,9 @@ class WiredCompanionTransport internal constructor(private val identityAlias: St
     /** Keeps confirmed trust immutable; only the untrusted endpoint and socket generation change. */
     @Synchronized private fun refreshRecovery() {
         if (recoveryTask == null || offer == null) return
-        if (!associationAuthenticated && clock() >= requireNotNull(offer).expiresAtMilliseconds) {
+        if (!associationAuthenticated && (System.nanoTime() - enrollmentStartedAt >=
+            TimeUnit.MILLISECONDS.toNanos(GatewayProtocol.ENROLLMENT_LIFETIME_MILLISECONDS) ||
+            (guideDescriptor != null && clock() >= requireNotNull(offer).expiresAtMilliseconds))) {
             stop(); onError?.invoke("Incomplete companion enrollment expired. Scan a new QR."); return
         }
         val current = selectRecoveryAddress(requireNotNull(enrolledInterfaceName), enrolledAddressSize, selectedInterface, availableInterfaces())

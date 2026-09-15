@@ -87,11 +87,10 @@ final class ApplePeerRoomTransport: NearbyRoomTransport {
     }
 
     private func update(_ found: Set<NWEndpoint>) {
+        guard mode == .browsing else { return }
         for endpoint in Set(probes.keys).subtracting(found) {
             probes.removeValue(forKey: endpoint)?.cancel()
-            if let old = records.removeValue(forKey: endpoint), endpoints[old.roomID] == endpoint {
-                endpoints.removeValue(forKey: old.roomID); onLost?(old.roomID)
-            }
+            removeRecord(endpoint)
         }
         let attempt = generation
         for endpoint in found where probes[endpoint] == nil {
@@ -102,22 +101,46 @@ final class ApplePeerRoomTransport: NearbyRoomTransport {
                     do {
                         let current = try await NearbySocketBridge.readRecord { Self.connection(endpoint) }
                         guard !Task.isCancelled, generation == attempt else { return }
-                        if records[endpoint] != current {
-                            if let old = records[endpoint], old.roomID != current.roomID {
-                                endpoints.removeValue(forKey: old.roomID); onLost?(old.roomID)
-                            }
-                            records[endpoint] = current; endpoints[current.roomID] = endpoint; onRoom?(current)
-                        }
+                        updateRecord(current, at: endpoint)
                     } catch {
                         guard !Task.isCancelled, generation == attempt else { return }
-                        if let old = records.removeValue(forKey: endpoint), endpoints[old.roomID] == endpoint {
-                            endpoints.removeValue(forKey: old.roomID); onLost?(old.roomID)
-                        }
+                        removeRecord(endpoint)
                         onError?("Apple peer metadata failed: \(error.localizedDescription)")
                     }
                     do { try await Task.sleep(for: .seconds(3)) } catch { return }
                 }
             }
+        }
+    }
+
+    // Candidate ownership is separate from the browser/probe tasks. Removing
+    // one advertiser must not erase an unchanged surviving advertiser.
+    func updateRecord(_ current: BluetoothRoomRecord, at endpoint: NWEndpoint) {
+        let old = records.updateValue(current, forKey: endpoint)
+        if let old, old.roomID != current.roomID { refreshRoom(old.roomID, guideID: old.guideID) }
+        refreshRoom(current.roomID, guideID: current.guideID)
+    }
+    func removeRecord(_ endpoint: NWEndpoint) {
+        guard let old = records.removeValue(forKey: endpoint) else { return }
+        refreshRoom(old.roomID, guideID: old.guideID)
+    }
+    private func refreshRoom(_ roomID: UUID, guideID: UUID) {
+        if let selected = endpoints[roomID], let current = records[selected], current.roomID == roomID {
+            onRoom?(current); return
+        }
+        if let candidate = records.first(where: { $0.value.roomID == roomID && $0.value.guideID == guideID }) {
+            endpoints[roomID] = candidate.key; onRoom?(candidate.value)
+        } else if endpoints.removeValue(forKey: roomID) != nil { onLost?(roomID) }
+    }
+
+    /// The selected route owns its endpoint, not the discovery list. Admission
+    /// and every authoritative frame still verify the independently pinned key.
+    func connector(roomID: UUID) throws -> NearbySocketBridge.LaneConnect {
+        guard let endpoint = endpoints[roomID] else { throw NearbyConnectionError.unavailable }
+        return { [weak self] _ in
+            let connection = NWConnection(to: endpoint, using: Self.parameters())
+            self?.observe(connection, direction: "outgoing")
+            return NearbyTCPConnection(connection)
         }
     }
 
@@ -155,7 +178,9 @@ final class ApplePeerRoomTransport: NearbyRoomTransport {
         guard mode == .browsing else { return }
         mode = .off; browser?.cancel(); browser = nil
         probes.values.forEach { $0.cancel() }; probes.removeAll()
-        endpoints.keys.forEach { onLost?($0) }; endpoints.removeAll(); records.removeAll()
+        // Pausing is not source loss. Keep the bounded discovery snapshot until
+        // browsing restarts or the transport stops; selected connectors also own
+        // their endpoint independently for fresh lanes and reconnects.
         // Active guest byte connections and their route observations remain owned
         // by the selected guest bridge, independently of background discovery.
     }

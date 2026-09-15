@@ -34,6 +34,26 @@ import java.util.UUID
 /** Exercises the production coordinator with controlled native callback timing, not radio evidence. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class GatewaySessionCoordinatorTest {
+    @Test fun nativeRecoveryOwnsRetryAndExhaustionIsVisibleWithoutSecondRetryLoop() = runTest {
+        val h = Fixture(this)
+        h.wired.automaticRecoveryEnabled = true
+        h.enrollCompanion(); runCurrent()
+        h.wired.descriptor(h.descriptor); runCurrent()
+        h.wired.descriptor(null)
+        h.wired.onError?.invoke("Injected native route failure")
+        h.wired.onRecoveryChanged?.invoke(com.aessam.comeoverhere.core.GatewayRecoveryState.WAITING)
+        runCurrent()
+        assertEquals(GatewayState.CONNECTING, h.coordinator.status.value.state)
+        advanceTimeBy(30_000); runCurrent()
+        assertEquals(0, h.wired.connects)
+        h.wired.onRecoveryChanged?.invoke(com.aessam.comeoverhere.core.GatewayRecoveryState.EXHAUSTED)
+        runCurrent()
+        assertEquals(GatewayState.EXHAUSTED, h.coordinator.status.value.state)
+        assertEquals("Injected native route failure", h.coordinator.status.value.error)
+        h.coordinator.connectCompanion().join(); runCurrent()
+        assertEquals(1, h.wired.connects)
+    }
+
     @Test fun guideGatewayEnablesOriginalBranchUntilTourEndsEvenAfterCompanionRemoval() = runTest {
         val h = Fixture(this, guide = true)
         assertTrue(!h.guideAware.enabledPreference)
@@ -216,6 +236,8 @@ class GatewaySessionCoordinatorTest {
         override fun stop() { stops++ }
     }
     private class ControlledWired(private val make: () -> GatewayPairingMessage) : GatewayWiredInterface {
+        override var automaticRecoveryEnabled = false
+        override var onRecoveryChanged: ((com.aessam.comeoverhere.core.GatewayRecoveryState) -> Unit)? = null
         override var onDescriptor: ((GatewayRoomDescriptor?) -> Unit)? = null
         override var onError: ((String) -> Unit)? = null
         override var onConnected: ((Boolean) -> Unit)? = null

@@ -35,9 +35,12 @@ final class GatewaySessionCoordinator {
     private var guideConfirmedByUser = false
     private var savedDiscovery: (bluetooth: Bool, aware: Bool, applePeer: Bool)?
     private var deferredGuideAppleRestore: Bool?
+    private let reconnectSleep: (Duration) async throws -> Void
 
-    init(service: ChannelService, control: LocalControlPlane) {
+    init(service: ChannelService, control: LocalControlPlane,
+         reconnectSleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.service = service; self.control = control
+        self.reconnectSleep = reconnectSleep
         service.onGuideSessionEnding = { [weak self] in
             guard let self else { return }
             if role == .guide { stop(guideEnding: true) }
@@ -74,7 +77,7 @@ final class GatewaySessionCoordinator {
               let host = WiredInterfaceMonitor.addresses(on: interface.name).first else {
             throw NearbyConnectionError.unavailable
         }
-        let identity = try LocalLinkIdentityStore.loadOrCreate()
+        let identity = try LocalLinkIdentityStore.loadOrCreate(renewExpiredForEnrollment: true)
         let offer = try GatewayPairingMessage(role: .offer, pairingID: UUID(), roomID: hosted.0.roomID,
             guideID: hosted.0.guideID,
             expiresAtMilliseconds: LiveWiredCompanionTransport.wallMilliseconds + GatewayProtocol.enrollmentLifetimeMilliseconds,
@@ -91,12 +94,12 @@ final class GatewaySessionCoordinator {
 
     func receivePairingQR(_ text: String) throws {
         let message = try GatewayPairingMessage.decodeQR(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        try message.validate(nowMilliseconds: LiveWiredCompanionTransport.wallMilliseconds)
         if message.role == .offer {
+            try message.validateReceivedOffer(nowMilliseconds: LiveWiredCompanionTransport.wallMilliseconds)
             guard role == .none, service.activeChannelID == nil, service.connectionState != .connecting else {
                 throw GatewayProtocolError.unconfirmed
             }
-            let identity = try LocalLinkIdentityStore.loadOrCreate()
+            let identity = try LocalLinkIdentityStore.loadOrCreate(renewExpiredForEnrollment: true)
             let response = try GatewayPairingMessage(role: .response, pairingID: message.pairingID,
                 roomID: message.roomID, guideID: message.guideID, expiresAtMilliseconds: message.expiresAtMilliseconds,
                 certificateFingerprint: identity.certificateFingerprint, guideKeyFingerprint: message.guideKeyFingerprint,
@@ -128,6 +131,12 @@ final class GatewaySessionCoordinator {
     }
 
     func connectCompanion() throws {
+        reconnectAttempt = 0
+        reconnectTask?.cancel(); reconnectTask = nil
+        try startCompanionAttempt()
+    }
+
+    private func startCompanionAttempt() throws {
         guard role == .companion, let identity, let offer, let interface = wiredInterfaces.selected else {
             throw NearbyConnectionError.unavailable
         }
@@ -169,17 +178,34 @@ final class GatewaySessionCoordinator {
         nativeBranchError = nil
         control.retryApplePeerPublication()
     }
+    func retryWiredConnection() throws {
+        guard role == .companion || (role == .guide && guideConfirmedByUser) else {
+            throw GatewayProtocolError.unconfirmed
+        }
+        reconnectTask?.cancel(); reconnectTask = nil; reconnectAttempt = 0
+        if role == .companion { try startCompanionAttempt() }
+        else {
+            guard let interface = wiredInterfaces.selected else { throw NearbyConnectionError.unavailable }
+            try transport.resumeGuide(on: interface)
+        }
+    }
     private func scheduleReconnect() {
-        guard role == .companion || (role == .guide && guideConfirmedByUser), reconnectTask == nil, reconnectAttempt < 5 else { return }
+        guard role == .companion || (role == .guide && guideConfirmedByUser), reconnectTask == nil else { return }
+        guard reconnectAttempt < 5 else {
+            state = "wired-reconnect-exhausted"
+            error = "USB reconnect attempts exhausted. Check the cable and retry the USB connection."
+            return
+        }
         reconnectAttempt += 1
         state = "reconnecting-wired-guide"
         let delay = min(8, 1 << (reconnectAttempt - 1))
         reconnectTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let sleep = self?.reconnectSleep else { return }
+            do { try await sleep(.seconds(delay)) } catch { return }
             guard let self else { return }
             reconnectTask = nil
             do {
-                if role == .companion { try connectCompanion() }
+                if role == .companion { try startCompanionAttempt() }
                 else if role == .guide, guideConfirmedByUser {
                     guard let interface = wiredInterfaces.selected else { throw NearbyConnectionError.unavailable }
                     try transport.resumeGuide(on: interface)
@@ -215,7 +241,10 @@ final class GatewaySessionCoordinator {
         enrollmentTimeout?.cancel()
         guard let offer else { return }
         let now = LiveWiredCompanionTransport.wallMilliseconds
-        let remaining = offer.expiresAtMilliseconds > now ? offer.expiresAtMilliseconds - now : 0
+        // The remote wall clock must not shorten or extend the local ceremony.
+        // Task.sleep uses a local monotonic duration; guide acceptance stays authoritative.
+        let remaining = role == .companion ? GatewayProtocol.enrollmentLifetimeMilliseconds
+            : (offer.expiresAtMilliseconds > now ? offer.expiresAtMilliseconds - now : 0)
         enrollmentTimeout = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(remaining)) } catch { return }
             guard let self else { return }

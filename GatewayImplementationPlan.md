@@ -65,6 +65,12 @@ slots. Account audience, pending work, proxy halves and radio paths separately.
 
 ## Execution and proof
 
+September15 review repairs: F1–F12 in `SecurityCodeReview-2026-09-15.md` are
+implemented with software regressions. All nine repository gates, native Android
+emulator fault tests and cross-runtime TLS tests pass. Current evidence and build
+identities: `benchmarks/2026-09-15-security-review/README.md`. Physical acceptance
+below remains unchecked; neither simulator nor local TLS substitutes for it.
+
 Software candidate verified September11. Evidence and exact counts:
 `benchmarks/2026-09-11-gateway-software/README.md`. Checked software work does not
 check its physical acceptance row. The user is away from the devices; A6 is NOT RUN.

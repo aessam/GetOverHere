@@ -1,0 +1,8 @@
+// Review-only tests. No production or normal test-source configuration is edited.
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.afterEvaluate {
+            project.android.sourceSets.test.java.srcDir(new File(project.rootDir, '../scripts/review/gateway/android'))
+        }
+    }
+}

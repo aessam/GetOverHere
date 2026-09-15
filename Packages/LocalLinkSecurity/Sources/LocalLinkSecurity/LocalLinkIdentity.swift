@@ -5,7 +5,19 @@ import Security
 import X509
 
 public enum LocalLinkSecurityError: Error {
-    case invalidIdentity, invalidPin, keychain(OSStatus)
+    case invalidIdentity, invalidPin, expiredIdentity, identityNotYetValid, keychain(OSStatus)
+}
+
+extension LocalLinkSecurityError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .expiredIdentity: "Companion certificate expired. Remove the association and start a new two-way enrollment."
+        case .identityNotYetValid: "Companion certificate is not valid yet. Check this phone's date and time."
+        case .invalidIdentity: "Invalid companion signing identity."
+        case .invalidPin: "Invalid companion certificate fingerprint."
+        case .keychain(let status): "Companion Keychain access failed (\(status))."
+        }
+    }
 }
 
 /// A separate hub key. It must never be used to sign tour media or admit guests.
@@ -87,12 +99,19 @@ public struct LocalLinkIdentity: @unchecked Sendable {
         }, DispatchQueue(label: "com.aens.GetOverHere.companion.trust"))
         return options
     }
+
+    public func validateValidity(now: Date = Date()) throws {
+        let certificate = try Certificate(derEncoded: Array(certificateDER))
+        guard certificate.notValidBefore <= now else { throw LocalLinkSecurityError.identityNotYetValid }
+        guard certificate.notValidAfter > now else { throw LocalLinkSecurityError.expiredIdentity }
+    }
 }
 
 public enum LocalLinkIdentityStore {
     private struct StoredIdentity: Codable { let privateKey: Data; let certificate: Data }
     /// Keychain lock errors fail closed; they never regenerate a silently different hub.
-    public static func loadOrCreate(account: String = "companion-hub-v1") throws -> LocalLinkIdentity {
+    public static func loadOrCreate(account: String = "companion-hub-v1", renewExpiredForEnrollment: Bool = false,
+                                    now: Date = Date()) throws -> LocalLinkIdentity {
         let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword,
             kSecAttrService: "com.aens.GetOverHere.LocalLinkSecurity", kSecAttrAccount: account]
         var result: CFTypeRef?
@@ -100,11 +119,23 @@ public enum LocalLinkIdentityStore {
         if status == errSecSuccess {
             guard let bytes = result as? Data else { throw LocalLinkSecurityError.invalidIdentity }
             let stored = try JSONDecoder().decode(StoredIdentity.self, from: bytes)
-            return try LocalLinkIdentity(privateKey: .init(rawRepresentation: stored.privateKey), certificateDER: stored.certificate)
+            let key = try P256.Signing.PrivateKey(rawRepresentation: stored.privateKey)
+            let existing = try LocalLinkIdentity(privateKey: key, certificateDER: stored.certificate)
+            do { try existing.validateValidity(now: now); return existing }
+            catch LocalLinkSecurityError.expiredIdentity {
+                guard renewExpiredForEnrollment else { throw LocalLinkSecurityError.expiredIdentity }
+                // Only a newly requested QR ceremony may replace the full-DER pin.
+                // Existing confirmed transports keep their original identity and pins.
+                let renewed = try LocalLinkIdentity(privateKey: key, now: now)
+                let bytes = try JSONEncoder().encode(StoredIdentity(privateKey: stored.privateKey, certificate: renewed.certificateDER))
+                let updated = SecItemUpdate(query as CFDictionary, [kSecValueData: bytes] as CFDictionary)
+                guard updated == errSecSuccess else { throw LocalLinkSecurityError.keychain(updated) }
+                return renewed
+            }
         }
         guard status == errSecItemNotFound else { throw LocalLinkSecurityError.keychain(status) }
         let key = P256.Signing.PrivateKey()
-        let identity = try LocalLinkIdentity(privateKey: key)
+        let identity = try LocalLinkIdentity(privateKey: key, now: now)
         let stored = try JSONEncoder().encode(StoredIdentity(privateKey: key.rawRepresentation, certificate: identity.certificateDER))
         let insertion = query.merging([kSecValueData: stored,
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]) { _, new in new }

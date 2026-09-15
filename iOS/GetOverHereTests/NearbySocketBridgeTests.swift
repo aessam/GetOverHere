@@ -7,6 +7,34 @@ import TourSessionCore
 @Suite(.serialized)
 @MainActor
 struct NearbySocketBridgeTests {
+    @Test func appleSelectedRouteReadsRealMetadataAfterBrowsingIsPaused() async throws {
+        let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Paused browser fixture",
+            isAndroid: true, isLocked: false, admissionVersion: 2)
+        let guide = NearbySocketBridge(budget: NearbyConnectionBudget())
+        let listener = try TestNearbyListener(bridge: guide, record: record)
+        let transport = ApplePeerRoomTransport()
+        defer { transport.stop(); listener.close(); guide.stop() }
+        let port = try await listener.start()
+        transport.setMode(.browsing)
+        transport.updateRecord(record, at: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!))
+        let selected = try transport.connector(roomID: record.roomID)
+        var lost = false
+        transport.onLost = { _ in lost = true }
+        transport.pauseBrowsing()
+        #expect(!lost)
+        #expect(transport.endpoints[record.roomID] != nil)
+        let received = try await NearbySocketBridge.readRecord { try await selected(.metadata) }
+        #expect(received == record)
+    }
+
+    @Test func reliableGatewayWriteTimeoutIsTypedAndClosesBlockedWriter() async {
+        let destination = BlockedGatewayWrite()
+        await #expect(throws: NearbyReliableWriteTimeout.self) {
+            try await NearbySocketBridge.writeReliable(Data([1, 2, 3]), to: destination, timeout: 20)
+        }
+        #expect(destination.closed)
+    }
+
     @Test func strictApplePeerCannotSubstituteBluetoothOrAware() async throws {
         let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Room", isAndroid: false, isLocked: false, admissionVersion: 2)
         let bluetooth = RouteBluetoothTestRadio(record: record)
@@ -386,6 +414,20 @@ struct NearbySocketBridgeTests {
 
     @concurrent private func join(_ roomID: UUID, guideID: UUID, code: String?) async throws -> String {
         try RoomAdmissionTransport().join(host: "127.0.0.1", sessionID: roomID, expectedGuideID: guideID, code: code).mediaSecret
+    }
+}
+
+@MainActor
+private final class BlockedGatewayWrite: NearbyByteConnection {
+    private var writeWaiter: CheckedContinuation<Void, any Error>?
+    private(set) var closed = false
+    func read(maximum: Int) async throws -> Data { throw NearbyConnectionError.closed }
+    func write(_ bytes: Data) async throws {
+        try await withCheckedThrowingContinuation { writeWaiter = $0 }
+    }
+    func close() {
+        closed = true
+        writeWaiter?.resume(throwing: NearbyConnectionError.closed); writeWaiter = nil
     }
 }
 

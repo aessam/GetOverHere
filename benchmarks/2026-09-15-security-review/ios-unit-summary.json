@@ -1,0 +1,52 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "5CCA0393-1F29-47F3-AC23-CBE1C99533F4",
+        "deviceName" : "iPhone 17 Pro",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "24A434",
+        "osVersion" : "27.0",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 248,
+      "skippedTests" : 4,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "GetOverHere · Built with macOS 27.0",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1789487100.54,
+  "passedTests" : 201,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 4,
+  "startTime" : 1789487021.273,
+  "statistics" : [
+    {
+      "subtitle" : "71 test runs",
+      "title" : "24 tests ran with dynamic parameters"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - GetOverHere",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "61% of duration",
+      "text" : "6 longest test runs with outlier durations exceeding 3.25s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 205
+}

@@ -1,0 +1,28 @@
+Building for debugging...
+[Computing dependencies]
+[1 / 5]
+Build complete! (3.41 sec)
+Test Suite 'All tests' started at 2026-09-15 08:04:04.416.
+Test Suite 'All tests' passed at 2026-09-15 08:04:04.417.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+􀟈  Test run started.
+􀄵  Testing Library Version: 2084
+􀄵  Target Platform: arm64e-apple-macos14.0
+􀟈  Suite LocalLinkSecurityTests started.
+􀟈  Suite LocalLinkTLSTests started.
+􀟈  Test invalidPinCannotConfigureTLS() started.
+􀟈  Test generatedIdentityMatchesKeyAndPin() started.
+􀟈  Test renewingCertificateRequiresNewPinButRestoringDoesNot() started.
+􀟈  Test mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .valid to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test generatedIdentityMatchesKeyAndPin() passed after 0.005 seconds.
+􁁛  Test invalidPinCannotConfigureTLS() passed after 0.005 seconds.
+􁁛  Test renewingCertificateRequiresNewPinButRestoringDoesNot() passed after 0.005 seconds.
+􁁛  Suite LocalLinkSecurityTests passed after 0.005 seconds.
+􀟈  Test case passing 1 argument mode → .wrongServerPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .wrongClientPin to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .missingClientCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􀟈  Test case passing 1 argument mode → .expiredServerCertificate to mutualTLSRequiresBothExpectedValidIdentities(_:) started.
+􁁛  Test mutualTLSRequiresBothExpectedValidIdentities(_:) with 5 test cases passed after 0.036 seconds.
+􁁛  Suite LocalLinkTLSTests passed after 0.037 seconds.
+􁁛  Test run with 4 tests in 2 suites passed after 0.037 seconds.

@@ -187,7 +187,7 @@ final class LiveWiredCompanionTransport: WiredCompanionTransport {
 
     func startCompanion(identity: LocalLinkIdentity, offer: GatewayPairingMessage, interface: NWInterface,
                         confirmedAssociation: Bool = false) throws {
-        if !confirmedAssociation { try offer.validate(nowMilliseconds: Self.wallMilliseconds) }
+        if !confirmedAssociation { try offer.validateReceivedOffer(nowMilliseconds: Self.wallMilliseconds) }
         guard offer.role == .offer else { throw GatewayProtocolError.mismatchedPairing }
         guard interface.type == requiredInterfaceType else { throw NearbyConnectionError.unavailable }
         stop()
@@ -360,7 +360,8 @@ final class LiveWiredCompanionTransport: WiredCompanionTransport {
                     try await remote.write(Data([GatewayLaneRequest.Reply.accepted.rawValue])); accepted = true; deadline.cancel()
                     try await NearbySocketBridge.pump(remote, local, realtime: request.lane == .realtime,
                         drainAdmissionReply: request.lane == .admission,
-                        audioResidenceMilliseconds: GatewayProtocol.audioResidenceMilliseconds)
+                        audioResidenceMilliseconds: GatewayProtocol.audioResidenceMilliseconds,
+                        reliableWriteTimeoutMilliseconds: 5_000)
                 }
             } catch {
                 if token == attempt, !Task.isCancelled {

@@ -9,6 +9,7 @@ import com.aessam.toursession.AssetRequestPayload
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -23,6 +24,83 @@ import java.util.concurrent.TimeUnit
 
 /** Actual sockets and the production proxy, not a second implementation of forwarding. */
 class GatewayBridgeTest {
+    @Test fun blockedReliableGatewayWriteReportsTimeoutAndReleasesOnlyItsLane() {
+        val budget = NearbyConnectionBudget()
+        val healthy = requireNotNull(budget.reserveBootstrap())
+        assertTrue(healthy.promote(NearbyLaneRequest.Lane.ASSET))
+        val errors = java.util.concurrent.LinkedBlockingQueue<String>()
+        val closed = java.util.concurrent.CountDownLatch(1)
+        val first = object : com.aessam.comeoverhere.core.NearbyByteConnection {
+            override val input = java.io.ByteArrayInputStream(byteArrayOf(42))
+            override val output = java.io.ByteArrayOutputStream()
+            override fun close() = Unit
+        }
+        val blocked = object : com.aessam.comeoverhere.core.NearbyByteConnection {
+            override val input = object : java.io.InputStream() {
+                override fun read(): Int { check(closed.await(3, TimeUnit.SECONDS)); return -1 }
+            }
+            override val output = object : java.io.OutputStream() {
+                override fun write(value: Int) {
+                    check(closed.await(3, TimeUnit.SECONDS))
+                    throw java.io.IOException("Closed blocked write")
+                }
+            }
+            override fun close() { closed.countDown() }
+        }
+        try {
+            NearbySocketBridge(budget, reliableWriteTimeoutMilliseconds = 30).use { bridge ->
+                bridge.onError = { errors.add(it) }
+                assertThrows(java.io.IOException::class.java) {
+                    bridge.forwardConnected(first, blocked, NearbyLaneRequest.Lane.CONTROL)
+                }
+                assertTrue(requireNotNull(errors.poll(3, TimeUnit.SECONDS)).contains("write exceeded"))
+                assertEquals(1, budget.snapshot().persistent)
+                assertEquals(0, budget.snapshot().bootstrap)
+            }
+        } finally { healthy.close(); blocked.close() }
+    }
+
+    @Test fun sharedCapacityRejectsBeforeAcceptanceAndKeepsRejectionSocketWritable() {
+        for (persistent in listOf(false, true)) {
+            val budget = NearbyConnectionBudget(maximumParticipants = 1, maximumBootstrap = 1)
+            val occupied = requireNotNull(budget.reserveBootstrap())
+            if (persistent) assertTrue(occupied.promote(NearbyLaneRequest.Lane.CONTROL))
+            val left = pair(); val right = pair()
+            try {
+                NearbySocketBridge(budget).use { bridge ->
+                    var accepted = false
+                    assertThrows(com.aessam.comeoverhere.core.NearbyLaneCapacityException::class.java) {
+                        bridge.forwardConnected(NearbyTCPConnection(left.second), NearbyTCPConnection(right.second),
+                            NearbyLaneRequest.Lane.CONTROL) { accepted = true }
+                    }
+                    assertTrue(!accepted)
+                    left.second.getOutputStream().write(2)
+                    assertEquals(2, left.first.getInputStream().read())
+                    assertEquals(if (persistent) 1 else 0, budget.snapshot().persistent)
+                    assertEquals(if (persistent) 0 else 1, budget.snapshot().bootstrap)
+                }
+            } finally {
+                occupied.close(); left.first.close(); left.second.close(); right.first.close(); right.second.close()
+            }
+        }
+    }
+
+    @Test fun failedAcceptanceReleasesBothSocketsAndAllBudgets() {
+        val budget = NearbyConnectionBudget()
+        val left = pair(); val right = pair()
+        try {
+            NearbySocketBridge(budget).use { bridge ->
+                assertThrows(java.io.IOException::class.java) {
+                    bridge.forwardConnected(NearbyTCPConnection(left.second), NearbyTCPConnection(right.second),
+                        NearbyLaneRequest.Lane.CONTROL) { throw java.io.IOException("Injected ACK write failure") }
+                }
+                assertTrue(left.second.isClosed && right.second.isClosed)
+                assertEquals(0, budget.snapshot().persistent)
+                assertEquals(0, budget.snapshot().bootstrap)
+            }
+        } finally { left.first.close(); left.second.close(); right.first.close(); right.second.close() }
+    }
+
     @Test fun reliableWiredLanePreservesBytesInBothDirections() = probe(NearbyLaneRequest.Lane.CONTROL) { leaf, guide ->
         val outgoing = ByteArray(40_003) { (it * 17).toByte() }
         guide.getOutputStream().write(outgoing); guide.getOutputStream().flush()

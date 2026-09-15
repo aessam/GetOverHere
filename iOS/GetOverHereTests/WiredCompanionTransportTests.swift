@@ -143,8 +143,15 @@ struct WiredCompanionTransportTests {
         #expect(try await stillLocal.readExactly(bytes.count) == bytes)
         guide.stop()
         #expect(throws: GatewayProtocolError.self) { try guide.resumeGuide(on: interface) }
+        // A receiving companion allows bounded clock skew; reject outside that
+        // window, not merely a few seconds after the other phone's wall expiry.
+        let expiredOffer = try GatewayPairingMessage(role: .offer, pairingID: offer.pairingID,
+            roomID: offer.roomID, guideID: offer.guideID,
+            expiresAtMilliseconds: LiveWiredCompanionTransport.wallMilliseconds - GatewayProtocol.enrollmentClockSkewMilliseconds - 1,
+            certificateFingerprint: offer.certificateFingerprint, guideKeyFingerprint: offer.guideKeyFingerprint,
+            offerCertificateFingerprint: offer.offerCertificateFingerprint, host: offer.host, port: offer.port)
         #expect(throws: GatewayProtocolError.self) {
-            try companion.startCompanion(identity: companionIdentity, offer: offer, interface: interface)
+            try companion.startCompanion(identity: companionIdentity, offer: expiredOffer, interface: interface)
         }
     }
 
