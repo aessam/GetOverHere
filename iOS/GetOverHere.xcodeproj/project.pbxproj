@@ -433,6 +433,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GetOverHere/Info.Debug.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth connects nearby tour rooms and carries tour audio and controls when Wi-Fi is unavailable. Your location is not shared.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the companion phone's public pairing QR code to verify the wired connection.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location stays on this device and is used only to show your position, distance, and direction relative to the guide's shared pin.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -467,6 +472,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GetOverHere/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth connects nearby tour rooms and carries tour audio and controls when Wi-Fi is unavailable. Your location is not shared.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the companion phone's public pairing QR code to verify the wired connection.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location stays on this device and is used only to show your position, distance, and direction relative to the guide's shared pin.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

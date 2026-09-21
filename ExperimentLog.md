@@ -1870,3 +1870,58 @@ After all tests, stopped the task-owned emulator with `adb -s emulator-5554 emu 
 (OK). Moved only the generated untracked `Android/.kotlin` session-marker directory
 to `/tmp/GetOverHereGatewayReview-kotlin-sessions-20260915`. No user data deleted.
 Stable tag verified unchanged at `59b0402c91cfabb3eb839800b2b8521be90854e0`.
+
+## 2026-09-19 — Physical Aware component qualification and current-device setup
+
+Revision72402535cdb4216298eeda36f4307ac4c684d9c7; existing iOS project/plist
+permission-description edits preserved. Xcode now `/Applications/Xcode.app`.
+Pixel7 `2A111FDH2007A1`, Pixel11Pro `66180DLKX006ND`, both Android17/API37,
+physical, Wi-Fi enabled and infrastructure-associated. iPhone13Pro
+`00008110-000528410CF8801E`, iOS27.0/24A437, physical, Developer Mode enabled.
+
+Builds passed:
+`JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./Android/gradlew -p Android :app:assembleDebug :app:assembleDebugAndroidTest`
+and `xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -configuration Debug -destination 'id=00008110-000528410CF8801E' -derivedDataPath /tmp/GetOverHere-20260919-device -allowProvisioningUpdates build`.
+Logs `/tmp/GetOverHere-20260919-{android,ios}-build.log`. Installed current
+Android Debug/test APKs and signed iPhone Debug app. Generated iPhone plist
+contains microphone and local-network descriptions from the user's build settings.
+
+Physical fixture commands:
+`GOH_NEARBY_GUIDE=2A111FDH2007A1 GOH_NEARBY_GUEST=66180DLKX006ND GOH_NEARBY_TRANSPORT=aware bash scripts/verify_nearby_physical_android.sh`
+and reverse with `GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_REUSE_INSTALLED=1`.
+Both exit0, both roles `OK (1 test)`. Forward guide74.228s/guest14.785s;
+reverse guide70.956s/guest13.394s. Raw artifacts
+`/tmp/GetOverHereNearbyPhysical.aZw9DD` and `/tmp/GetOverHereNearbyPhysical.DzlTnu`;
+wrapper logs `/tmp/GetOverHere-20260919-aware-{forward,reverse}.log`.
+Installed APK/test hashes verified in reverse preflight. Actual Aware fixture,
+not LAN fallback: locked admission, pointer decode,512-byte asset equality and
+100 decoded non-silent audio frames. Generated440Hz input, not microphone or
+acoustic proof. No lock/endurance/group-capacity assertion.
+
+Authenticated app commands separately exercised iPhone create, settled audio
+RUNNING, next-slide request, pointer selection, leave; Pixel7 create settled
+RUNNING in automatic and strict-Aware modes, then leave. No listeners attached.
+Earlier Android create logged an IllegalStateException and rolled back; not
+reproduced on subsequent attempts and not claimed fixed. Debug commands rejected
+when screens timed out; Pixel11Pro final endpoint request returned TLS EOF.
+These require follow-up, not speculative repair.
+
+Read-only network inventory found no USB network on either Pixel. Secure
+wireless ADB connection to Pixel11Pro `192.168.1.17:43419` succeeded. User asked
+to move the iPhone cable directly to Pixel11Pro and enable USB tethering before
+full three-phone gateway testing. iPhone management network192.168.3.175 is not
+gateway-route evidence. All test-created tours ended. No source repair, commit,
+push, tag change, paid resource or shared-server restart.
+
+September19 cable follow-up: after the user's connection change, exact ADB
+inventory retains Pixel7 over Mac USB and Pixel11Pro over TLS wireless ADB
+192.168.1.17:43419. `adb -s 192.168.1.17:43419 shell dumpsys usb` identifies
+Apple Inc. iPhone, vendor1452/product4776, Android data_role=host,
+current_mode=dfp, can_change_data_role=false. `ip -brief address` has no wired
+network. Opened normal `android.settings.TETHER_SETTINGS`; UIAutomator confirms
+USB tethering enabled=false (unavailable), not merely an unchecked switch.
+No tethering/radio setting changed. Pixel7 also has no wired network.
+iPhone devicectl state unavailable; previous management endpoint returned NWError.
+Gateway admission/audio not attempted without a real wired IP link. Cable/adapter
+topology needs clarification; prior USB qualification must not be extrapolated
+to this iPhone13Pro Lightning connection.

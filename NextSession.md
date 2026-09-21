@@ -1,5 +1,66 @@
 # GetOverHere — Next Session
 
+## September 21 — current direction supersedes the USB steps below
+
+User stopped USB gateway work: the available iPhone13Pro + Pixel11Pro did not
+establish the required wired network. A different USB-C iPhone reportedly enabled
+tethering, but replacement hardware is not the accepted product direction.
+Do not resume cable/adapter troubleshooting from the historical notes below.
+
+Priority is a usable wireless megaphone and synchronized PDF page viewer on the
+available iPhone and Android, without Internet or a shared router. Establish the
+supported cross-platform link and real audio first; no new transport architecture
+or product-completion claim is justified by the component tests alone. The
+Telegram transfer was clarified as AirDrop, not proof of a Telegram Wi-Fi Aware
+transport. Public API availability and the complete user journey remain unproven.
+Device addresses/debug activations below are historical, not current access.
+
+## September 19 — physical qualification resumed; cable step pending
+
+Cable follow-up: user reported iPhone+Pixel7 connected, but fresh ADB/USB
+inventory identifies Pixel11Pro (`192.168.1.17:43419`) as the phone with an
+attached Apple iPhone (USB vendor1452/product4776). Pixel7 remains USB-connected
+to Mac. Pixel11Pro reports data_role=host, current_mode=dfp,
+can_change_data_role=false; no wired IP interface. Its visible Settings USB
+tethering control is disabled. This is not the previously qualified opposite
+USB role. Ask which Lightning cable/adapter is being used before further setup;
+do not report a gateway transport failure when no IP link exists. iPhone is now
+unavailable through devicectl and its former debug endpoint failed with NWError.
+
+HEAD `7240253`. Both Pixels now run the reviewed Debug APK (SHA-256
+`c2ea45e02ffd401a7f326d2f4af66f931db721c7764ea1685ff27f1b2d558426`).
+Physical Aware fixture passes both directions: Pixel7 `2A111FDH2007A1`
+and Pixel11Pro `66180DLKX006ND`. Each guest verifies admission, pointer state,
+byte-exact512-byte asset and100 non-silent native-decoded frames. This is a
+synthetic source, not microphone-to-speaker or endurance proof. Commands and
+artifact locations are appended to ExperimentLog.md.
+
+iPhone13Pro `00008110-000528410CF8801E`, iOS27, Developer Mode enabled:
+current Debug build installed from `/tmp/GetOverHere-20260919-device/Build/Products/Debug-iphoneos/GetOverHere.app`.
+Existing user edits to project.pbxproj and Info.Debug.plist are preserved;
+generated microphone/local-network usage descriptions verified. iPhone guide
+create/capture running, pointer selection and leave were exercised. Pixel7
+guide microphone startup also reached RUNNING, including strict Aware mode;
+no audience attached, so no live end-to-end claim. An earlier startup logged
+`Cannot start tour features (IllegalStateException)`; later attempts passed.
+Cause remains unproven; do not label it fixed.
+
+User has been asked to connect iPhone directly to Pixel11Pro and enable USB
+tethering, leaving Pixel7 on Mac. Pixel11Pro secure wireless ADB verified at
+`192.168.1.17:43419`; rediscover with `adb mdns services` if it changes.
+Before rewiring, neither Pixel had a USB network interface. Next: verify actual
+wired addresses, enroll original iPhone guide + Android companion, then attach
+Pixel7 through strict Aware. Three phones cannot qualify the iOS audience branch.
+
+iPhone authenticated debugger is temporarily available at `192.168.3.175:50999`;
+private credentials `/tmp/GetOverHere-20260919-private.Qhaw6V` (never print contents),
+CLI `Packages/AppDebugControl/.build/debug/goh-control`. Activation expires after
+15minutes. Pixel debug endpoints expire after10minutes and do not keep screens
+awake; re-enable through visible consent UI. Last Pixel11Pro client attempt
+returned TLS EOF and needs endpoint/state inspection before use. All created
+rooms were ended; transport fixtures finished. No paid resources, source repair,
+commit, push or tag change this checkpoint.
+
 ## September 15 — review repairs implemented and software verified
 
 User approved finishing the software with unit tests, simulator/emulator and
