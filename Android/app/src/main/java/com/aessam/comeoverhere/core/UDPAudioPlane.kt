@@ -80,7 +80,6 @@ class UDPAudioPlane(
         var partialOrigin: CaptureOrigin? = null
         val pendingInputs = java.util.ArrayDeque<CaptureOrigin>()
         val streamID: UUID = UUID.randomUUID()
-        var sequence: Long = 0
         var waitingSince: Long? = null
     }
 
@@ -111,6 +110,8 @@ class UDPAudioPlane(
         private val sealer = SessionFrameSealer(configured.credential)
         // Confined to the executor thread.
         private val codecStates = mutableMapOf<SessionAudioCodec, BroadcastCodecState>()
+        // The guest playout timeline outlives an encoder instance, even with a fresh crypto stream.
+        private val nextSequences = mutableMapOf<SessionAudioCodec, Long>()
         private val replacementCounts = mutableMapOf<SessionAudioCodec, Int>()
         private val failedCodecs = mutableSetOf<SessionAudioCodec>()
         private data class Entry(val pcm: ByteArray, val destinations: Map<SessionAudioCodec, List<BoundedSocketFrameWriter>>, val origin: CaptureOrigin)
@@ -214,7 +215,7 @@ class UDPAudioPlane(
                 encoderResetCount++
                 Log.e(TAG, "TCP: replacing $codec encoder ($reason, attempt ${replacements + 1})")
             }
-            // A replacement gets a fresh stream UUID; sequence zero never reuses the old stream's nonce.
+            // Replace the crypto stream, but retain the codec's guest playout sequence.
         }
 
         private fun process(entry: Entry, generation: Long) {
@@ -281,7 +282,10 @@ class UDPAudioPlane(
                             val logical = SessionEnvelope(
                                 lane = SessionLane.REALTIME,
                                 kind = SessionMessageKind.AUDIO_FRAME,
-                                sequence = state.sequence++,
+                                sequence = nextSequences.getOrDefault(codec, 0L).also {
+                                    check(it < Long.MAX_VALUE) { "Audio sequence exhausted" }
+                                    nextSequences[codec] = it + 1
+                                },
                                 sessionId = configured.sessionID,
                                 senderId = configured.participantID,
                                 payload = payload.encode(),

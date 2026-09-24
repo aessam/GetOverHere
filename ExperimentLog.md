@@ -1925,3 +1925,28 @@ iPhone devicectl state unavailable; previous management endpoint returned NWErro
 Gateway admission/audio not attempted without a real wired IP link. Cable/adapter
 topology needs clarification; prior USB qualification must not be extrapolated
 to this iPhone13Pro Lightning connection.
+
+## 2026-09-23 — Issue #1 Android encoder recovery, device-free
+
+Environment: macOS, Android Studio bundled JBR, Gradle wrapper, branch
+`fix/deep-dive-2026-09-02`, baseline `b820aaf`. No devices queried or used.
+
+Command (with `JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`):
+`./Android/gradlew -p Android :app:testDebugUnitTest --tests '*RealtimeCaptureInboxTest.replacementContinuesAuthenticatedGuestPlayoutWithoutResettingTimeline'`.
+Before fix: one test failed at the real guest playout offer, expected ACCEPTED,
+actual DUPLICATE. Signature verification and AEAD opening had succeeded.
+Log: `/tmp/goh-issue1-red.log`.
+
+After fix: `./Android/gradlew -p Android :app:testDebugUnitTest :tour-session-core:test`.
+Build successful; app XML: 206 tests, zero failures/errors/skips. Core task was
+up-to-date, with cached XML: 83 tests, zero failures/errors/skips.
+Log: `/tmp/goh-issue1-green.log`. Independent read-only review found no blocker.
+Native codecs are substituted at the component seam; this does not prove physical
+speech, iOS decoding, radio behavior, or group capacity. Issue #1 remains open.
+
+Targeted mutation command: `bash scripts/verify_audio_recovery_mutation.sh`.
+Baseline passed after rebuilding. An isolated Android source copy reset the
+sequence on encoder retirement; the test failed specifically with ACCEPTED versus
+DUPLICATE, not a compilation failure. One targeted mutant killed; no general
+mutation-coverage claim. Scratch copy removed by the script. Log:
+`/tmp/goh-issue1-mutation.log`.

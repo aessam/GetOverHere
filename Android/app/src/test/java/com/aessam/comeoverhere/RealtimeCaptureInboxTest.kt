@@ -9,6 +9,8 @@ import com.aessam.comeoverhere.core.SessionGuideAuthentication
 import com.aessam.comeoverhere.core.SocketFrameOverflowPolicy
 import com.aessam.comeoverhere.core.UDPAudioPlane
 import com.aessam.toursession.EncodedAudioFramePayload
+import com.aessam.toursession.EncodedAudioFrameOfferResult
+import com.aessam.toursession.SequencedEncodedAudioFrame
 import com.aessam.toursession.ParticipantPlatform
 import com.aessam.toursession.SealedSessionEnvelope
 import com.aessam.toursession.SessionAudioCodec
@@ -28,6 +30,47 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 class RealtimeCaptureInboxTest {
+    @Test fun replacementContinuesAuthenticatedGuestPlayoutWithoutResettingTimeline() {
+        val provider = InboxCodecProvider { instance, call, pcm ->
+            if (instance == 1 && call > 3) error("Injected terminal codec failure")
+            inboxPacket(pcm)
+        }
+        val h = InboxHarness(provider, expectedOutputs = 3, signed = true)
+        val played = mutableListOf<ByteArray>()
+        val decoder = object : RealtimeAudioDecoderInterface {
+            override val configuration = inboxPacket(byteArrayOf()).configuration
+            override fun decode(packet: ByteArray) = packet.copyOf()
+            override fun close() = Unit
+        }
+        val clock = UDPAudioPlane.PlayoutClock(decoder, { InboxHarness.WALL_BASE },
+            { played += it }, { error("Unexpected decode failure") })
+        val opener = SessionFrameOpener(h.credential)
+        fun receive(bytes: ByteArray) {
+            val opened = opener.open(h.authentication.decodeGuide(bytes)) as SessionFrameOpenResult.Opened
+            assertEquals("Recovered frame must enter the existing guest timeline",
+                EncodedAudioFrameOfferResult.ACCEPTED,
+                clock.offer(SequencedEncodedAudioFrame(opened.envelope.sequence,
+                    EncodedAudioFramePayload.decode(opened.envelope.payload)), InboxHarness.WALL_BASE))
+        }
+        try {
+            repeat(3) { h.submit(byteArrayOf(1, 2, 3, 4)) }
+            assertTrue(h.output.await(3, TimeUnit.SECONDS))
+            h.frames.forEach(::receive)
+            repeat(3) { clock.tick() }
+            assertEquals(3, played.size)
+            h.submit(byteArrayOf(5, 6, 7, 8))
+            assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
+            val resumed = CountDownLatch(1)
+            h.afterOutput = { resumed.countDown() }
+            h.submit(byteArrayOf(9, 10, 11, 12))
+            assertTrue(resumed.await(3, TimeUnit.SECONDS))
+            receive(h.frames.last())
+            clock.tick()
+            assertEquals(4, played.size)
+            assertArrayEquals(byteArrayOf(9, 10, 11, 12), played.last())
+        } finally { clock.close(); h.close() }
+    }
+
     @Test fun terminalFailureReplacesEncoderAndResumesSignedEncryptedFramesWithFreshStream() {
         val provider = InboxCodecProvider { instance, call, pcm ->
             if (instance == 1 && call > 1) error("Injected terminal codec failure")

@@ -766,3 +766,17 @@ accepting then discovering capacity failure; two competing reconnect loops.
 outside these software fixtures. Physical group cap, locks, acoustic timing and
 endurance remain unqualified. Evidence and exact commands:
 `benchmarks/2026-09-15-security-review/README.md`.
+
+## ADR-071 — Preserve playout sequence across Android encoder replacement
+
+**Date:** 2026-09-23. **Tracking:** GitHub #1.
+**Context:** Guests retain their playout clock when a replacement encoder emits
+the same codec configuration. Resetting sequence to zero makes valid recovered
+frames look like duplicates.
+**Decision:** Keep a per-codec sequence in the broadcast processor for its lifetime,
+independent of replaceable encoder state. Retain fresh cryptographic stream IDs.
+**Alternative rejected:** Resetting guest clocks on every crypto stream change
+would require changing both receive paths and handling delayed old-stream frames.
+**Consequences:** No wire change. Component regression traverses signed encrypted
+sender output into the existing guest clock; radio/native/acoustic evidence remains
+required. Sequence exhaustion is explicitly rejected rather than wrapping.

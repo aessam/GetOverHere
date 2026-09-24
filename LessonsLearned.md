@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-09-23 — Encoder recovery must preserve the guest timeline (#1)
+
+Replacing Android's encoder resumed signed/encrypted output but reset its audio
+sequence. An existing guest playout buffer rejected the recovered frame as a
+duplicate. Sender-only recovery assertions missed this. Sequence now belongs to
+the broadcast processor per codec, while each replacement retains a fresh crypto
+stream. The regression keeps one verifier/opener/playout clock across replacement.
+This is component evidence, not a native codec or physical audio qualification.
+
 ## 2026-09-04 — Editable admission is not a media-key rotation
 
 The former tour code derived all three media-lane credentials. Reusing it as an editable room lock would invalidate connected guests; advertising it for open joining would reveal media keys to passive observers. ADR-052 separates admission from the existing group credential and tests that lock/edit/unlock never reconfigures media lanes.
