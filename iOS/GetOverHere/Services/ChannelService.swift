@@ -168,7 +168,7 @@ final class ChannelService {
     private(set) var connectionState: ConnectionState = .idle { didSet { updateBluetoothDiscovery(); updateApplePeerDiscovery() } }
     var audioQuality: AudioQuality = .standard
 
-    struct SlideImport: Sendable {
+    nonisolated struct SlideImport: Sendable {
         let data: Data
         let mimeType: String
     }

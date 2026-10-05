@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import TourSessionCore
@@ -475,6 +476,23 @@ struct ChannelServiceLifecycleTests {
             #expect(h.audioPlane.configureCalls == audioConfigurations)
             #expect(h.asset.configureCalls == assetConfigurations)
         }
+    }
+
+    @Test("A guide PDF import becomes the slide deck in page order")
+    @MainActor
+    func pdfImportBecomesOrderedDeck() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        h.service.createChannel(name: "PDF tour")
+        try await waitUntil("guide startup") { h.service.connectionState == .connected }
+        let url = try #require(Bundle(for: FakeAudioEngine.self).url(forResource: "three-pages", withExtension: "pdf"))
+        let pages = try await PDFSlideRenderer.render(try Data(contentsOf: url))
+        await h.service.importSlides(pages)
+        #expect(h.service.tourFeatureError == nil)
+        let deck = h.service.tourControlService.slides
+        #expect(deck.count == 3)
+        #expect(deck.map(\.sha256) == pages.map { SHA256.hash(data: $0.data).map { String(format: "%02x", $0) }.joined() })
+        #expect(deck.allSatisfy { $0.kind == .slide })
     }
 
     @Test("createChannel publishes only after every lane and capture started")

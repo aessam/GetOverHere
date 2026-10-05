@@ -88,6 +88,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenG
     val slides by vm.slides.collectAsState()
     val readySlideFiles by vm.readySlideFiles.collectAsState()
     val isImportingSlides by vm.isImportingSlides.collectAsState()
+    var isRenderingPdf by remember { mutableStateOf(false) }
     val isImportingMap by vm.isImportingMap.collectAsState()
     val offlineMapConfiguration by vm.offlineMapConfiguration.collectAsState()
     val offlineMapStatus by vm.offlineMapStatus.collectAsState()
@@ -188,6 +189,30 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenG
                 vm.importSlides(imports)
             } catch (error: Exception) {
                 pickerError = error.message ?: error.javaClass.simpleName
+            }
+        }
+    }
+    val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        isRenderingPdf = true
+        pickerScope.launch {
+            try {
+                val imports = withContext(Dispatchers.IO) {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                        val limited = input.readNBytesCompat(com.aessam.comeoverhere.service.PdfSlideRenderer.MAXIMUM_INPUT_BYTES + 1)
+                        if (limited.size > com.aessam.comeoverhere.service.PdfSlideRenderer.MAXIMUM_INPUT_BYTES) {
+                            throw com.aessam.comeoverhere.service.PdfSlideImportException("The PDF is larger than 100 MB.")
+                        }
+                        limited
+                    } ?: error("The selected PDF could not be read")
+                    com.aessam.comeoverhere.service.PdfSlideRenderer.render(bytes, context.cacheDir)
+                }
+                pickerError = null
+                vm.importSlides(imports)
+            } catch (error: Exception) {
+                pickerError = error.message ?: error.javaClass.simpleName
+            } finally {
+                isRenderingPdf = false
             }
         }
     }
@@ -423,7 +448,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenG
                         presentation = presentation,
                         slides = slides,
                         readySlideFiles = readySlideFiles,
-                        isImportingSlides = isImportingSlides,
+                        isImportingSlides = isImportingSlides || isRenderingPdf,
                         isImportingMap = isImportingMap,
                         selectedFeature = selectedFeature,
                         onFeatureChange = {
@@ -452,6 +477,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenG
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
                         },
+                        onPickPdf = { pdfPicker.launch(arrayOf("application/pdf")) },
                         onPickMap = { mapPicker.launch(arrayOf("application/json", "application/octet-stream")) },
                         onRequestLocation = requestLocalGuidance,
                         vm = vm,
@@ -716,6 +742,7 @@ private fun CreatorView(
     guidance: LocalTargetGuidance?,
     error: String?,
     onPickSlides: () -> Unit,
+    onPickPdf: () -> Unit,
     onPickMap: () -> Unit,
     onRequestLocation: () -> Unit,
     vm: AppViewModel,
@@ -783,6 +810,7 @@ private fun CreatorView(
                     readySlideFiles,
                     isImportingSlides,
                     onPickSlides,
+                    onPickPdf,
                     vm,
                 )
                 TourFeature.MAP -> MapFeatureStage(
@@ -861,6 +889,7 @@ private fun CreatorSlides(
     readySlideFiles: Map<String, File>,
     isImportingSlides: Boolean,
     onPickSlides: () -> Unit,
+    onPickPdf: () -> Unit,
     vm: AppViewModel,
 ) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -870,12 +899,18 @@ private fun CreatorSlides(
                     Icon(Icons.Default.PhotoLibrary, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(12.dp))
                     Text("No slides", style = MaterialTheme.typography.headlineSmall)
-                    Text("Choose photos to prepare and send locally.", color = MaterialTheme.colorScheme.outline)
+                    Text("Choose photos or a PDF to prepare and send locally.", color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(20.dp))
                     Button(onClick = onPickSlides, enabled = !isImportingSlides) {
                         Icon(Icons.Default.AddPhotoAlternate, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Add Slides")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onPickPdf, enabled = !isImportingSlides, modifier = Modifier.testTag("importPDF")) {
+                        Icon(Icons.Default.PictureAsPdf, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import PDF")
                     }
                 }
             }
@@ -947,6 +982,11 @@ private fun CreatorSlides(
                 item {
                     OutlinedButton(onPickSlides, enabled = !isImportingSlides, modifier = Modifier.height(64.dp)) {
                         Icon(Icons.Default.AddPhotoAlternate, "Add slides")
+                    }
+                }
+                item {
+                    OutlinedButton(onPickPdf, enabled = !isImportingSlides, modifier = Modifier.height(64.dp)) {
+                        Icon(Icons.Default.PictureAsPdf, "Import PDF")
                     }
                 }
             }
@@ -1544,4 +1584,16 @@ private fun SlideFileImage(file: File, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/** Reads at most [limit] bytes (InputStream.readNBytes needs API 33; minSdk is 26). */
+private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (output.size() < limit) {
+        val read = read(buffer, 0, minOf(buffer.size, limit - output.size()))
+        if (read < 0) break
+        output.write(buffer, 0, read)
+    }
+    return output.toByteArray()
 }

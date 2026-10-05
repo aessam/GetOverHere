@@ -86,7 +86,19 @@ Without it, a physical "Bluetooth pass" can quietly be a LAN or Aware pass.
    raise the buffer above 1. Test: a 300 ms main-actor block loses no captured buffers.
 4. Exit: core parity gate green; iOS and Android suites green.
 
-## Phase 4: PDF as page images (assumes DSCN-1 = page images)
+## Phase 4: PDF as page images (DSCN-1 = page images, ADR-072): DONE except the items marked OPEN
+
+Status Oct 4:
+- Done: renderers `PDFSlideRenderer.swift` (CoreGraphics, off main actor) and `PdfSlideRenderer.kt` (`PdfRenderer`).
+- Done: guide "Import PDF" buttons on both platforms; caps of 60 pages, 15 MB rendered and 100 MB input.
+- Done: fixtures from `scripts/make_pdf_fixtures.swift`; iOS backup exclusion for the guest cache.
+- Tests: iOS 3 renderer tests + a deck-order test; Android 3 instrumented tests on the API 36 emulator.
+- OPEN: guest cache size cap and pruning (FND-13 remainder). It needs a cap that still fits PMTiles map
+  archives, and a pruning rule that keeps rejoin within the same tour working.
+- OPEN: UI automation through the system document picker (not attempted; flaky by nature).
+- MOVED to Phase 5: audio/asset coexistence on Bluetooth (RSK-3). Lanes are separate native channels,
+  so a throttled-socket test would only test a model of the radio scheduler.
+
 
 1. Import:
    - iOS: add `.pdf` to a guide `fileImporter`; render with PDFKit `PDFPage.thumbnail(of:for:)`.
@@ -122,6 +134,8 @@ Do not probe devices until you say they are available. Use `scripts/verify_mixed
    - PDF import and page turns, with late join mid-deck.
 4. Android-guide repeat ×5 to reproduce or clear the "Waiting for Audio" stall, using the
    Phase 1 counters.
+4b. With a PDF of 20+ pages, import it mid-speech on the guide. Record guest `acceptedPlaybackBytes` /
+   renderer deltas per second during the transfer versus before it (RSK-3).
 5. Locked guest screen, 10 min. CoreBluetooth background behavior is unproven (RSK-4).
 6. 30 min endurance with speech + page turns. Run 90 min only after 30 min passes (FND-2 check).
 7. Add Pixel7 as a second guest only after the pair passes. Publish only the measured cap.

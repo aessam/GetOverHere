@@ -2,6 +2,7 @@ package com.aessam.comeoverhere
 
 import android.Manifest
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -95,6 +96,7 @@ class TourNavigationTest {
         composeRule.waitUntil(10_000) { !channelService().isRoomLocked.value }
 
         composeRule.onNodeWithText("Slides").assertIsDisplayed()
+        composeRule.onNodeWithTag("importPDF").assertExists().assertIsEnabled()
         composeRule.onNodeWithText("Map").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("No offline map").assertIsDisplayed()
         composeRule.onNodeWithText("Import Offline Map").performScrollTo().assertIsDisplayed()

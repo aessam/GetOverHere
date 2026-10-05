@@ -52,6 +52,11 @@ final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
         partialDirectory = rootDirectory.appending(path: "partial", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: completeDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: partialDirectory, withIntermediateDirectories: true)
+        // Received tour content is re-fetchable session data, not user data (FND-13): keep it out of backups.
+        var root = rootDirectory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try root.setResourceValues(values)
     }
 
     func readyURL(sha256: String, expectedLength: UInt64) async throws -> URL? {

@@ -11,6 +11,17 @@ struct TourAssetTransferServiceTests {
         case streamEnded
     }
 
+    @Test("Guest asset cache is excluded from device backup")
+    func guestCacheIsExcludedFromBackup() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "backup-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer {
+            do { try FileManager.default.removeItem(at: root) } catch { Issue.record(error) }
+        }
+        _ = try FileTourAssetCache(rootDirectory: root)
+        let fresh = URL(fileURLWithPath: root.path, isDirectory: true)
+        #expect(try fresh.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+    }
+
     @Test("Guide disk work is serial, deduplicated, member-bounded, and fairly paced")
     @MainActor
     func guideQueueIsSerialBoundedAndFair() async throws {

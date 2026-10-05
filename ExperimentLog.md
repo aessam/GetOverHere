@@ -2050,3 +2050,25 @@ Swift core 86 pass. iOS `NearbySocketBridgeTests` + `ChannelServiceLifecycleTest
 gate removed; Aware branch policy check removed): both selected tests failed on the
 intended expectations (`["10.0.0.1","127.0.0.1"]`; `.wifiAware`). A first iOS
 mutant run used selectors without `()` and ran zero tests; it was rejected, not counted.
+
+## 2026-10-04 — Phase 4: PDF as page slides (ADR-072)
+
+Fixtures: `swift scripts/make_pdf_fixtures.swift` → `three-pages.pdf` (2,898 B; red portrait,
+green landscape, blue portrait) and `locked.pdf` (2,779 B, `/Encrypt`), byte-identical in
+`iOS/GetOverHereTests/Fixtures/` and `Android/app/src/androidTest/assets/`.
+
+iOS (simulator `iPhone 17` 5D72BABA…, iOS 27.0): `PDFSlideRendererTests` 3/3 pass: sizes
+1236×1600 / 1600×1236 / 1236×1600, center colors per page, identical bytes across two
+renders, locked/truncated/garbage/61-page rejections. `pdfImportBecomesOrderedDeck` passes:
+guide deck SHA-256 order equals page order.
+Android (emulator `GetOverHere_API_36`, Android 16, `ANDROID_SERIAL=emulator-5554`):
+`:app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=…PdfSlideRendererTest`
+3/3 pass with the same size/color/determinism/rejection checks; staged temp PDFs are deleted.
+`TourNavigationTest` 3/3 pass, now asserting the guide's enabled `importPDF` control.
+A first assertion used `performScrollTo` on a non-scrolling layout and failed; replaced with `assertExists`.
+
+Full gate `GOH_IOS_DESTINATION='platform=iOS Simulator,id=5D72BABA-…' bash scripts/verify_tour_session.sh`:
+"Tour session verification passed"; Swift core 86; iOS xcresult
+`Test-GetOverHere-2026.10.04_18-36-28--0700` Passed 213 / 209 / 0 failed / 4 skipped.
+Not verified: system document-picker UI automation; audio/asset coexistence on Bluetooth (moved to Phase 5);
+guest cache size cap/pruning (FND-13 remainder, open). iOS guest cache now excluded from backup (tested).

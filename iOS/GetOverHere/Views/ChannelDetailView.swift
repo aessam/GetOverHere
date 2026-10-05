@@ -15,6 +15,8 @@ struct ChannelDetailView: View {
         nonmutating set { coordinator.selectedTourFeature = newValue }
     }
     @State private var isMapImporterPresented = false
+    @State private var isPDFImporterPresented = false
+    @State private var isRenderingPDF = false
     @State private var pendingTargetCoordinate: CLLocationCoordinate2D?
     @State private var targetLabelDraft = ""
     @State private var roomCodeDraft = ""
@@ -278,15 +280,43 @@ struct ChannelDetailView: View {
     private var channelIdentity: String? { service.activeChannelID }
 
     private var photoPicker: some View {
-        PhotosPicker(
-            selection: $selectedPhotos,
-            maxSelectionCount: 50,
-            matching: .images
-        ) {
-            Label("Add Slides", systemImage: "photo.badge.plus")
+        HStack {
+            PhotosPicker(
+                selection: $selectedPhotos,
+                maxSelectionCount: 50,
+                matching: .images
+            ) {
+                Label("Add Slides", systemImage: "photo.badge.plus")
+            }
+            .buttonStyle(.bordered)
+            Button {
+                isPDFImporterPresented = true
+            } label: {
+                Label(isRenderingPDF ? "Preparing PDF" : "Import PDF", systemImage: "doc.richtext")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("importPDF")
+            // Attached to this button: a second importer on the same view as the map importer is ignored.
+            .fileImporter(isPresented: $isPDFImporterPresented, allowedContentTypes: [.pdf],
+                          allowsMultipleSelection: false) { result in
+                Task { await importPDF(result) }
+            }
         }
-        .buttonStyle(.bordered)
-        .disabled(service.isImportingSlides)
+        .disabled(service.isImportingSlides || isRenderingPDF)
+    }
+
+    @MainActor
+    private func importPDF(_ result: Result<[URL], Error>) async {
+        isRenderingPDF = true
+        defer { isRenderingPDF = false }
+        do {
+            guard let url = try result.get().first else { return }
+            let slides = try await PDFSlideRenderer.render(try await PDFSlideRenderer.readDocument(at: url))
+            photoImportError = nil
+            await service.importSlides(slides)
+        } catch {
+            photoImportError = error.localizedDescription
+        }
     }
 
     private func guestView(_ channel: Channel) -> some View {
