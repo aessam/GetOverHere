@@ -75,7 +75,14 @@ public struct EncodedAudioJitterBuffer: Sendable {
     private var frames: [UInt64: BufferedFrame] = [:]
     private var expectedSequence: UInt64?
     private var hasStarted = false
-    private var minimumClockOffsetNanoseconds: Int64?
+    // Windowed minimum clock offset (FND-2): the baseline follows sender/receiver clock drift.
+    // An all-tour minimum expired every frame once a fast guest clock drifted past the lifetime.
+    private var currentWindowMinimumOffset: Int64?
+    private var previousWindowMinimumOffset: Int64?
+    private var offsetWindowStartNanoseconds: UInt64 = 0
+
+    /// Each window spans this much receiver time; the baseline covers the last one to two windows.
+    public static let clockOffsetWindowNanoseconds: UInt64 = 10_000_000_000
 
     public init(targetFrameCount: Int, maximumFrameCount: Int) throws {
         guard targetFrameCount > 0, maximumFrameCount >= targetFrameCount else {
@@ -146,7 +153,30 @@ public struct EncodedAudioJitterBuffer: Sendable {
         frames.removeAll(keepingCapacity: true)
         expectedSequence = nil
         hasStarted = false
-        minimumClockOffsetNanoseconds = nil
+        currentWindowMinimumOffset = nil
+        previousWindowMinimumOffset = nil
+        offsetWindowStartNanoseconds = 0
+    }
+
+    private mutating func clockOffsetBaseline(observedOffset: Int64, receivedAtNanoseconds: UInt64) -> Int64 {
+        let window = Self.clockOffsetWindowNanoseconds
+        // Receiver time before the window start never rotates, matching Kotlin's signed elapsed time.
+        let elapsed: UInt64? = receivedAtNanoseconds >= offsetWindowStartNanoseconds
+            ? receivedAtNanoseconds - offsetWindowStartNanoseconds : nil
+        if let current = currentWindowMinimumOffset, let elapsed, elapsed >= window {
+            // A window older than the one just closed is stale after a long silence.
+            previousWindowMinimumOffset = elapsed < 2 * window ? current : nil
+            currentWindowMinimumOffset = observedOffset
+            offsetWindowStartNanoseconds = receivedAtNanoseconds
+        } else if let current = currentWindowMinimumOffset {
+            currentWindowMinimumOffset = min(current, observedOffset)
+        } else {
+            previousWindowMinimumOffset = nil
+            currentWindowMinimumOffset = observedOffset
+            offsetWindowStartNanoseconds = receivedAtNanoseconds
+        }
+        let windowMinimum = currentWindowMinimumOffset ?? observedOffset
+        return previousWindowMinimumOffset.map { min($0, windowMinimum) } ?? windowMinimum
     }
 
     private mutating func discardExpiredFrames(nowNanoseconds: UInt64) {
@@ -154,7 +184,7 @@ public struct EncodedAudioJitterBuffer: Sendable {
     }
 
     /// Maps the sender's monotonic capture timeline to receiver-local time.
-    /// Delay above the minimum observed clock offset consumes frame lifetime.
+    /// Delay above the recent minimum clock offset consumes frame lifetime.
     private mutating func localDeadline(
         for payload: EncodedAudioFramePayload,
         receivedAtNanoseconds: UInt64
@@ -166,8 +196,7 @@ public struct EncodedAudioJitterBuffer: Sendable {
         let (observedOffset, offsetOverflow) = received.subtractingReportingOverflow(captured)
         guard !offsetOverflow else { return nil }
 
-        let baseline = min(minimumClockOffsetNanoseconds ?? observedOffset, observedOffset)
-        minimumClockOffsetNanoseconds = baseline
+        let baseline = clockOffsetBaseline(observedOffset: observedOffset, receivedAtNanoseconds: receivedAtNanoseconds)
         let (excessDelay, delayOverflow) = observedOffset.subtractingReportingOverflow(baseline)
         guard !delayOverflow, excessDelay >= 0 else { return nil }
 

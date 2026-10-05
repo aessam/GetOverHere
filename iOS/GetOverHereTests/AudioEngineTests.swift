@@ -15,6 +15,35 @@ struct AudioEngineTests {
         #expect(capture.droppedBufferCount == UInt64(bufferCount - 1))
     }
 
+    @Test("Playback backlog flushes instead of growing latency after a stall")
+    func playbackBacklogIsBounded() {
+        let backlog = PlaybackBacklog()
+        let limit = PlaybackBacklog.maximumQueuedBuffers
+        // Steady state: each buffer completes before the next arrives.
+        for _ in 0..<100 {
+            guard case let .schedule(generation) = backlog.admit() else {
+                Issue.record("Steady playout must not flush"); return
+            }
+            backlog.completed(generation: generation)
+        }
+        #expect(backlog.queuedBufferCount == 0)
+        // Stall: a burst of 3x the limit arrives with no completions.
+        var admissions: [PlaybackBacklog.Admission] = []
+        for _ in 0..<(3 * limit) { admissions.append(backlog.admit()) }
+        let flushes = admissions.filter { if case .flushThenSchedule = $0 { true } else { false } }
+        #expect(flushes.count == 2)
+        #expect(backlog.flushCount == 2)
+        #expect(backlog.queuedBufferCount <= limit)
+        // Completions from flushed generations do not undercount the live queue.
+        let queued = backlog.queuedBufferCount
+        if case let .schedule(stale) = admissions[0] { backlog.completed(generation: stale) }
+        #expect(backlog.queuedBufferCount == queued)
+        backlog.reset()
+        #expect(backlog.queuedBufferCount == 0)
+        let afterReset = backlog.admit()
+        #expect({ if case .schedule = afterReset { true } else { false } }())
+    }
+
     @Test("Finished capture cannot send late buffers into a replacement stream")
     func captureStreamReplacementIsIndependent() async {
         let old = AudioCaptureStream()

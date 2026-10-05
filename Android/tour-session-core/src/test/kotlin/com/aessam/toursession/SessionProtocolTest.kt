@@ -482,6 +482,39 @@ class SessionProtocolTest {
         )
     }
 
+    /** Offers one 20 ms frame per step and counts frames that failed to play after warm-up. */
+    private fun silentFramesUnderClockSkew(ppm: Double, frameCount: Int, extraDelayAfter: Int = Int.MAX_VALUE, extraDelayNanoseconds: Long = 0): List<Int> {
+        val configuration = TourSessionFixtures.encodedAudioFixture().configuration
+        val buffer = EncodedAudioJitterBuffer(targetFrameCount = 3, maximumFrameCount = 13)
+        val silent = mutableListOf<Int>()
+        for (step in 0 until frameCount) {
+            val captured = 1_000_000_000L + step * 20_000_000L
+            val delay = 5_000_000L + if (step >= extraDelayAfter) extraDelayNanoseconds else 0L
+            val guestNow = ((captured + delay) * (1.0 + ppm / 1_000_000.0)).toLong()
+            val payload = EncodedAudioFramePayload(configuration, captured, captured + 500_000_000L, byteArrayOf(1))
+            buffer.offer(SequencedEncodedAudioFrame(step.toLong(), payload), nowNanoseconds = guestNow)
+            if (buffer.popForPlayout(nowNanoseconds = guestNow) !is EncodedAudioPlayoutDecision.Frame && step > 100) silent += step
+        }
+        return silent
+    }
+
+    @Test
+    fun jitterBaselineFollowsClockDriftForTwoHours() {
+        val twoHours = 2 * 3600 * 50
+        for (ppm in listOf(200.0, 100.0, -100.0)) {
+            assertEquals("ppm=$ppm", emptyList<Int>(), silentFramesUnderClockSkew(ppm, twoHours))
+        }
+    }
+
+    @Test
+    fun jitterBaselineReanchorsAfterSustainedDelayStep() {
+        // A sustained 600 ms extra path delay exceeds the 500 ms lifetime. Frames expire until
+        // the windowed baseline catches up (at most two 10 s windows), then playout resumes.
+        val silent = silentFramesUnderClockSkew(0.0, 3_000, extraDelayAfter = 1_000, extraDelayNanoseconds = 600_000_000L)
+        assertTrue(silent.isNotEmpty())
+        assertTrue("last silent=${silent.last()}", silent.last() < 1_000 + 2 * 500 + 50)
+    }
+
     @Test
     fun clockedPlayoutConcealsGapsAndResyncs() {
         val payload = EncodedAudioFramePayload(

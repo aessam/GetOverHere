@@ -440,6 +440,45 @@ struct SessionProtocolTests {
         #expect(skewed.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 11_000) == .expired)
     }
 
+    /// Offers one 20 ms frame per step and returns the steps that failed to play after warm-up.
+    private func silentFramesUnderClockSkew(
+        ppm: Double, frameCount: Int, extraDelayAfter: Int = .max, extraDelayNanoseconds: UInt64 = 0
+    ) throws -> [Int] {
+        let configuration = try TourSessionFixtures.encodedAudioFixture().configuration
+        var buffer = try EncodedAudioJitterBuffer(targetFrameCount: 3, maximumFrameCount: 13)
+        var silent: [Int] = []
+        for step in 0..<frameCount {
+            let captured = 1_000_000_000 + UInt64(step) * 20_000_000
+            let delay = 5_000_000 + (step >= extraDelayAfter ? extraDelayNanoseconds : 0)
+            let guestNow = UInt64(Double(captured + delay) * (1 + ppm / 1_000_000))
+            let payload = try EncodedAudioFramePayload(
+                configuration: configuration,
+                capturedAtNanoseconds: captured,
+                expiresAtNanoseconds: captured + 500_000_000,
+                encodedBytes: Data([1])
+            )
+            _ = buffer.offer(.init(sequence: UInt64(step), payload: payload), nowNanoseconds: guestNow)
+            if case .frame = buffer.popForPlayout(nowNanoseconds: guestNow) {} else if step > 100 { silent.append(step) }
+        }
+        return silent
+    }
+
+    @Test("Jitter baseline follows guest clock drift for two hours", arguments: [200.0, 100.0, -100.0])
+    func jitterBaselineFollowsClockDrift(ppm: Double) throws {
+        #expect(try silentFramesUnderClockSkew(ppm: ppm, frameCount: 2 * 3600 * 50) == [])
+    }
+
+    @Test("Jitter baseline re-anchors after a sustained delay step")
+    func jitterBaselineReanchorsAfterDelayStep() throws {
+        // A sustained 600 ms extra path delay exceeds the 500 ms lifetime. Frames expire until
+        // the windowed baseline catches up (at most two 10 s windows), then playout resumes.
+        let silent = try silentFramesUnderClockSkew(
+            ppm: 0, frameCount: 3_000, extraDelayAfter: 1_000, extraDelayNanoseconds: 600_000_000
+        )
+        #expect(!silent.isEmpty)
+        #expect((silent.last ?? .max) < 1_000 + 2 * 500 + 50)
+    }
+
     @Test("Clocked playout conceals a single gap and resyncs to the oldest frame")
     func clockedPlayoutConcealsGapsAndResyncs() throws {
         let payload = try EncodedAudioFramePayload(

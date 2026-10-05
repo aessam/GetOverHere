@@ -67,7 +67,16 @@ class EncodedAudioJitterBuffer(
     private val frames = sortedMapOf<Long, BufferedFrame>()
     private var expectedSequence: Long? = null
     private var hasStarted = false
-    private var minimumClockOffsetNanoseconds: Long? = null
+    // Windowed minimum clock offset (FND-2): the baseline follows sender/receiver clock drift.
+    // An all-tour minimum expired every frame once a fast guest clock drifted past the lifetime.
+    private var currentWindowMinimumOffset: Long? = null
+    private var previousWindowMinimumOffset: Long? = null
+    private var offsetWindowStartNanoseconds = 0L
+
+    companion object {
+        /** Each window spans this much receiver time; the baseline covers the last one to two windows. */
+        const val CLOCK_OFFSET_WINDOW_NANOSECONDS = 10_000_000_000L
+    }
 
     init {
         if (targetFrameCount <= 0 || maximumFrameCount < targetFrameCount) {
@@ -134,12 +143,29 @@ class EncodedAudioJitterBuffer(
         frames.clear()
         expectedSequence = null
         hasStarted = false
-        minimumClockOffsetNanoseconds = null
+        currentWindowMinimumOffset = null
+        previousWindowMinimumOffset = null
+        offsetWindowStartNanoseconds = 0L
+    }
+
+    private fun clockOffsetBaseline(observedOffset: Long, receivedAtNanoseconds: Long): Long {
+        val current = currentWindowMinimumOffset
+        val elapsed = receivedAtNanoseconds - offsetWindowStartNanoseconds
+        if (current == null || elapsed >= CLOCK_OFFSET_WINDOW_NANOSECONDS) {
+            // A window older than the one just closed is stale after a long silence.
+            previousWindowMinimumOffset = if (current != null && elapsed < 2 * CLOCK_OFFSET_WINDOW_NANOSECONDS) current else null
+            currentWindowMinimumOffset = observedOffset
+            offsetWindowStartNanoseconds = receivedAtNanoseconds
+        } else if (observedOffset < current) {
+            currentWindowMinimumOffset = observedOffset
+        }
+        val windowMinimum = currentWindowMinimumOffset ?: observedOffset
+        return previousWindowMinimumOffset?.let { minOf(it, windowMinimum) } ?: windowMinimum
     }
 
     /**
      * Maps the sender's monotonic capture timeline to receiver-local time.
-     * Delay above the minimum observed clock offset consumes frame lifetime.
+     * Delay above the recent minimum clock offset consumes frame lifetime.
      */
     private fun localDeadline(payload: EncodedAudioFramePayload, receivedAtNanoseconds: Long): Long? {
         if (receivedAtNanoseconds < 0L) return null
@@ -148,8 +174,7 @@ class EncodedAudioJitterBuffer(
         } catch (_: ArithmeticException) {
             return null
         }
-        val baseline = minOf(minimumClockOffsetNanoseconds ?: observedOffset, observedOffset)
-        minimumClockOffsetNanoseconds = baseline
+        val baseline = clockOffsetBaseline(observedOffset, receivedAtNanoseconds)
         val excessDelay = try {
             Math.subtractExact(observedOffset, baseline)
         } catch (_: ArithmeticException) {

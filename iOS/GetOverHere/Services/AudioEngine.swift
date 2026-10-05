@@ -36,6 +36,56 @@ enum AudioEngineError: LocalizedError {
     }
 }
 
+/// Bounds renderer latency (FND-10). Frames delayed by a main-thread stall arrive together; past the
+/// limit the queued audio is flushed instead of permanently delaying live speech by the stall length.
+nonisolated final class PlaybackBacklog: Sendable {
+    enum Admission: Equatable {
+        case schedule(generation: UInt64)
+        case flushThenSchedule(generation: UInt64)
+    }
+
+    /// About 200 ms of 20 ms frames.
+    static let maximumQueuedBuffers = 10
+
+    private struct State {
+        var generation: UInt64 = 0
+        var queued = 0
+        var flushes: UInt64 = 0
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    var queuedBufferCount: Int { state.withLock { $0.queued } }
+    var flushCount: UInt64 { state.withLock { $0.flushes } }
+
+    func admit() -> Admission {
+        state.withLock { state in
+            if state.queued >= Self.maximumQueuedBuffers {
+                state.generation &+= 1
+                state.queued = 1
+                state.flushes &+= 1
+                return .flushThenSchedule(generation: state.generation)
+            }
+            state.queued += 1
+            return .schedule(generation: state.generation)
+        }
+    }
+
+    /// Completions from flushed or stopped generations are ignored.
+    func completed(generation: UInt64) {
+        state.withLock { state in
+            if state.generation == generation, state.queued > 0 { state.queued -= 1 }
+        }
+    }
+
+    func reset() {
+        state.withLock { state in
+            state.generation &+= 1
+            state.queued = 0
+        }
+    }
+}
+
 /// Test seam (DSCN-23): the production engine needs real audio hardware, and simulator capture
 /// throws by design. No behavior change.
 protocol AudioEngineInterface: AnyObject {
@@ -80,6 +130,7 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var ownsAudioSession = false
+    private let backlog = PlaybackBacklog()
 
     var configurationChangeSource: AnyObject? { engine }
 
@@ -118,6 +169,7 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
     func pause() {
         // Stop (rather than pause) the player to discard queued speech during an interruption.
         player?.stop()
+        backlog.reset()
         engine?.pause()
     }
 
@@ -127,6 +179,7 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
         }
         try updateOutput(output)
         player.stop()
+        backlog.reset()
         engine.stop()
         engine.connect(player, to: engine.mainMixerNode, format: AudioEngine.wireFormat)
         try engine.start()
@@ -135,12 +188,23 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
 
     func enqueue(_ buffer: AVAudioPCMBuffer) -> Bool {
         guard let engine, engine.isRunning, let player, player.isPlaying else { return false }
-        player.scheduleBuffer(buffer)
+        let generation: UInt64
+        switch backlog.admit() {
+        case let .schedule(current):
+            generation = current
+        case let .flushThenSchedule(current):
+            generation = current
+            player.stop()
+            player.play()
+            Logger.audio.warning("Playback backlog exceeded \(PlaybackBacklog.maximumQueuedBuffers) buffers; flushed (\(self.backlog.flushCount) total)")
+        }
+        player.scheduleBuffer(buffer) { [backlog] in backlog.completed(generation: generation) }
         return true
     }
 
     func stop() {
         player?.stop()
+        backlog.reset()
         engine?.stop()
         player = nil
         engine = nil
