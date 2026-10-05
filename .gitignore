@@ -16,6 +16,10 @@ DerivedData/
 # Android local build cache
 Android/.gradle/
 Android/local.properties
+# Release signing secrets
+Android/keystore.properties
+*.jks
+*.keystore
 
 # The wrapper is required by clean checkouts, even when a global rule ignores JARs.
 !Android/gradle/wrapper/gradle-wrapper.jar

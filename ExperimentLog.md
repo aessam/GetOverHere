@@ -2072,3 +2072,20 @@ Full gate `GOH_IOS_DESTINATION='platform=iOS Simulator,id=5D72BABA-…' bash scr
 `Test-GetOverHere-2026.10.04_18-36-28--0700` Passed 213 / 209 / 0 failed / 4 skipped.
 Not verified: system document-picker UI automation; audio/asset coexistence on Bluetooth (moved to Phase 5);
 guest cache size cap/pruning (FND-13 remainder, open). iOS guest cache now excluded from backup (tested).
+
+## 2026-10-04 — Beta distribution readiness (ACT-1, ACT-2)
+
+FND-12: `PrivacyInfo.xcprivacy` now declares System Boot Time `35F9.1`
+(`ProcessInfo.systemUptime`, `UDPAudioPlane.swift:1084`) and File Timestamp `C617.1`
+(`attributesOfItem` size reads of app-container files, `TourAssetCache.swift:169`,
+`TourAssetTransferService.swift:756`). `plutil -lint` OK.
+`xcodebuild -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`:
+exit 0; built app's `PrivacyInfo.xcprivacy` contains both categories; `strings` finds no
+`DebugAppControl`/`debug-keep-awake`. Signed archive/upload not attempted (account action).
+
+Android release signing reads git-ignored `Android/keystore.properties`. Without it,
+`:app:assembleRelease` fails: "Release signing is not configured: create …/keystore.properties".
+`:app:assembleDebug` unaffected. With a throwaway 1-day RSA key in the session scratchpad
+(not committed; properties file moved out of the repo after the build): `app-release.apk`
+62,369,851 B, `apksigner verify` V2 signer CN=Throwaway, not debuggable; app classes in
+classes2.dex (`ChannelService` 45, `PdfSlideRenderer` 7 string hits), `GatewayDebugControl` 0 in all dex files.
