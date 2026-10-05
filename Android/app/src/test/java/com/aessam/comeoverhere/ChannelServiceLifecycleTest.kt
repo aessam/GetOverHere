@@ -132,6 +132,48 @@ class ChannelServiceLifecycleTest {
         } finally { h.close() }
     }
 
+    @Test fun bluetoothOnlyNeverAdmitsOrReconnectsOverAdvertisedLAN() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission)
+        try {
+            h.service.setRoutePolicy(com.aessam.toursession.AllowedTransportPolicy.BLUETOOTH_ONLY)
+            h.controlPlane.nearbyAvailable = true
+            val room = h.discoverAndJoin("10.0.0.1")
+            h.connectGuest()
+            assertEquals(listOf("127.0.0.1"), admission.calls.map { it.host })
+            assertEquals(com.aessam.toursession.SessionTransportRoute.BLUETOOTH, h.service.activeTransportRoute.value)
+            val starts = h.control.startGuestCalls
+            h.controlPlane.emit(announce(room, "10.0.0.99"))
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            awaitCondition("bluetooth reconnect") { h.scheduler.runCurrent(); h.control.startGuestCalls > starts }
+            assertEquals(listOf("127.0.0.1"), admission.calls.map { it.host })
+            assertTrue(h.control.startGuestHostIPs.all { it == "127.0.0.1" })
+            assertEquals("127.0.0.1", h.asset.hostIP)
+            assertEquals(com.aessam.toursession.SessionTransportRoute.BLUETOOTH, h.service.activeTransportRoute.value)
+        } finally { h.close() }
+    }
+
+    @Test fun bluetoothOnlyCannotJoinLANOnlyOrAwareRooms() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission)
+        try {
+            h.service.setRoutePolicy(com.aessam.toursession.AllowedTransportPolicy.BLUETOOTH_ONLY)
+            h.service.start()
+            val lanOnly = Channel(UUID.randomUUID().toString(), "Tour", 0.0, UUID.randomUUID().toString(),
+                audioHostIP = "10.0.0.1", roomAdmissionVersion = 2)
+            assertEquals(false, h.service.canJoin(lanOnly))
+            h.controlPlane.nearbyAvailable = true
+            h.controlPlane.nearbyTransport = com.aessam.toursession.SessionTransportRoute.WIFI_AWARE
+            assertEquals(false, h.service.canJoin(lanOnly))
+            h.service.joinChannel(lanOnly, TOUR_CODE)
+            awaitCondition("forbidden routes fail") { h.service.connectionState.value == SessionConnectionState.FAILED }
+            assertTrue(admission.calls.isEmpty())
+            assertEquals(0, h.controlPlane.nearbyPrepareCalls)
+            assertEquals(0, h.audioPlane.startListeningCalls)
+        } finally { h.close() }
+    }
+
     @Test fun terminalLANAdmissionNeverFallsThroughToNearby() {
         listOf(com.aessam.toursession.RoomAdmissionException("Wrong code"),
             com.aessam.toursession.RoomAdmissionV2Exception(com.aessam.toursession.RoomAdmissionV2Exception.Reason.WRONG_GUIDE),

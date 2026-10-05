@@ -213,6 +213,24 @@ struct ChannelServiceLifecycleTests {
         #expect(h.audioPlane.startListeningCalls == 1)
     }
 
+    @Test("Bluetooth-only never admits over an advertised LAN host or counts a LAN-only room as joinable")
+    @MainActor
+    func bluetoothOnlySkipsAdvertisedLAN() async throws {
+        let admission = RouteAdmission()
+        let h = try Harness(admission: admission)
+        defer { h.service.terminate(); h.close() }
+        h.service.routePolicy = .bluetoothOnly
+        let lanOnly = Channel(id: UUID().uuidString, name: "Room", createdAt: .now,
+            createdBy: UUID().uuidString, audioHostIP: "10.0.0.1", roomAdmissionVersion: 2)
+        #expect(!h.service.canJoin(lanOnly))
+        h.controlPlane.nearbyAvailable = true
+        _ = try await discoverAndJoin(h)
+        #expect(admission.calls.map(\.host) == ["127.0.0.1"])
+        #expect(h.control.startGuestHostIPs == ["127.0.0.1"])
+        #expect(h.asset.hostIP == "127.0.0.1")
+        #expect(h.service.guestRoute?.transport == .bluetooth)
+    }
+
     @Test("Admission rejection never retries the code on another route", arguments: 0..<6)
     @MainActor
     func terminalLANAdmissionNeverFallsBack(kind: Int) async throws {

@@ -48,6 +48,11 @@ sealed interface OfflineMapStatus {
 interface ChannelServiceProtocol {
     val strictAwareOnly: StateFlow<Boolean> get() = MutableStateFlow(false)
     fun setStrictAwareOnly(value: Boolean) { check(!value) { "Strict routing is unsupported" } }
+    val routePolicy: StateFlow<com.aessam.toursession.AllowedTransportPolicy>
+        get() = MutableStateFlow(com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC)
+    fun setRoutePolicy(policy: com.aessam.toursession.AllowedTransportPolicy) {
+        check(policy == com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC) { "Strict routing is unsupported" }
+    }
     val awareSettings: com.aessam.comeoverhere.core.NearbyAwareSettings? get() = null
     fun canJoin(channel: Channel): Boolean = channel.audioHostIP != null || channel.createdBy == localPeerID
     val bluetoothDiscoveryEnabled: StateFlow<Boolean>
@@ -135,14 +140,22 @@ class ChannelService(
     var companionModeActive: () -> Boolean = { false }
     private val mutableStrictAwareOnly = MutableStateFlow(false)
     override val strictAwareOnly = mutableStrictAwareOnly.asStateFlow()
-    override fun setStrictAwareOnly(value: Boolean) {
+    override fun setStrictAwareOnly(value: Boolean) = setRoutePolicy(
+        if (value) com.aessam.toursession.AllowedTransportPolicy.ANDROID_AWARE_ONLY
+        else com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
+    )
+    private val mutableRoutePolicy = MutableStateFlow(com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC)
+    override val routePolicy = mutableRoutePolicy.asStateFlow()
+    /** Guest route restriction. A restricted policy never admits, joins or reconnects over a disallowed route. */
+    override fun setRoutePolicy(policy: com.aessam.toursession.AllowedTransportPolicy) {
         check(activeChannelID.value == null) { "Leave the tour before changing transport policy" }
         val owner = requireNotNull(coordinator.controlPlane as? NearbyRouteControl)
-        owner.allowedTransportPolicy = if (value) com.aessam.toursession.AllowedTransportPolicy.ANDROID_AWARE_ONLY
-            else com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
-        mutableStrictAwareOnly.value = value
-        if (value) owner.awareSettings?.setEnabled(true)
+        owner.allowedTransportPolicy = policy
+        mutableRoutePolicy.value = policy
+        mutableStrictAwareOnly.value = policy == com.aessam.toursession.AllowedTransportPolicy.ANDROID_AWARE_ONLY
+        if (mutableStrictAwareOnly.value) owner.awareSettings?.setEnabled(true)
     }
+    private val lanRoutePermitted get() = routePolicy.value.permits(SessionTransportRoute.LOCAL_LAN)
     private var gatewayGuidePublicKey: ByteArray? = null
     fun captureDiagnostics(): Map<String, Any> = coordinator.captureDiagnostics()
     fun gatewayGuideDescriptor(): com.aessam.toursession.GatewayRoomDescriptor? {
@@ -160,7 +173,7 @@ class ChannelService(
     private val mutableActiveTransportRoute = MutableStateFlow<SessionTransportRoute?>(null)
     override val activeTransportRoute = mutableActiveTransportRoute.asStateFlow()
     override fun canJoin(channel: Channel): Boolean {
-        if (channel.audioHostIP != null || channel.createdBy == localPeerID) return true
+        if ((channel.audioHostIP != null && lanRoutePermitted) || channel.createdBy == localPeerID) return true
         val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return false }
         return (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.canConnectNearby(room) == true
     }
@@ -604,7 +617,7 @@ class ChannelService(
                         roomAdmission.join(host, sessionID, expectedGuideID, tourCode.ifEmpty { null })
                     }.also { requireCurrentAttempt() }
                 }
-                val lanHost = channel.audioHostIP.takeUnless { strictAwareOnly.value }
+                val lanHost = channel.audioHostIP.takeIf { lanRoutePermitted }
                 val admitted = if (lanHost == null) admitAt(prepareNearby()) else {
                     try { admitAt(lanHost) }
                     catch (error: RoomAdmissionTransportError) {
@@ -1219,9 +1232,10 @@ class ChannelService(
             return
         }
         val route = resolvedGuestRoute?.transport ?: SessionTransportRoute.LOCAL_LAN
-        if (strictAwareOnly.value && route != SessionTransportRoute.WIFI_AWARE) {
+        if (!routePolicy.value.permits(route)) {
             _connectionState.value = SessionConnectionState.FAILED
-            _tourFeatureError.value = "Wi-Fi Aware-only mode forbids LAN or Bluetooth fallback."
+            _tourFeatureError.value = if (strictAwareOnly.value) "Wi-Fi Aware-only mode forbids LAN or Bluetooth fallback."
+                else "The selected route policy forbids ${route.name.lowercase().replace('_', ' ')}."
             return
         }
         if (route in attemptedGuestRoutes) {
@@ -1430,7 +1444,7 @@ class ChannelService(
 
     private suspend fun refreshGuestRouteForReconnect(channel: Channel): Boolean {
         val nearby = coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl
-            ?: return !guestUsesNearbyTransport && channel.audioHostIP != null
+            ?: return !guestUsesNearbyTransport && channel.audioHostIP != null && lanRoutePermitted
         val room = try { UUID.fromString(channel.id) } catch (error: IllegalArgumentException) { return false }
         // Discovery cannot replace the route which actually admitted this session. In particular,
         // a reflected or stale LAN address does not make an established nearby path unusable.
@@ -1459,7 +1473,7 @@ class ChannelService(
                 return false
             }
         }
-        return resolvedGuestRoute != null || (!guestUsesNearbyTransport && channel.audioHostIP != null)
+        return resolvedGuestRoute != null || (!guestUsesNearbyTransport && channel.audioHostIP != null && lanRoutePermitted)
     }
 
     /**

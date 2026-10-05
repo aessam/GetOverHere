@@ -264,6 +264,7 @@ internal class GatewayDebugControl(
             "gateway-connect" -> gateway.connectCompanion().join()
             "gateway-stop" -> gateway.stop()
             "strict-aware" -> { idle(); channels.setStrictAwareOnly(boolean("enabled")) }
+            "route-policy" -> { idle(); channels.setRoutePolicy(ROUTE_POLICIES[argument("policy")] ?: error("Invalid route policy")) }
             "discover" -> { idle(); channels.setBluetoothDiscoveryEnabled(true); channels.awareSettings?.setEnabled(true) }
             "create" -> {
                 idle(); check(gateway.status.value.role != GatewayRole.COMPANION)
@@ -306,6 +307,8 @@ internal class GatewayDebugControl(
             .put("audioCapture", JSONObject(channel.captureDiagnostics()))
             .put("locked", channel.isRoomLocked.value).put("error", channel.audioRuntimeError.value ?: channel.tourFeatureError.value ?: "")
             .put("routes", JSONArray()).put("routeEvidence", "unqualified")
+            .put("routePolicy", ROUTE_POLICIES.entries.firstOrNull { it.value == channel.routePolicy.value }?.key ?: "custom")
+            .put("activeRoute", channel.activeTransportRoute.value?.name?.lowercase() ?: "none")
             .put("wiredRoute", wired?.let { route -> JSONObject().put("interface", route.interfaceName)
                 .put("localAddress", route.localAddress).put("remoteAddress", route.remoteAddress)
                 .put("localPort", route.localPort).put("remotePort", route.remotePort)
@@ -330,11 +333,16 @@ internal class GatewayDebugControl(
         private const val TAG = "GatewayDebugControl"
         private const val MAX_FRAME = 32_768
         private const val LIFETIME_MS = 600_000L
+        private val ROUTE_POLICIES = mapOf(
+            "automatic" to com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC,
+            "aware" to com.aessam.toursession.AllowedTransportPolicy.ANDROID_AWARE_ONLY,
+            "bluetooth" to com.aessam.toursession.AllowedTransportPolicy.BLUETOOTH_ONLY,
+        )
         private val ARGUMENTS = mapOf("status" to emptySet(), "gateway-status" to emptySet(),
             "scenario-start" to setOf("seconds", "runID"), "scenario-status" to emptySet(), "scenario-cancel" to emptySet(),
             "gateway-begin" to setOf("interface"), "gateway-pair" to setOf("code", "interface"),
             "gateway-confirm" to emptySet(), "gateway-connect" to emptySet(), "gateway-stop" to emptySet(),
-            "strict-aware" to setOf("enabled"),
+            "strict-aware" to setOf("enabled"), "route-policy" to setOf("policy"),
             "discover" to emptySet(), "create" to setOf("name"), "join" to setOf("id", "code"), "leave" to emptySet(),
             "room-lock" to setOf("locked", "code"), "next-slide" to emptySet(), "previous-slide" to emptySet(),
             "retry-audio" to emptySet(), "restart-microphone" to emptySet(), "output" to setOf("mode"))

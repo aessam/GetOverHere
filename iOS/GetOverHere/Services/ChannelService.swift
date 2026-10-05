@@ -87,9 +87,15 @@ final class ChannelService {
 
     private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery() } }
     var applePeerDiscoveryEnabled = false { didSet { updateApplePeerDiscovery() } }
-    var strictApplePeer = false {
-        didSet { (coordinator.controlPlane as? LocalControlPlane)?.strictApplePeer = strictApplePeer }
+    /// Guest route restriction (WirelessMegaphonePlan Phase 2). Restricted policies never use LAN.
+    var routePolicy: AllowedTransportPolicy = .standard {
+        didSet { (coordinator.controlPlane as? LocalControlPlane)?.routePolicy = routePolicy }
     }
+    var strictApplePeer: Bool {
+        get { routePolicy == .gatewayIOS }
+        set { routePolicy = newValue ? .gatewayIOS : .standard }
+    }
+    private var lanRoutePermitted: Bool { routePolicy.allows(.localLAN) }
     var companionModeActive = false
     var onGuideSessionEnding: (() -> Void)?
     private func updateApplePeerDiscovery() {
@@ -121,7 +127,7 @@ final class ChannelService {
 
     func canJoin(_ channel: Channel) -> Bool {
         if companionModeActive { return false }
-        if strictApplePeer, channel.createdBy != localPeer.id {
+        if !lanRoutePermitted, channel.createdBy != localPeer.id {
             guard let room = UUID(uuidString: channel.id) else { return false }
             return (coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: room) == true
         }
@@ -510,7 +516,7 @@ final class ChannelService {
         hostIP: String, route: NearbyGuestRoute?, credential: SessionCredential, identity: AdmittedGuideIdentity
     ) {
         let nearby = coordinator.controlPlane as? any NearbyRouteControl
-        if let lanHost = channel.audioHostIP, !strictApplePeer {
+        if let lanHost = channel.audioHostIP, lanRoutePermitted {
             if activeChannelID == nil { joinStage = .admitting }
             do {
                 let admitted = try await Self.admit(roomAdmission, host: lanHost, sessionID: sessionID,
@@ -530,6 +536,7 @@ final class ChannelService {
         let route = try await nearby.prepareNearbyGuest(roomID: sessionID, expectedGuideID: expectedGuideID)
         guard attempt == sessionAttempt else { throw CancellationError() }
         guard route.roomID == sessionID else { throw RoomAdmissionV2Error.wrongGuide }
+        guard routePolicy.allows(route.transport) else { throw NearbyConnectionError.unavailable }
         if activeChannelID == nil { joinStage = .admitting }
         let admitted = try await Self.admit(roomAdmission, host: route.adapterHost, sessionID: sessionID,
             expectedGuideID: expectedGuideID, code: code)

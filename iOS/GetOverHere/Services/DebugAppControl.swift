@@ -10,6 +10,9 @@ import UIKit
 @MainActor
 @Observable
 final class DebugAppControl: DebugCommandHandler {
+    private static let routePolicies: [String: AllowedTransportPolicy] = [
+        "automatic": .standard, "applePeer": .gatewayIOS, "bluetooth": .bluetoothOnly,
+    ]
     private weak var app: AppCoordinator?
     private var server: DebugControlServer?
     private var previousIdleTimerDisabled: Bool?
@@ -81,7 +84,7 @@ final class DebugAppControl: DebugCommandHandler {
             "gateway-begin": [], "gateway-pair": ["code"], "gateway-confirm": [],
             "gateway-connect": [], "gateway-stop": [], "gateway-status": [],
             "gateway-retry-native": [],
-            "apple-peer": ["enabled", "strict"],
+            "apple-peer": ["enabled", "strict"], "route-policy": ["policy"],
             "gateway-record": ["seconds", "runID"], "gateway-record-cancel": [], "debug-keep-awake": ["enabled"],
         ]
         guard let fields = allowed[request.command], Set(request.arguments.keys).isSubset(of: fields),
@@ -119,6 +122,10 @@ final class DebugAppControl: DebugCommandHandler {
             guard service.activeChannelID == nil, !service.companionModeActive else { throw DebugControlError.rejected }
             service.strictApplePeer = try boolean("strict")
             service.applePeerDiscoveryEnabled = try boolean("enabled")
+        case "route-policy":
+            guard service.activeChannelID == nil, !service.companionModeActive,
+                  let policy = Self.routePolicies[try argument("policy")] else { throw DebugControlError.rejected }
+            service.routePolicy = policy
         case "discover": service.findNearbyTours()
         case "create":
             let name = try argument("name").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -212,6 +219,9 @@ final class DebugAppControl: DebugCommandHandler {
             "audio": String(describing: service.audioRuntimeState),
             "joinStage": service.joinStage?.rawValue ?? "",
             "transport": service.guestRoute.map { String(describing: $0.transport) } ?? "",
+            "routePolicy": Self.routePolicies.first { $0.value == service.routePolicy }?.key ?? "custom",
+            "activeRoute": service.guestRoute.map { String(describing: $0.transport) }
+                ?? (service.activeChannelID != nil && !service.isCreator ? "localLAN" : "none"),
             "audioReadyGuests": service.tourControlService.audioReadyGuestCount,
             "acceptedPlaybackBytes": app.audioEngine.acceptedPlaybackByteCount,
             "locked": service.isRoomLocked,

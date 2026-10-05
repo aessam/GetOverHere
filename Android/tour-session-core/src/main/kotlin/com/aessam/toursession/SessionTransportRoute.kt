@@ -30,6 +30,8 @@ data class AllowedTransportPolicy(val routes: Set<SessionTransportRoute>) {
         val AUTOMATIC = AllowedTransportPolicy(SessionTransportRoute.entries.toSet())
         val ANDROID_AWARE_ONLY = AllowedTransportPolicy(setOf(SessionTransportRoute.WIFI_AWARE))
         val APPLE_PEER_ONLY = AllowedTransportPolicy(setOf(SessionTransportRoute.APPLE_PEER))
+        /** Router-free iPhone/Android qualification: no LAN, Aware or Apple peer substitution. */
+        val BLUETOOTH_ONLY = AllowedTransportPolicy(setOf(SessionTransportRoute.BLUETOOTH))
     }
 }
 

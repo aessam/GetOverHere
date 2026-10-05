@@ -27,7 +27,12 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     private var awareRooms = Set<UUID>()
     private let applePeer = ApplePeerRoomTransport()
     private var applePeerRooms = Set<UUID>()
-    var strictApplePeer = false
+    /// Guest carriers that may be offered. A failed allowed carrier never falls back to a disallowed one.
+    var routePolicy: AllowedTransportPolicy = .standard
+    var strictApplePeer: Bool {
+        get { routePolicy == .gatewayIOS }
+        set { routePolicy = newValue ? .gatewayIOS : .standard }
+    }
     var applePeerPathObservations: [[String: String]] { Array(applePeer.observedPaths.values) }
     var onApplePeerState: ((String) -> Void)?
     var onApplePeerError: ((String) -> Void)?
@@ -157,12 +162,15 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
     }
 
     func canConnectNearby(roomID: UUID) -> Bool {
-        applePeerRooms.contains(roomID) || (!strictApplePeer && (awareRooms.contains(roomID) || (bluetooth as? any BluetoothSessionDiscoveryInterface)?.canConnect(roomID: roomID) == true))
+        (applePeerRooms.contains(roomID) && routePolicy.allows(.applePeer))
+            || (awareRooms.contains(roomID) && routePolicy.allows(.wifiAware))
+            || ((bluetooth as? any BluetoothSessionDiscoveryInterface)?.canConnect(roomID: roomID) == true && routePolicy.allows(.bluetooth))
     }
 
     func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute {
         if let nearbyGuestRoute {
             guard nearbyGuestRoute.roomID == roomID else { throw NearbyConnectionError.rejected }
+            guard routePolicy.allows(nearbyGuestRoute.transport) else { throw NearbyConnectionError.unavailable }
             guard nearbyGuestGuideID == expectedGuideID else { throw RoomAdmissionV2Error.wrongGuide }
             let attempt = routeAttempt
             do {
@@ -180,13 +188,12 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         let attempt = routeAttempt
         var connect: NearbySocketBridge.LaneConnect
         var transport: SessionTransportRoute
-        if applePeerRooms.contains(roomID) {
+        if applePeerRooms.contains(roomID), routePolicy.allows(.applePeer) {
             connect = try applePeer.connector(roomID: roomID)
             transport = .applePeer
             usesBluetoothGuestRoute = false
             try await verifyNearbyRecord(roomID: roomID, guideID: expectedGuideID, attempt: attempt, connect: connect)
-        } else if strictApplePeer { throw NearbyConnectionError.unavailable }
-        else if let aware, awareRooms.contains(roomID) {
+        } else if let aware, awareRooms.contains(roomID), routePolicy.allows(.wifiAware) {
             connect = { _ in try await aware.connect(roomID: roomID) }
             transport = .wifiAware
             usesBluetoothGuestRoute = false
@@ -195,7 +202,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
             } catch {
                 guard routeAttempt == attempt, !Task.isCancelled else { throw CancellationError() }
                 if error is RoomAdmissionV2Error { throw error }
-                guard let bluetooth = bluetooth as? any BluetoothSessionDiscoveryInterface,
+                guard routePolicy.allows(.bluetooth), let bluetooth = bluetooth as? any BluetoothSessionDiscoveryInterface,
                       bluetooth.canConnect(roomID: roomID) else { throw error }
                 let message = "Wi-Fi Aware path failed (\(error.localizedDescription)). Trying Bluetooth for the selected room."
                 Logger.transport.warning("\(message)")
@@ -206,7 +213,8 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
                 bluetooth.setJoinedRoom(roomID)
                 usesBluetoothGuestRoute = true
             }
-        } else if let bluetooth = bluetooth as? any BluetoothSessionDiscoveryInterface, bluetooth.canConnect(roomID: roomID) {
+        } else if routePolicy.allows(.bluetooth), let bluetooth = bluetooth as? any BluetoothSessionDiscoveryInterface,
+                  bluetooth.canConnect(roomID: roomID) {
             connect = { lane in try await bluetooth.connect(roomID: roomID, lane: lane) }
             transport = .bluetooth
             try await verifyNearbyRecord(roomID: roomID, guideID: expectedGuideID, attempt: attempt, connect: connect)

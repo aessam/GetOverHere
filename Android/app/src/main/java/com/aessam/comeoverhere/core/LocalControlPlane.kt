@@ -109,8 +109,10 @@ class LocalControlPlane(
             else if (hostedRecord != null) BluetoothDiscoveryMode.ADVERTISING else BluetoothDiscoveryMode.BROWSING)
     }
 
-    override fun canConnectNearby(roomID: UUID): Boolean = roomID in awareRooms ||
-        (bluetooth as? BluetoothSessionDiscoveryInterface)?.canConnect(roomID) == true
+    override fun canConnectNearby(roomID: UUID): Boolean =
+        (roomID in awareRooms && allowedTransportPolicy.permits(SessionTransportRoute.WIFI_AWARE)) ||
+        ((bluetooth as? BluetoothSessionDiscoveryInterface)?.canConnect(roomID) == true &&
+            allowedTransportPolicy.permits(SessionTransportRoute.BLUETOOTH))
     override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): NearbyGuestRoute = nearbyPreparation.withLock {
         withContext(Dispatchers.IO) {
             val cached = synchronized(nearbyOwnerLock) { activeNearbyGuestRoute?.let { it to nearbyGuestConnector } }

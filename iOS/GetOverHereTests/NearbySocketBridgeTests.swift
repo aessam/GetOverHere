@@ -49,6 +49,30 @@ struct NearbySocketBridgeTests {
         }
         #expect(bluetooth.connectCalls == 0)
     }
+    @Test func bluetoothOnlyNeverOpensAwareEvenWhenAwareSeesTheRoom() async throws {
+        let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Room", isAndroid: true, isLocked: false, admissionVersion: 2)
+        let bluetooth = RouteBluetoothTestRadio(record: record)
+        let aware = RouteAwareTestRadio(); aware.record = record
+        let plane = LocalControlPlane(displayName: "Guest", bluetooth: bluetooth,
+            guestBridge: NearbySocketBridge(budget: NearbyConnectionBudget(), guestPort: { _ in 0 }), makeAware: { aware })
+        defer { plane.stop() }
+        plane.setAwareDiscoveryMode(.browsing); aware.onRoom?(record)
+        plane.routePolicy = .bluetoothOnly
+        #expect(plane.canConnectNearby(roomID: record.roomID))
+        let route = try await plane.prepareNearbyGuest(roomID: record.roomID, expectedGuideID: record.guideID)
+        #expect(route.transport == .bluetooth)
+        #expect(aware.connectCalls == 0 && bluetooth.connectCalls == 1)
+
+        let awareOnlyRoom = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Aware only", isAndroid: true, isLocked: false, admissionVersion: 2)
+        aware.record = awareOnlyRoom; aware.onRoom?(awareOnlyRoom)
+        plane.stopNearbyGuest()
+        #expect(!plane.canConnectNearby(roomID: awareOnlyRoom.roomID))
+        await #expect(throws: NearbyConnectionError.self) {
+            try await plane.prepareNearbyGuest(roomID: awareOnlyRoom.roomID, expectedGuideID: awareOnlyRoom.guideID)
+        }
+        #expect(aware.connectCalls == 0)
+    }
+
     @Test func companionConnectorPreservesEachLeafAndNeverOpensLocalGuide() async throws {
         let record = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Original Android Guide",
             isAndroid: true, isLocked: false, admissionVersion: 2)

@@ -39,6 +39,8 @@ public struct AllowedTransportPolicy: Equatable, Sendable {
     public static let standard = Self(routes: Set(SessionTransportRoute.allCases))
     public static let gatewayIOS = Self(routes: [.applePeer])
     public static let gatewayAndroid = Self(routes: [.wifiAware])
+    /// Router-free iPhone/Android qualification: no LAN, Aware or Apple peer substitution.
+    public static let bluetoothOnly = Self(routes: [.bluetooth])
     public func allows(_ route: SessionTransportRoute) -> Bool { routes.contains(route) }
     public func filtered(_ candidates: [SessionTransportRoute]) -> [SessionTransportRoute] {
         candidates.filter(allows)

@@ -66,9 +66,11 @@ internal class LifecycleControlPlane(
     var nearbyPrepareError: Exception? = null
     var nearbyTransport = com.aessam.toursession.SessionTransportRoute.BLUETOOTH
     override var activeNearbyGuestRoute: com.aessam.comeoverhere.core.NearbyGuestRoute? = null
-    override fun canConnectNearby(roomID: UUID) = nearbyAvailable
+    // Mirrors LocalControlPlane: the policy filters which nearby carrier may be offered.
+    override var allowedTransportPolicy = com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
+    override fun canConnectNearby(roomID: UUID) = nearbyAvailable && allowedTransportPolicy.permits(nearbyTransport)
     override suspend fun prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID): com.aessam.comeoverhere.core.NearbyGuestRoute {
-        check(nearbyAvailable)
+        check(nearbyAvailable && allowedTransportPolicy.permits(nearbyTransport)) { "No nearby route is available" }
         nearbyPrepareError?.let { throw it }
         nearbyPrepareCalls++; usesBluetoothGuestRoute = nearbyTransport == com.aessam.toursession.SessionTransportRoute.BLUETOOTH
         return activeNearbyGuestRoute ?: com.aessam.comeoverhere.core.NearbyGuestRoute(
