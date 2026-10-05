@@ -52,7 +52,7 @@ Checked Oct 4. The Sept 10 stall predates the F1 repair (Sept 15) and the FND-1 
 - Guests keep playing across a replacement (`5c13e79`).
 Phase 5 reads these fields during the Android-guide repeats.
 
-## Phase 2: Explicit Bluetooth-only route policy (issue #1 software slice)
+## Phase 2: Explicit Bluetooth-only route policy (issue #1 software slice): DONE `46f6932`, ADR-074
 
 Without it, a physical "Bluetooth pass" can quietly be a LAN or Aware pass.
 
@@ -68,7 +68,7 @@ Without it, a physical "Bluetooth pass" can quietly be a LAN or Aware pass.
    - Mutation: delete one policy check in a scratch copy and confirm a test fails on the assertion, not on compilation (`scripts/verify_audio_recovery_mutation.sh` pattern).
 4. Exit: both suites green, and the mutation is killed.
 
-## Phase 3: Long-tour audio correctness
+## Phase 3: Long-tour audio correctness: FND-2 and FND-10 DONE `652bcaf` (ADR-073); FND-8 DEFERRED
 
 1. **FND-2** in both cores in one patch. Re-anchor the clock-offset baseline: track a windowed
    minimum (for example, the last 10 s) instead of the minimum over the whole tour, so slow drift in either
@@ -78,7 +78,11 @@ Without it, a physical "Bluetooth pass" can quietly be a LAN or Aware pass.
 2. **FND-10** iOS guest playback backlog: cap scheduled-but-unplayed buffers in
    `AudioEngine.swift:136` (drop oldest above about 200 ms) so a main-thread stall cannot add
    permanent latency. Unit-test the scheduler with a fake player node.
-3. **FND-8** iOS guide capture: move the capture consumer off the main actor (`@concurrent`) and
+3. **FND-8 deferred (Oct 4):** a deeper capture buffer only bursts delayed audio to guests, whose
+   jitter buffer holds 13 frames (260 ms). The fix needs capture timestamps taken in the tap and
+   submission off the main actor. PDF rendering stays off the main actor so it cannot cause these stalls.
+   FND-10's renderer flush is unit-tested but needs a device run to confirm.
+   Original item: **FND-8** iOS guide capture: move the capture consumer off the main actor (`@concurrent`) and
    raise the buffer above 1. Test: a 300 ms main-actor block loses no captured buffers.
 4. Exit: core parity gate green; iOS and Android suites green.
 

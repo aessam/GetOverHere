@@ -797,3 +797,38 @@ both platforms); per-page PDF extraction (Android has no public page-copy API).
 **Consequences:** Guests see raster pages at a fixed resolution, with no vector zoom
 or text selection. Size caps are enforced at import. Physical audio and transfer
 coexistence on Bluetooth remains unqualified.
+
+## ADR-073 — Windowed jitter clock-offset baseline
+
+**Date:** 2026-10-04. **Tracking:** FND-2 (`CodeReview-2026-09-22.md`), `WirelessMegaphonePlan.md` Phase 3.
+**Context:** The guest mapped guide capture time to local time using the minimum
+offset ever observed in the tour. A guest clock running fast relative to the guide
+grows the offset steadily; once growth exceeded the 500 ms frame lifetime every
+frame expired with no error (modeled: +100 ppm silent after 76.7 min).
+**Decision:** Both cores track the minimum offset over the current and previous
+10 s receiver-time windows (`clockOffsetWindowNanoseconds` /
+`CLOCK_OFFSET_WINDOW_NANOSECONDS`). A window older than the one just closed is
+discarded after a long silence. Receiver time earlier than the window start never rotates.
+**Semantic change:** A sustained extra path delay above the frame lifetime used to
+mean permanent silence; it now expires frames for at most two windows (≤20 s),
+then plays with the higher latency. Short spikes inside a window still expire.
+**Alternatives rejected:** Resetting on expiry streaks (state-dependent, harder to make
+identical on both platforms); rate estimation/skew correction (more state, no current need).
+**Consequences:** No wire change. `simulatePlayout` fixture output is unchanged.
+Real guide/guest clock drift on these phones remains unmeasured.
+
+## ADR-074 — Explicit guest route policy, including Bluetooth-only
+
+**Date:** 2026-10-04. **Tracking:** GitHub #1, `WirelessMegaphonePlan.md` Phase 2.
+**Context:** The cross-platform no-router route is Bluetooth. A physical "Bluetooth
+pass" could silently use an advertised LAN host or Wi-Fi Aware.
+**Decision:** `AllowedTransportPolicy` gains `BLUETOOTH_ONLY`/`.bluetoothOnly` in both
+cores (in-memory only, never encoded). Android `ChannelService.setRoutePolicy` and
+iOS `ChannelService.routePolicy` own the guest policy; the strict Aware and Apple
+peer booleans become wrappers. Any policy without LAN skips LAN admission, LAN
+joinability and LAN reconnect; nearby candidates and cached routes are filtered
+by carrier, and a disallowed Aware-to-Bluetooth fallback is skipped.
+Debug control exposes `route-policy` and reports `routePolicy`/`activeRoute`.
+**Alternatives rejected:** A new product UI switch (not requested); relying on
+forgetting Wi-Fi on test phones (not provable from status).
+**Consequences:** Debug/test selection only; the product default remains automatic.

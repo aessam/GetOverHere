@@ -2018,3 +2018,35 @@ cold simulator (exit 65, no test executed). Rerun of step 9 alone after
 `Test-GetOverHere-2026.10.04_18-14-16--0700.xcresult` Passed, 205 total / 201 passed /
 0 failed / 4 skipped. Phase 1 needs no code: encoder replacement is already bounded and
 reported (see plan).
+
+## 2026-10-04 — Phases 2 and 3 (`WirelessMegaphonePlan.md`)
+
+Environment as the Phase 0 entry. No devices.
+
+FND-2 (`652bcaf`): red/green on both cores. With the original `RealtimeAudioBuffer`
+restored temporarily, `./Android/gradlew -p Android :tour-session-core:test --tests
+'*SessionProtocolTest.jitterBaseline*'` → 2 tests, 2 failed; Swift
+`swift test --filter jitterBaseline` → +200 and +100 ppm cases and the delay-step
+test failed (3 issues), −100 ppm passed. With the fix both pass (Kotlin 0.084 s for
+3×360,000 frames; Swift 0.350 s).
+FND-10 (`652bcaf`): `PlaybackBacklog` unit test passes (16/16 AudioEngine tests).
+The flush inside `AVAudioPlayerNode` is not exercised: simulator playback is unsupported.
+FND-8 deferred: a deeper capture backlog only bursts delayed buffers to guests, whose
+jitter buffer holds 13 frames (260 ms). The proper fix stamps capture time in the tap
+and submits off the main actor.
+
+Full gate at `652bcaf` from a temporary worktree, `GOH_IOS_DESTINATION=…id=5D72BABA…`,
+`GOH_IOS_DERIVED_DATA=/tmp/GetOverHereGateWT`: "Tour session verification passed".
+Swift core 86 tests; iOS xcresult `Test-GetOverHere-2026.10.04_18-21-13--0700`
+Passed 206 / 202 passed / 0 failed / 4 skipped. Worktree removed.
+
+Route policy (`46f6932`): Android `:app:testDebugUnitTest :tour-session-core:test
+:app:assembleDebug` exit 0, app 208 / core 85 tests, zero failures/errors/skips.
+Swift core 86 pass. iOS `NearbySocketBridgeTests` + `ChannelServiceLifecycleTests`:
+60/60 pass. `bash scripts/verify_route_policy_mutation.sh`: baseline pass; mutant
+`lan-admission` killed (timed out waiting for transports: the second gate in
+`tryNextGuestRoute` fails the LAN route); `lan-joinable` killed
+(`expected:<false> but was:<true>`). iOS mutants in a scratch copy (LAN admission
+gate removed; Aware branch policy check removed): both selected tests failed on the
+intended expectations (`["10.0.0.1","127.0.0.1"]`; `.wifiAware`). A first iOS
+mutant run used selectors without `()` and ran zero tests; it was rejected, not counted.
