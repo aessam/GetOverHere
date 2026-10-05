@@ -19,20 +19,26 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class ComeOverHereApp : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var coordinator: NetworkCoordinator
+    internal lateinit var audioEngine: AudioEngine
+        private set
     lateinit var channelService: ChannelService
+        private set
+    lateinit var gateway: com.aessam.comeoverhere.service.GatewaySessionCoordinator
         private set
 
     override fun onCreate() {
         super.onCreate()
         coordinator = NetworkCoordinator(this, Build.MODEL, applicationScope)
+        audioEngine = AudioEngine(this)
         channelService = ChannelService(
             coordinator,
-            AudioEngine(this),
+            audioEngine,
             applicationScope,
             TourControlService(),
             TourAssetTransferService(
@@ -44,12 +50,16 @@ class ComeOverHereApp : Application() {
         )
         coordinator.start()
         channelService.start()
+        gateway = com.aessam.comeoverhere.service.GatewaySessionCoordinator(this, channelService, applicationScope)
         applicationScope.launch {
-            channelService.listenState.collectLatest { state ->
+            combine(channelService.listenState, gateway.status) { audio, gateway -> audio to gateway }.collectLatest { (state, gatewayState) ->
                 when (state) {
-                    ListenState.BROADCASTING -> TourAudioForegroundService.startGuide(this@ComeOverHereApp)
+                    ListenState.BROADCASTING -> TourAudioForegroundService.startGuide(this@ComeOverHereApp,
+                        gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.GUIDE)
                     ListenState.LISTENING -> TourAudioForegroundService.startGuest(this@ComeOverHereApp)
-                    ListenState.IDLE -> TourAudioForegroundService.stop(this@ComeOverHereApp)
+                    ListenState.IDLE -> if (gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.COMPANION)
+                        TourAudioForegroundService.startCompanion(this@ComeOverHereApp)
+                        else TourAudioForegroundService.stop(this@ComeOverHereApp)
                 }
             }
         }

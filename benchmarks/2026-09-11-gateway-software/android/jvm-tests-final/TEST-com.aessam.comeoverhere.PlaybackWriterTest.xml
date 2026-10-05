@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.PlaybackWriterTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-12T03:00:00.043Z" hostname="redacted" time="0.001">
+  <properties/>
+  <testcase name="fullWriteIsWritten" classname="com.aessam.comeoverhere.PlaybackWriterTest" time="0.0"/>
+  <testcase name="negativeCodeIsFailed" classname="com.aessam.comeoverhere.PlaybackWriterTest" time="0.0"/>
+  <testcase name="partialThenZeroIsShortWithProgress" classname="com.aessam.comeoverhere.PlaybackWriterTest" time="0.001"/>
+  <testcase name="zeroWriteIsShort" classname="com.aessam.comeoverhere.PlaybackWriterTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

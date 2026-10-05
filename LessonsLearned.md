@@ -1,5 +1,20 @@
 # Lessons Learned
 
+## 2026-09-23 — Encoder recovery must preserve the guest timeline (#1)
+
+Replacing Android's encoder resumed signed/encrypted output but reset its audio
+sequence. An existing guest playout buffer rejected the recovered frame as a
+duplicate. Sender-only recovery assertions missed this. Sequence now belongs to
+the broadcast processor per codec, while each replacement retains a fresh crypto
+stream. The regression keeps one verifier/opener/playout clock across replacement.
+This is component evidence, not a native codec or physical audio qualification.
+
+## 2026-09-04 — Editable admission is not a media-key rotation
+
+The former tour code derived all three media-lane credentials. Reusing it as an editable room lock would invalidate connected guests; advertising it for open joining would reveal media keys to passive observers. ADR-052 separates admission from the existing group credential and tests that lock/edit/unlock never reconfigures media lanes.
+
+Physical verification also exposed two test assumptions: a SwiftUI toggle accessibility container is not the switch's tap target, and ending a local tour does not imply an empty neighborhood. Target the inner switch and assert local termination instead. Per-platform native codec loopbacks still do not prove cross-platform audio: live Pixel logs received an authenticated iPhone frame but then failed decoding and crashed in MediaCodec cleanup. Keep that failure explicit until a real cross-platform regression test passes.
+
 ## 1. Never replace a working transport with an untested one
 **What happened**: Replaced MultipeerTransport with BLETransport for "cross-platform." Broke iOS-to-iOS which was working perfectly.
 **Root cause**: Assumed BLE could replace Multipeer. Different protocols, different reliability.
@@ -267,3 +282,370 @@
 **Root cause**: One `stop()` operation represented both transient reconnect and terminal session end, so it preserved the configuration needed by one case in the other case as well.
 **Resolution**: Add a required `clearSession()` boundary that stops transport activity and erases credentials and derived sealing state. Keep `stop()` for transient socket lifecycle only.
 **Decision**: Secrets follow the logical session lifetime, not the object lifetime. Every terminal path must use explicit erasure; reconnect may retain credentials only in the session owner.
+
+## 50. A contract ADR is done only when every path has its own test
+**What happened**: ADR-033 was marked accepted while half implemented. The Swift error carried only the remote major, Kotlin plaintext decode threw the untyped base exception, and the guest UI rendered `CONNECTION FAILED` for a version mismatch while only guide stages showed `tourFeatureError`.
+**Root cause**: No per-path checklist. The plaintext and sealed decode paths, the nine transport catch sites, the guide UI, and the guest UI were each assumed covered by the one sealed-path test.
+**Resolution**: `SessionProtocolError.unsupportedMajorVersion(received:supported:)` on both decode paths, `UnsupportedSessionVersionException` from Kotlin plaintext decode, every catch site binding both majors from the decoder, one `versionMismatchMessage` builder per `ChannelService`, and a pure guest-status presenter on each platform fed by that builder in tests.
+**Decision**: A contract ADR lists every decode path, every transport catch site, guide UI, and guest UI, each with its own test, before it is marked accepted.
+
+## 51. Only UTF-8 byte order is wire order
+**What happened**: Swift ordered and deduplicated manifest IDs by canonical Unicode equivalence and Kotlin ordered them by UTF-16 code units, so two builds could encode the same manifest with different bytes and Swift could reject a manifest Kotlin accepted.
+**Root cause**: Neither Swift `String` `<`/`==` (canonical scalar order and equivalence) nor Kotlin `compareTo` (UTF-16 code-unit order) is the order of the UTF-8 bytes that go on the wire. Fixtures used ASCII IDs with unique `order` values, which cannot expose either divergence.
+**Resolution**: Both cores sort by `(order, UTF-8 bytes)` with an unsigned byte comparator and dedup on exact bytes; `AssetManifestPayload` got the same rule. Fixtures now carry a U+FF5E/U+1F5FA pair sharing an `order`, an NFC/NFD pair, a `z`/`é` pair (signed-byte trap), and an `a`/`ab` pair (prefix trap), with the same golden hex on both sides.
+**Decision**: Every cross-platform ordering rule needs a non-ASCII, tie-breaking fixture whose golden is generated from both CLIs and diffed, never written by hand.
+
+## 52. A comparison inside `[[ ]]` cannot fail on a crashed command
+**What happened**: `if [[ "$(cli a)" != "$(cli b)" ]]` in the verifier would pass when both CLIs crashed, because `errexit` is suspended inside a condition and empty equals empty.
+**Root cause**: Command substitution inside a test expression discards the exit status; the gate only looked at the two strings.
+**Resolution**: Every fixture output is assigned to a variable first (so a non-zero exit fails `errexit`), guarded with `[[ -n ]]`, and only then compared; the same shape now covers `state`, `auth`, `handshake`, `realtime-fixture`, and all cross-decodes.
+**Decision**: Verifier comparisons never inline `$(...)` inside `[[ ]]`. Assign, guard for non-empty, then compare.
+
+## 53. A per-tour code is a password, not a key
+**What happened**: The 10-character tour code (32-symbol alphabet, 50 bits) was turned into the session key with a single HMAC-SHA256 whose salt was the public Bonjour service name, so one captured handshake allowed an offline brute force at GPU speed in about a day.
+**Root cause**: ADR-023 treated the short code as key material and reused the HKDF-style extract that suits high-entropy inputs; the confidentiality claim in ADR-030 inherited that bound unexamined.
+**Resolution**: PBKDF2-HMAC-SHA256 with 600,000 iterations and a session-bound salt on both cores, sealed protocol major 4 so a legacy peer is an explicit version mismatch, known-answer fixtures on both sides computed independently in Python before either core changed, a normalization-before-stretch assertion, and `derive` moved off the main thread behind a `sessionAttempt` guard because a real stretch is user-visible (0.150 s on the simulator, 1,545 ms on the API 36 arm64 emulator through BouncyCastle).
+**Decision**: Any secret a human types is stretched before it becomes a key; the stretch parameters are wire-contract constants with cross-platform known-answer tests, and every known-answer input set includes one non-normalized code so normalization order is pinned. The 50-bit entropy bound stays documented until the QR 128-bit credential ships. P3 physical item: measure `derive()` on the oldest supported iPhone and the slowest Android target; if Android exceeds ~1.5 s the owner revisits the iteration count, which regenerates every credential-derived fixture.
+
+## 54. A lane that can lose the guide must be able to say so
+**What happened**: A guest whose realtime socket died stayed CONNECTED and mute until the control lane also failed; the guest audio handler was nil'd and the read-loop exit only logged on both platforms.
+**Root cause**: Only the control lane owned reconnect, so the audio lane had no event to raise and no consumer for it. The iOS startup race (`.connected` cancels the reconnect task) meant even an emitted event could have been cancelled by the control handshake.
+**Resolution**: One `.failed`/`Failed` per guest run on transport loss with run guards (`!socket.isCancelled` captured before `close()`, `isRunActive(epoch)` + `emitFailedOnce`), routed through the control-lane handler; `pendingAudioLaneFailure` on iOS for the CONNECTING/RECONNECTING race (a refused audio connect during a reconnect cycle must not be discarded either); a five-strike terminal cap (DSCN-19). Wrong codes stay log-only because the guest fails AEAD on the sealed challenge before any hello.
+**Decision**: Every lane that can lose the guide reports it through the single reconnect path, exactly once per run, never for a local stop, a version mismatch, or a pre-authentication rejection. A ChannelService-level proof needs a discovered channel; on Android the emulator's NSD provides it, on iOS the G4 injection seam will.
+
+## 55. `flowOn` moves the producer, not the collector
+**What happened**: Android encode + seal + fan-out for every 10 ms capture buffer ran on the UI thread.
+**Root cause**: `startCapture()` used `flowOn(Dispatchers.IO)`, which only moves the upstream `AudioRecord.read`; `ChannelService` collected on the application scope built with `Dispatchers.Main`, so `plane.sendAudio` and the whole codec path executed there.
+**Resolution**: `BroadcastProcessor` on a dedicated `audio-encode-seal` single-thread executor (mirror of iOS ADR-039), `sendAudio` no longer `@Synchronized`; the roundtrip test asserts the encoder thread name set is exactly `{audio-encode-seal}`; the verifier requires both worker labels and rejects a `@Synchronized sendAudio`.
+**Decision**: Codec work never runs on a UI dispatcher; the worker label is a verifier-audited contract on both platforms.
+
+## 56. Nagle on a 20 ms voice stream
+**What happened**: The realtime lane sent ~150-byte sealed frames every 20 ms over sockets with Nagle enabled while the control lanes already set `TCP_NODELAY`.
+**Root cause**: `UDPAudioPlane.swift` set only `SO_REUSEADDR`/`SO_RCVTIMEO`; `UDPAudioPlane.kt` used default sockets. Nagle waits for the previous segment's ACK and the receiver delays ACKs, so small frames were batched.
+**Resolution**: `TCP_NODELAY` on the accepted and the connecting descriptor on both platforms; the tests read the option back (`getsockopt != 0`, `Socket.tcpNoDelay`); the verifier requires the literals in both files, one `rg` per file.
+**Decision**: Every realtime socket disables Nagle at creation, and the audit checks each file on its own so one file cannot mask the other.
+
+## 57. Playout timing comes from a local clock, never from the network
+**What happened**: The jitter buffer drained only when a frame arrived, so a lost frame shortened the timeline instead of being concealed, and the spec's PLC claim was false.
+**Root cause**: `popReady` was called from the read loop after every accepted frame, and native Opus/AAC decoders expose no PLC API, so nothing could fill a gap.
+**Resolution**: `popForPlayout` on both cores returns `frame`, `conceal(missing)`, or `wait`; `PlayoutClock` ticks every frame duration on its own thread, emits one exact-duration silence frame per concealed sequence, resyncs above the target depth, decodes only on that thread, and reports a decoder failure once. The `playout` CLI fixture (`w,w,f1,f2,w,c3,f4,f10,f11,w`) is a verifier gate; transport tests drive `tick()` with a fixed clock.
+**Decision**: Clocked playout with silence concealment is the contract; timer-versus-DAC drift is a documented limitation bounded by the jitter cap and surfaced by short-write counters, to be measured physically in P3.
+
+## 58. The ~100 ms tap floor and the ignored `AudioTrack.write` result
+**What happened**: `AudioEngine.swift` claimed a ~7 ms capture tap, and `AudioEngine.kt` discarded the return value of `AudioTrack.write(..., WRITE_NON_BLOCKING)`.
+**Root cause**: `installTap(bufferSize: 345)` is a request; AVAudioEngine's input tap delivers ~100 ms buffers regardless. A non-blocking `AudioTrack.write` returns the bytes accepted, so a full buffer (timer-versus-DAC drift) or a dead track returned 0 or a negative code that nobody read.
+**Resolution**: Comment corrected (DSCN-5, no rework this round); `PlaybackWriter` write loop with `Written`/`Short`/`Failed` outcomes, JVM-tested over an injected sink because `AudioTrack` cannot be built on the JVM; short writes counted and logged, errors surfaced once per playback run into `tourFeatureError`.
+**Decision**: The ~100 ms tap floor is a P3 physical measurement item included in mouth-to-ear; every audio-hardware write result is inspected and counted so drift is observable before it is audible.
+
+## 59. Publish nothing you cannot yet capture
+**What happened**: iOS appended the channel, set `.broadcasting`, and published Bonjour before the audio lane and the microphone started, and a failed start never withdrew the record; Android committed `BROADCASTING` and published NSD after the control and asset lanes but before the audio lane and capture, and the microphone `SecurityException` was thrown inside the collector coroutine where the startup `try` could not see it.
+**Root cause**: Lane start reported failures only as asynchronous `failed` events, and both guides drop those because `handleControlConnectionEvent` is guarded on the guest listen state; the commit block sat in the middle of the sequence instead of at the end.
+**Resolution**: Synchronous throwing lane start on both platforms (`startGuide() throws`, `startBroadcasting throws`, `IllegalStateException`, synchronous Android microphone preflight), commit and publish as the last step, a rollback that clears every lane and broadcasts `channelEnded`, and fakes behind small interfaces so the ordering is asserted on the simulator and the JVM (ADR-046).
+**Decision**: Startup is a sequence of throwing calls with one catch; the state commit and the discovery record are the last two lines of that sequence, never earlier.
+
+## 60. Discovery is not allowed to end an authenticated session
+**What happened**: An unauthenticated NSD/Bonjour announce that changed `audioHostIP` for the active channel called `joinChannel` on both platforms, which ran `stopCurrentActivity` → `clearSession`, erased the admitted credential, reset the reconnect counter, and paid a second PBKDF2 stretch.
+**Root cause**: The address-change path reused the user-facing join entry point instead of the transport-level stop + reconfigure that the reconnect timer already used; ADR-036 was only half implemented.
+**Resolution**: `restartGuestTransports(channel:)` on both platforms: cancel the reconnect, `stop()` the three lanes and playback, and restart them with the retained credential; the reconnect timer uses the same function with the freshest discovered address; `clearSession` calls stay at zero across an address change (`guideAddressChangeReconfiguresWithoutClearingSession` on both platforms).
+**Decision**: Discovery may reconfigure where the lanes connect; only an authenticated leave, an explicit user action, or a terminal failure may erase credentials.
+
+## 61. A wrong code is not a lost connection, and End Tour must not wait on the main thread
+**What happened**: A wrong tour code surfaced as the generic transport failure and was retried five times (about 31 s) on both platforms; version mismatch and reconnect exhaustion set `.failed` but left credentials inside the transports; End Tour blocked the main actor for up to 2 s on the leave semaphore; iOS had no termination path that cleared the lanes.
+**Root cause**: One `failed` event carried every handshake outcome, so the product could not tell "the guide rejected my code" from "the socket closed"; the bounded leave wait ran on the main-actor class; `AppCoordinator.stop()` was never called and only stopped the audio plane.
+**Resolution**: A typed `credentialRejected` event sourced only from the AEAD failure or the proof mismatch (Kotlin gained `SessionFrameAuthenticationException` so classification is by type, not by message text, DSCN-26); one `failGuestSession` path for every terminal guest outcome that erases credentials; `sendLeave()` waits off the main actor with the same 2 s deadline and the lanes are cleared after delivery under a dedicated lane-ownership `sessionGeneration` guard; `terminate()` plus `willTerminateNotification` on iOS with the synchronous bounded flush (ADR-048). The first cut reused the DSCN-20 `sessionAttempt` for that guard; because every no-op `leaveChannel()`/`terminate()` and every invalid `joinChannel` also bumps it, a second End Tour tap inside the flush window skipped the deferred teardown and left the lanes listening with the ended credential. A guard must be bumped only by the events it is meant to detect.
+**Decision**: Events name the mechanism (`credentialRejected`, `versionMismatch`, `failed`), never a message to parse; every terminal guest outcome goes through one function that erases credentials; the only main-thread wait is the process-termination flush.
+
+## 62. "Listeners" counted the audio lane only, and the audio session never told the product anything
+**What happened**: The guide UI showed one count fed by audio-lane joins while control-lane guests were invisible; the guest's speaker override showed the word "Speaker" with no warning although it feeds tour audio back into the guide's microphone; iOS route and configuration observers only logged and the converter was never rebuilt, and there was no interruption observer; Android never requested audio focus and ignored `ACTION_AUDIO_BECOMING_NOISY`.
+**Root cause**: `TourControlService` ignored `guestDisconnected`, so no control-lane membership existed to count; the audio engines treated the system audio session as fire-and-forget.
+**Resolution**: `connectedGuestCount` with set semantics keyed by participant (re-registration arrives as disconnect + join), rendered as `"<n> connected · <m> audio"`; `speakerFeedbackWarning` while listening on the loudspeaker; iOS `installCaptureTap` extracted so the converter is rebuilt on a route or configuration change, an interruption observer that pauses/resumes/stops through the pure `interruptionAction(for:)`, and an ended stream surfaced as `"Microphone capture stopped"` with the lanes kept up (DSCN-12); Android `AudioFocusRequest` for voice communication, becoming-noisy receiver that forces private output, and `"Another app took over audio"` on focus loss.
+**Decision**: Counts are per lane and named by what they measure. The iOS route/interruption behavior is verified only through the pure decision functions in `AudioEngineTests`; headset plug/unplug and an incoming call are P3 physical checklist items because AVAudioEngine capture is unsupported on the simulator by design. The Android focus and becoming-noisy paths run as the instrumented `AudioEngineFocusTest`; the earpiece-route assertion is skipped where the platform exposes no earpiece (emulators), and the broadcast receiver delivery itself (the test calls the handler directly) is the headphone-unplug physical check.
+
+## 63. Every accepted socket was a free worker for five seconds
+**What happened**: All four accept loops (control and asset on both platforms, realtime on both) dispatched a handshake worker with a 5 s receive timeout for every accepted socket with no cap, so silent connections could pin unbounded queues or threads on the guide.
+**Root cause**: Admission was bounded only by time (the receive timeout), never by count.
+**Resolution**: A per-lane bound on pending handshakes, acquired in the accept loop and released when the handshake returns or throws; the connection beyond it is closed before a byte is written, with one log line (ADR-047). `HandshakeBoundTests`/`HandshakeBoundTest` failed before on both platforms (the connection beyond the bound received the challenge's first length byte) and pass after. The first bound of 8 broke the 24-guest burst test because a simultaneous join is accepted faster than it authenticates; the bound is 32, calibrated above the largest tour group.
+**Decision**: Unauthenticated work is bounded by count and by time on every lane, and the count is calibrated against the product's group size, not picked as a round number. Release on the receive-timeout path is by construction (the same release covers every throw) and is not separately timed in the gate because it would add more than 5 s per lane per platform.
+
+## 64. A local cache integrity error must not abort the transfer loop
+**What happened**: One length-mismatched `complete/` entry threw from `readyURL`/`readyFile` inside the guest's manifest loop, so every later asset was never requested and no FAILED status was sent; a checksum mismatch was terminal with no re-request; every missing asset was requested at once against a per-peer writer of capacity 8; iOS logged asset failures without surfacing them and neither guest screen rendered `tourFeatureError`. Extending the loopback test to four assets with a corrupt map entry produced zero ready assets on both platforms.
+**Root cause**: The cache reported repairable local-integrity conditions as thrown errors into a loop with no per-asset isolation, and the guest had no request scheduler, so the only bound on outstanding requests was the pack size.
+**Resolution**: The cache repairs and reports by return value (delete, one stderr line, `nil`/offset 0); per-asset isolation; an in-flight cap of 2 with an ordered pending queue; one bounded re-request on checksum mismatch; a per-hash 15 s inactivity deadline that reports FAILED and frees the slot (DSCN-16), because the guide has no failure frame for a request it cannot answer; reset on disconnect/stop; iOS `tourFeatureError` surfacing and a guest-side error label on both platforms (ADR-049). Kotlin classifies the checksum failure by exception type (`AssetChecksumMismatchException`), never by message text, mirroring DSCN-26.
+**Decision**: Local cache repair is deterministic and logged, never a thrown loop-aborting error; every terminal asset outcome (READY, FAILED, expired) sends its status and releases its slot; a cap on outstanding work always ships with a deadline that releases it.
+
+## 65. Tests thinner than their names
+**What happened**: The 24-guest test asserted the join set only; stalled-peer isolation was proven only at writer level on socketpairs; no test forged a sender ID, looped reconnects, or admitted 24 Android guests; `BoundedSocketFrameWriterTest` asserted inside the writer's daemon thread, where a thrown `AssertionError` never reaches JUnit (the probe in ExperimentLog G6 item 8 passes the old test with `Healthy writer failed` only on stderr); `AudioEngineRoutingTest` checked Float32 alignment on a PCM16 path; the `ListenerOutput` tests never read the engine's default. Writing the new tests surfaced three more facts: (1) the Kotlin transport reports a guide restart at the guest as `Failed("Session: guide connection failed: socket closed")` before `Disconnected` (its guest catch does not exclude `EOFException` the way the guide side does) and reports the eviction of a stalled peer at the guide as `Failed("Session: guest connection failed: Socket closed")` (the reader thread's `SocketException` on the writer-closed socket), while iOS emits neither; both are pinned as exact expectations and left unfixed (out of G6 scope, a product wart for the next round). (2) On iOS, timing out an `AsyncStream` consumer to prove silence finishes the stream for the rest of the test, so the reconnect test read `.streamEnded` right after its 250 ms window; a negative wait must poll a recorded log. (3) The critique's `SO_REUSEADDR` mutation does not discriminate on the JVM because `ServerSocket` enables it by default; the discriminating Kotlin mutation is leaving the listener open in `stop()` (`Address already in use`). On iOS the same `SO_REUSEADDR` removal does discriminate: the reconnect test fails on the first restart with `.bindFailed("Session: bind/listen failed: Address already in use")` (`LocalSessionTransportTests.swift:790`), and the port-50_036 reuse in `terminalLeaveArrivesBeforeShutdown` fails the same way.
+**Root cause**: Tests were named after the ADR-038/ADR-039 invariants but asserted only the setup step, and assertions were placed on threads the runner does not observe.
+**Resolution**: A raw authenticated test client on both platforms (`RawGuestClient`), transport-level fan-out, stalled-peer, forged-sender, reconnect-loop, and Android multi-guest tests; JUnit-thread assertions; the PCM16 10 ms contract assertion; engine-default assertions on both platforms (`AudioEngine.DEFAULT_LISTENER_OUTPUT`, `AudioEngine().listenerOutput`).
+**Decision**: A test name is a claim; the assertion must be able to fail for exactly that claim, shown by a recorded mutation, and assertions never run on threads the runner does not observe. A negative wait on iOS polls a log, never a stream.
+
+## 66. A gate hardcoded to one machine is not a gate
+**What happened**: `verify_tour_session.sh` hardcoded `/Users/aessam/Downloads/Xcode-beta.app` and the Android Studio JBR path and ignored `JAVA_HOME`; no CI ran the cross-language byte parity, so parity depended on one person remembering a ten-minute script; the plaintext-path audit named `MultipeerAudioPlane.swift` by path, and an `rg` over a missing path exits 2, so the audit would have passed silently the day the file was deleted.
+**Root cause**: Environment discovery was never separated from the gate logic, and audits assumed the files they guarded still existed.
+**Resolution**: Env-first defaults with the previous paths as the last fallback in all five scripts (`GOH_*`, then `JAVA_HOME`/`DEVELOPER_DIR`, then `xcode-select -p`/JBR), the resolved toolchain printed before the preflights, an existence audit over the retired paths and the entitlement (proved by touching a retired path: exit 1), `scripts/verify_core_parity.sh` as the reusable locally runnable core gate, and `.github/workflows/core-parity.yml` on `push` to `main`, `pull_request`, and `workflow_dispatch` (ADR-051). The first CI run could not be triggered this round because the branch was not pushed (no-push rule); the exact commands are recorded as BLOCKED in ExperimentLog.
+**Decision**: Every gate resolves its toolchain from the environment first and fails loudly on absence; an audit over a file that may be deleted is an existence check, never a content match; parity of the shared cores runs on every push to `main` and every pull request, and the full gate stays local and physical.
+
+## 67. Startup errors must render outside the active-tour view
+**What happened**: A failed guide startup rolled back every lane and saved `tourFeatureError`, but users returned to the channel list without seeing the reason.
+**Root cause**: Both platforms rendered the error only inside a view requiring an active channel, while rollback correctly cleared that channel. Service-state tests did not prove visibility.
+**Resolution**: Render the failure reason on the channel list when no tour is active and the connection state is failed. UI regression tests exercise real simulator capture failure on iOS and real control-port bind failure on Android.
+**Decision**: Verify a startup failure at the screen reached after rollback, not only in service state. Gate the banner on failed state so normal leave does not reveal an old tour error.
+
+## 68. Clean-checkout CI and full UI suites expose gaps hidden by local gates
+**What happened**: The first hosted parity run failed because `gradle-wrapper.jar` was missing. The full emulator UI suite asserted navigation before asynchronous tour startup finished, and hardware-only routing/capture assertions failed on virtual devices.
+**Root cause**: A global `*.jar` ignore rule hid the locally installed wrapper. Compose idleness did not await PBKDF2 startup. The existing local verifier ran iOS unit/integration tests but did not run the complete UI or emulator suites.
+**Resolution**: Regenerated and committed the Gradle 8.13 wrapper, matching its official SHA-256 (`81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f`), with a repository ignore exception. Branch pushes trigger CI. Navigation tests wait for CONNECTED; unavailable physical earpiece checks and simulator guide capture explicitly skip. Android capture tests release capture in teardown. `scripts/verify_virtual_devices.sh` composes the host gate, iOS UI suite, and emulator instrumentation.
+**Decision**: A local cache is not a build dependency manifest. Test asynchronous completion explicitly and report hardware coverage separately from software failures.
+
+## 69. Same-platform codec roundtrips did not prove cross-platform playback
+**What happened**: The Pixel authenticated an iPhone tour and received audio, then failed native decoding and crashed during cleanup. Both platforms' local codec tests had passed.
+**Root cause**: Android treated the Apple encoder's opaque magic cookie as Android codec-specific initialization. Cleanup called `MediaCodec.stop()` in an error state, replacing a recoverable decode failure with an uncaught exception. Fixing initialization exposed a second boundary error: Opus output was 48 kHz while the playback engine expected 16 kHz, producing three times the expected PCM byte count.
+**Resolution**: Build documented Android initialization from the negotiated voice profile; inspect actual decoder output and resample 48→16 kHz with anti-alias filtering; release native codecs directly and contain cleanup errors in idempotent playout teardown. Retain production Apple-encoded tone fixtures and test both codecs on Android hardware for non-silence, duration, and frequency, plus encrypted transport replay. Add a failing-decode/failing-close unit regression and exact streaming-chunk equivalence tests for resampling (ADR-053).
+**Decision**: Test across the actual platform codec boundary. Nonempty decoded bytes alone are insufficient, and transport silence from concealment must not satisfy an audio-delivery assertion. Error cleanup must preserve the original failure without killing the process.
+
+## 70. A Bluetooth source file is not a running Bluetooth discovery path
+**What happened**: The user disabled Wi-Fi and the devices disappeared from each other's room lists despite legacy BLE files still existing in both apps.
+**Root cause**: Production instantiated Bonjour/NSD-only `LocalControlPlane`; no call site started `BLEControlPlane`. The Bluetooth usage description/runtime permission declarations had also been removed. LAN test success and unused radio code did not establish no-Wi-Fi behavior.
+**Resolution**: Add read-only Bluetooth room discovery behind an injected interface in the production discovery owner, restore permission handling, merge observations without losing LAN addresses, and label/disable discovery-only rooms instead of implying that audio works. The old unauthenticated command channel stays unused. Metadata, merge, lifecycle, and UI regression gates are recorded in ExperimentLog.md; physical validation remains pending because the Pixel disconnected and the iPhone was locked.
+**Decision**: Prove the selected runtime path with the target radios disabled/enabled explicitly. Treat room visibility, authenticated joining, control delivery, and voice playback as separate gates. Do not infer any of them from the existence of an implementation file or a passed LAN test.
+
+## 71. Reverse codec assumptions need cross-platform evidence, not an automatic rewrite
+**What happened**: Review identified that iOS installs Android codec-specific bytes as its native magic cookie, without an Android-to-iOS regression.
+**Root cause**: Prior native fixtures tested only Apple encoding into Android decoding.
+**Resolution**: Export generated 440 Hz tones through production Android encoders; decode Opus and AAC through production iOS code, checking duration, non-silence and frequency. Both passed on the iOS 26.4 simulator without decoder changes. The first fixture-export harness failed because Gradle uninstalled the app before retrieval; explicit install/instrument/read and strict hex validation corrected the harness.
+**Decision**: A compatibility risk is not a reproduced failure. Retain the fixture, test both directions, and change production decoding only when evidence requires it. Set test-process environment explicitly rather than assuming xcodebuild forwards arbitrary shell variables.
+
+## 72. A preview still needs a permission and resource lifecycle
+**What happened**: Bluetooth permission fired at app launch and both managers/server roles ran throughout a LAN tour.
+**Root cause**: App-owned discovery startup was treated as permission intent and radio ownership, without a distinction between browsing, advertising and listening.
+**Resolution**: Explicit foreground preview toggle; role-specific manager/server creation; no scanning for guides or joined LAN guests; stop on background; iOS burst and Android balanced scanning; suppress power alerts and back off radio errors. Service and UI regression tests cover intent and lifecycle.
+**Decision**: Permission approval is not permission to scan forever. Read-only previews need bounded resource ownership and must not imply joining/audio capability.
+
+## 73. Nonblocking behavior must survive a full socket
+**What happened**: Admission reply writes could block the room-policy lock. The first iOS nonblocking regression itself hung inside `send` while filling a socket pair using `MSG_DONTWAIT` alone.
+**Root cause**: A per-send flag was assumed to establish the required behavior without proving it on the target runtime. Android's `soTimeout` also limits reads, not writes.
+**Resolution**: Prepare and verify `O_NONBLOCK` on iOS and a nonblocking channel on Android before the locked final send. Reject incomplete AEAD replies instead of retrying under the lock. The simulator full-socket test then completed in 0.006 s; functional lock/edit/unlock still passed.
+**Decision**: Backpressure must be exercised, not inferred from a timeout or flag name. Keep the policy-revision check and final send serialized without waiting for peer progress.
+
+## 74. A visible room must not be mistaken for an implemented session
+**What happened**: The Bluetooth preview displayed guide rooms while joining was intentionally disabled. That did not meet the user's walking-tour requirement.
+**Root cause**: Metadata discovery was delivered without admission and media transport ownership, while broader implementation remained a plan.
+**Resolution**: Add native direct byte connections through the existing admitted audio/control/asset lanes; gate Join on an actual local endpoint capability. Add physical fixtures that require all four stages, including non-silent decoded audio rather than a handshake or first-frame log.
+**Decision**: Report complete loops and exact remaining platform limits. Direct Android passes do not qualify iPhone, mesh, locked devices or large groups.
+
+## 75. Aware discovery, pairing and data-path security are different contracts
+**What happened**: The first Android Aware implementation attempted to advertise a server port without an NDP security configuration. Pixel 7 additionally reported no native Aware pairing support. Initial secured requests then timed out.
+**Root cause**: Pairing capability was treated as a prerequisite for every Android data path, and pairing success as sufficient link configuration. The public Android builder explicitly requires security for port advertisement; responder registration must precede subscriber initiation.
+**Resolution**: Explicit SK-128 NDP security, matching publish security, and responder-first setup passed the actual two-phone fixture in both directions. Pixel 7 uses PIN-secured legacy NAN instead of unsupported native pairing. Apple system-paired Aware remains a different setup and is not claimed interoperable.
+**Decision**: Validate each public API contract and each physical role. A street file transfer in another app does not establish the transport or security scheme available to this app.
+
+## 76. Parallel logical lanes still share one Bluetooth controller
+**What happened**: The first BLE physical fixture authenticated audio but missed pointer state; one of three concurrent L2CAP opens failed. A later run delivered control/assets but missed the decoded-audio threshold; passing reruns do not erase that failure.
+**Resolution**: Serialize Android L2CAP opens, request high connection priority only while joined, disable Nagle on local adapters, and retain strict non-silent audio assertions. Bound complete sealed-frame queues and close stalled writers rather than accumulating stale speech.
+**Decision**: Separate application sockets do not establish radio-level scheduling or group capacity. Keep congestion, locked-device and endurance qualification open.
+
+## 77. A native error code is evidence, not a diagnosis
+**What happened**: The user reported iOS Wi-Fi Aware `-11992` after successful installation. The signed app contains both required Aware entitlement values; no physical diagnostic capture was available before the user left.
+**Resolution**: Preserve the operation and native code, show retry guidance and the mixed-platform limitation, and regression-test message handling in the simulator. The native root cause remains unresolved.
+**Decision**: Do not assign an undocumented code to permissions, unsupported hardware or an OS defect without evidence. A passing simulator error-handling test is not a radio fix.
+
+## 78. Reporting a failed native owner is not sufficient cleanup
+**What happened**: iOS Aware caught an owner failure but retained its mode and route caches. A subsequent request for the same mode returned early. Android fatal startup/configuration callbacks similarly reported failure without releasing the owner.
+**Resolution**: Tear down the failed owner before reporting; distinguish whole-owner failure from individual peer failure and local cancellation. Cover restart after native failure, unexpected return/cancellation, stale cancelled operations and capability rechecks at the iOS operation boundary.
+**Decision**: A dead discovery owner must not leave joinable cached routes. This recovery fix is independent of the native radio failure that triggered teardown.
+
+## 79. Signature validity alone does not give immutable forwarding bytes
+**What happened**: Designing the signed relay prerequisite exposed ECDSA's equivalent high-S representation and different native signature encodings (CryptoKit raw versus Android DER).
+**Resolution**: Normalize signatures to low-S at creation, reject high-S at verification, use fixed-width `r || s` on the wire, and test DER leading-zero/high-bit handling separately. Compare real signatures in both language directions and against Android's native provider.
+**Decision**: A signature verifier still needs a securely obtained pin. Core cryptographic tests do not qualify app key bootstrap or relay behavior. CLI negative tests must reject cleanly; a crashed process is not successful validation.
+
+## 80. Local admission EOF does not prove native reply delivery
+**What happened**: Resumed physical BLE tests failed admission twice. The guide's adapter forwarded 141 bytes (103-byte challenge plus 38-byte reply), but the guest forwarded only the challenge before EOF. Closing the native socket immediately when the local admission server closed discarded the queued final reply. TCP-only tests had not exposed this native close behavior.
+**Resolution**: Guide-side admission keeps the native stream alive until the guest closes, capped at five seconds after local EOF. Apply the same rule in Swift and Kotlin without changing the admission wire protocol. Add regression coverage for queued output retention and abandoned-peer cleanup. The physical harness now collects the exact app UID's logs even after instrumentation exits.
+**Decision**: A successful native write is not peer receipt. Preserve completion semantics across adapters, and bound drains rather than inserting an arbitrary delivery sleep or retrying authentication blindly.
+
+## 81. Freeze running scripts as well as app sources
+**What happened**: Adding verified APK reuse while a physical harness was still executing shifted its input and caused a shell parse failure after both instrumentation roles had passed. Separately, a fixture intended to be foreground was observed running with its guide asleep behind keyguard.
+**Resolution**: Preserve the failed harness result, freeze the script before the next run, and verify installed APK hashes instead of repeatedly reinstalling unchanged candidates. Record actual foreground state rather than infer it from activity flags or the absence of a device passcode.
+**Decision**: Do not edit executing scripts. Native discovery failures need lifecycle/stage evidence; a passing wake/dismiss rerun is not a proven root cause.
+
+## 82. A fixed Aware listener can collide with an outgoing connection
+**What happened**: The throughput pilot verified foreground state on both phones, then the guide failed to bind port 50004. Scoped socket inspection found that local port occupied by an unrelated outgoing TCP connection. This prevented publishing; the guest consequently timed out discovering the endpoint.
+**Resolution**: Request an OS-assigned listener port and advertise the actual port using the existing native Aware metadata. Add a deterministic occupied-port regression and payload-free native-stage logs. Never stop the unrelated connection.
+**Decision**: Where the protocol already advertises an endpoint port, do not assume a fixed port is available. Preserve other discovery failures separately until their own cause is demonstrated.
+
+## 83. A throughput benchmark must verify delivery and completion
+**What happened**: A short loopback/pilot passed, but a longer physical benchmark lost its final completion marker when the guide released the Aware owner. Its bulk frames had all been verified; final protocol completion had not.
+**Resolution**: Keep the guide owner alive until the guest consumes the marker and closes, and regression-test that the guide cannot return before peer closure. Measure goodput using receiver bytes/time, verify every block and sequence, compare both endpoints' byte counts, separate warm-up, and use 100 idle RTT samples.
+**Decision**: A completed write, partial trial output, or high byte count alone is not a passing physical benchmark. Foreground state and complete role results are required.
+
+## 84. Preserve external research separately from accepted implementation facts
+**What happened**: Two supplied research reports agreed on the lack of a usable public router-free groupcast path but made conflicting recommendations. One converted suspension behavior into an unconditional locked-iPhone failure and suggested Nagle as the main cause despite our TCP_NODELAY wrapper. A key in discovery was described as closing guide trust, and sparse signatures were suggested without authenticating intervening frames. The other recommended a mandatory portable AP even though the user wants router-free operation.
+**Resolution**: Archive both full reports/source lists unchanged in substance; put corrections, scope decisions, exact lab evidence and ordered A1–A4 work in the authoritative NextSession.md. Preserve prior checkpoints separately rather than delete failed experiments or leave superseded state mixed with today's plan. Link Apple DTS's background-execution distinction, Android's version-37.2 pairing API and actual code before adopting hypotheses.
+**Decision**: Public API documentation establishes a candidate contract, not our hardware's capability or product qualification. Lock is not suspension, a declared key is not independently trusted identity, a logical broadcast is not one RF transmission, and two-phone throughput is not group capacity. Neither report silently authorizes a product pivot or security expansion. See ADR-058 and the research adjudication in NextSession.md.
+
+## 85. Authentication changes must reach discovery, framing and every lane
+**What happened**: Integrating the existing GOS1 primitive exposed two mismatches: nearby discovery hardcoded admission v1, and a 65,536-byte asset chunk could not fit inside a signed envelope with the same maximum size. Readiness also still meant an admitted audio socket rather than renderer acceptance.
+**Resolution**: Add explicit GOR2 discovery/version mapping, v2 native admission and session pinning; configure the same signer across all authoritative lanes and verify before AEAD. Keep the signed envelope bound and use 60 KiB asset chunks. Enumerate guide challenges/welcomes as well as normal media, and classify signed frames correctly in the nearby adapter. Add authenticated renderer-readiness reports and terminal signature-failure events.
+**Decision**: A passing cryptographic core is not production integration. Version negotiation, size budgets, native wrappers, lifecycle owners and failure UX are part of the contract. Exhaustive enum switches caught missing fixture and asset-diagnostic cases during compilation; keep those compiler failures explicit and rerun the gate after correcting them. See ADR-059 and the exact simulator/JVM logs in ExperimentLog.md.
+
+## 86. Route recovery needs ownership and readiness, not just a cached loopback address
+**What happened**: The integration pass exposed a missing actor annotation in the Aware factory, two route-fixture port collisions and an immediate listener cancel/rebind race. Native iOS route preparation also initially returned an adapter before checking whether the selected radio path could exchange metadata. Generic recovery could then restart lanes against a closed cached adapter or retry an identity mismatch.
+**Resolution**: Keep the factory explicitly MainActor, isolate test ports, await listener cancellation before rebinding, and preflight the selected room/guide/version before returning a typed route. Preserve healthy ownership; clear failed descriptors and bound recovery attempts. Treat identity/version mismatch as terminal and protect every asynchronous result with the owning session/route generation.
+**Decision**: Test collisions need isolation, but isolation alone must not hide a production retry race. Likewise, an Aware peer's cached Network is shared by its sockets; resource accounting must follow native ownership rather than lane count. Retain failing results and retest the actual corrected path. No simulator outcome qualifies physical capacity.
+
+## 87. Identically named Swift errors can expose duplicate hosted-test linkage
+
+**What happened**: Admission-v2 metadata and reconnect tests threw the expected named error but typed catches failed. Both the hosted XCTest bundle and app directly linked the automatic static shared-core product, defining duplicate error metadata and protocol-conformance symbols.
+**Resolution**: Remove only the test target's redundant package linkage and resolve core symbols through its existing app host. Confirm the test bundle's symbols change from definitions to imports, then rerun the typed-error and retry-count regressions. All focused cases and the full simulator suite passed; no string-based catch or package-distribution rewrite was needed.
+**Decision**: Inspect the actual binaries when a cross-module type behaves unlike its source declaration. Keep the failed result; a passing standalone package suite does not rule out app/test integration errors. ADR-062 records the exact boundary change.
+
+## 88. Bound the producer before encoding and own cleanup by run
+
+**What happened**: Socket queues were bounded but capture handoffs and encode submissions were not. An overloaded encoder could timestamp old PCM as fresh; a nil codec result could retain old input for a later call. Separately, old Android capture finalization released the current microphone effects/focus and its service error could fail a replacement guide.
+**Resolution**: Bound capture to newest-one and pending PCM to eight; retain input timestamps through partial packetization and codec buffering, check age before/after native work, and flush stale encoder state without resetting sequence identity. Keep resources/callbacks run-owned, including uncollected flows, post-decode output and guide event delivery. Regression-test old cleanup against both replacement guide and guest roles and signed output under deterministic clock/encoder delays.
+**Decision**: A bounded final socket queue does not establish bounded end-to-end backlog. Timestamps must not be refreshed by work completion, and an old run cannot clean up its replacement. Preserve the existing wire lifetime and distinguish application submission time from measured acoustic capture time. See ADR-063.
+
+## 89. Discovery preference must not override a working admitted route
+
+**What happened**: A room could be discovered over both LAN and Bluetooth, yet initial joining always attempted LAN and failed without trying Bluetooth. A later LAN announcement also restarted established nearby lanes. The lower-level BLE fixture bypassed this application selector and could not detect the bug.
+**Resolution**: Add production-service regressions before changing either platform. Classify only pre-challenge reachability errors as eligible for one matching nearby attempt, and retain selected-route intent across descriptor replacement. Preserve terminal authentication errors and cancellation ownership. See ADR-064.
+**Decision**: Test the complete service path as well as the native transport. A single accepted playback buffer is also not continuing audio: physical live-session tests now observe increasing native renderer-accepted byte counts, separately from first-frame readiness and acoustic quality.
+
+## 90. Physical interoperability requires both roles and the actual service lifecycle
+
+**What happened**: The iPhone-guide protocol fixture passed, while the reversed pair admitted and played its first frame but could not open control/assets. Sequential native opens failed on the same Android PSM; three distinct PSMs succeeded. Separately, the initial production live fixture let Android's activity stop before enabling discovery, which correctly disabled the app's foreground-only scan.
+**Resolution**: Select distinct Android endpoints per persistent lane (ADR-065), preserving every application handshake and legacy path. Native-only probes isolate allocation/opening; the production-service fixture verifies actual foreground/keyguard state before enabling discovery, without overriding that policy. Guide creation intentionally activates nearby discovery, so a BLE-only fixture must apply its Aware selection after asynchronous creation finishes.
+**Decision**: A passing synthetic transport or app startup does not prove the walking-tour loop. Check continuous renderer byte progress and minimum PCM cadence, not a latched first-frame status; acoustic output, locked endurance and group scale remain separate gates. Keep failed artifacts instead of relabeling their cause from incidental error text.
+
+## 91. Debug the visible coordinator and verify certificate packaging on the target stack
+
+**What happened**: A physical fixture could run a coordinator independently of the visible
+SwiftUI app. A new authenticated network bridge reached the real iPhone once, but later
+connections timed out; its saved endpoint file still said listening. Separately, the
+local TLS fixture rejected an empty PKCS#12 password, then Security import crashed on
+LibreSSL's explicit EC parameters.
+**Resolution**: Route commands to the scene-owned coordinator, distinguish action
+acceptance from completion, and retain an opt-in actual-UI observer. Generate a named
+P-256 curve with a nonempty random PKCS#12 password and import only in memory. Repeated
+pinned TLS connections and bad-key/bad-pin/replay checks pass. Add a bounded foreground
+keep-awake session without claiming it proves the unresolved physical timeout's cause.
+**Decision**: A stale endpoint snapshot is not live connectivity. A successful status is
+not a passing create/join/audio loop. Neither a simulator nor a native transport fixture
+replaces the final visible-device test. Record physical partial success and stop at an
+approval boundary rather than silently relaunching a running debug server.
+
+## 92. Preserve guide orientation and distinguish bitrate from timely delivery
+
+**What happened**: Physical Bluetooth speeds changed substantially when the same two
+phones exchanged guide roles. With two Android listeners, the iPhone did not distribute
+throughput evenly. Android Aware delivered all1,800 small-packet echoes, but176 crossed
+the150ms round-trip threshold despite high bulk throughput.
+**Resolution**: Store each orientation and receiver's raw measurements separately;
+retain exact payload checks, echo timings and endpoint completion. Never derive group
+capacity by multiplying single-peer bitrate. An independently advanced two-client
+workload is not a synchronized fan-out test.
+**Testing lesson**: Xcode returned success after a Swift Testing filter selected zero
+tests. Requiring xcresult passedTests=1 caught this; the method selector needed `()`.
+The corrected loopback and physical fixtures passed. Raw results and limitations are
+in `benchmarks/2026-09-10/README.md`.
+
+## 93. USB role and active interface matter more than advertised configurations
+
+Pixel as host detected the iPhone and its Apple USB Ethernet configuration but created
+no network interface. After the user switched roles and enabled Pixel USB tethering,
+Pixel exposed ncm0 and exchanged five interface-bound pings with the iPhone, averaging
+2.650ms RTT. sys.usb.config still said none despite the working HAL-managed interface.
+Inspect actual USB roles, IP interfaces and forced-route packet delivery; neither a
+descriptor name nor a legacy property proves or disproves connectivity. This pair
+used a different iPhone than the earlier12mini benchmarks. Preserve that distinction
+and do not generalize an ICMP smoke pass into app throughput or Aware coexistence.
+
+## 94. Verify the actual TLS provider and both certificate roles
+
+**What happened**: Android app compilation succeeded, but emulator TLS tests failed
+before exchanging application bytes. Socket-only alias callbacks did not cover
+Conscrypt's SSLEngine identity selection. Adding those callbacks was insufficient:
+AndroidKeyStore still returned INCOMPATIBLE_DIGEST because the key allowed only
+SHA-256, while TLS signs an already-hashed transcript with NONEwithECDSA.
+**Resolution**: Support both engine and socket key selection and authorize the
+separate TLS identity for the provider's required digest policy. Do not use tour
+signing keys or silently replace a confirmed hub identity. Real Android mutual-TLS,
+wrong-pin and independent admission-proxy tests passed after the correction.
+Apple Network.framework and AndroidKeyStore/JSSE then passed both server roles,
+with65,536 exact bytes round-tripped per case. Raw reports are retained under
+`benchmarks/2026-09-11-gateway-software/tls-interop/`.
+**Decision**: Same-platform certificate tests and successful app builds do not
+prove cross-runtime TLS. Test both server roles before asking for a physical
+gateway run. ADB tunnels establish compatibility, not USB Ethernet routing.
+
+## 95. Drain delayed codec output without restarting the warm encoder
+
+**What happened**: The Android capture pipeline treated accepted PCM without an
+immediate encoded packet like refused input. Delayed output then expired and
+recreated the codec, repeatedly returning to startup. An eight-input bound also
+reset before draining output that became available at that boundary.
+**Resolution**: Distinguish accepted input from backpressure; retain original
+capture timestamps; discard expired output without refreshing its age or resetting
+the warm codec. At the input bound, drain available output without submitting a
+ninth input. Drain a delayed burst within the same eight-packet bound so stale
+packets cannot keep newer speech behind a permanent backlog. Clear partial PCM
+after capture gaps without recreating the codec.
+**Evidence**: Deterministic regressions reproduced the reset and burst cases before
+the changes and passed afterward. The final native capture smoke and physical
+thirty-cycle startup/endurance gates are separate evidence. Do not claim that a
+fake codec or emulator proves microphone quality on either Pixel.
+
+## 96. Test role ownership through the original service, not only the proxy
+
+**What happened**: Android gateway pairing created the wired offer but did not
+enable the guide's ordinary Aware publisher. Companion tests covered its separate
+proxy publisher, so that branch could pass while the guide's local audience saw
+nothing. Companion discovery suppression also lost the user's earlier settings.
+**Resolution**: Own the guide's existing Aware preference from pairing intent
+until the tour ends, including after companion removal. Keep companion publishing
+separate and restore only preferences acquired by that role. Report the branch
+that the current role actually uses. Two deterministic failures were reproduced
+before the correction; all11 coordinator tests passed afterward.
+**Decision**: Verify guide, companion and listener entry points independently.
+A healthy proxy test does not prove the normal guide UI enabled its local radio.
+
+## 97. Passing happy-path gates did not establish gateway failure recovery
+
+September15 independent review of ec1b0b8 reproduced four isolated failures:
+both cores reject a fresh offer with a companion clock10s behind, and Android's
+capture owner never replaces either a terminally failing or permanently stalled
+encoder. Normal Android198 tests and the actual TLS identity suite still pass.
+The old encoderResetCount assertions expected zero while no production path
+could increment it. Factory lifetime/progress assertions expose the missing work.
+
+The earlier claim that all coding was complete was too strong. Freeze claims
+must include failure transitions, alternate endpoint ownership, exhausted retry
+state, and exception-path resource accounting, not only totals and valid TLS.
+Source review also found missing absolute Android pre-authentication deadlines
+and a loopback socket cleanup gap if the acceptance write fails. Those two need
+targeted native/fault injection before repair claims; no exploit was run.
+Report, narrowed supplied findings and ordered repair gates:
+`SecurityCodeReview-2026-09-15.md`. No production fix was made during review.
+
+## 98. Recovery tests must assert resumed traffic and exception-path ownership
+
+September15 repairs separate expired capture from a genuinely stuck encoder:
+two seconds without output or a thrown exception retires the instance, with at
+most three replacements and an explicit terminal error. Tests verify signed,
+AEAD-opened output and a new stream identity after recovery, not only a reset
+counter. Existing warm-up and expired-backlog behavior remains tested.
+
+The gateway acceptance boundary now reserves shared capacity before ACK 0 and
+keeps rejection writable. Socket ownership starts at allocation, covering failed
+connect/ACK as well as forwarding. SO_TIMEOUT alone did not bound a slowly
+advancing request; native TLS trickle tests now exercise the absolute deadline.
+Emulator accept-loop failure and certificate-expiry fixtures exercise the native
+implementation, while controlled callbacks/sleep cover coordinator exhaustion.
+
+Use `scripts/verify_tour_session.sh` for the broad iOS suite: it sets serial test
+execution and disables automatic diagnostic collection. A standalone parallel
+launch in this session stalled and failed networking tests; the log is retained,
+not counted as a pass. The serial run exposed one old expiry assertion that
+needed to move outside the deliberate companion clock-skew window. Final gate
+and component evidence: `benchmarks/2026-09-15-security-review/README.md`.

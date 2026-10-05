@@ -6,9 +6,16 @@ final class AppCoordinator {
     let coordinator: NetworkCoordinator
     let channelService: ChannelService
     let audioEngine: AudioEngine
+    let gateway: GatewaySessionCoordinator
 
     var showCreateChannel = false
+    var showGateway = false
     var newChannelName = ""
+    var selectedTourFeature: TourFeature = .slides
+    #if DEBUG
+    var showDebugControl = false
+    private(set) var debugControl: DebugAppControl?
+    #endif
 
     init(displayName: String) {
         let coordinator = NetworkCoordinator(displayName: displayName)
@@ -45,6 +52,10 @@ final class AppCoordinator {
                 contentStore: contentStore,
                 localGuidanceService: localGuidanceService
             )
+            guard let localControl = coordinator.controlPlane as? LocalControlPlane else {
+                fatalError("Gateway requires the application's local control plane")
+            }
+            self.gateway = GatewaySessionCoordinator(service: channelService, control: localControl)
         } catch {
             fatalError("Tour feature storage setup failed: \(error.localizedDescription)")
         }
@@ -53,9 +64,22 @@ final class AppCoordinator {
     func start() {
         coordinator.start()
         channelService.startListening()
+        #if DEBUG
+        if debugControl == nil {
+            let control = DebugAppControl(app: self)
+            debugControl = control
+            control.startIfRequested()
+        }
+        #endif
     }
 
+    /// Termination path (FND-8): the session ends all three lanes before discovery and audio stop.
     func stop() {
+        #if DEBUG
+        debugControl?.stop()
+        #endif
+        channelService.terminate()
+        gateway.stop()
         coordinator.stop()
     }
 

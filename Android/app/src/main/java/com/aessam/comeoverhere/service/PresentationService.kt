@@ -15,6 +15,8 @@ import com.aessam.toursession.BearingSnapshotPayload
 import com.aessam.toursession.BearingReference
 import com.aessam.toursession.TourVisualMode
 import com.aessam.toursession.VisualFocusSnapshotPayload
+import com.aessam.toursession.AudioReadinessPayload
+import com.aessam.toursession.AudioReadinessStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,10 +27,13 @@ import javax.net.SocketFactory
 enum class PresentationServiceRole { GUIDE, GUEST }
 
 sealed class TourControlConnectionEvent {
+    data class AuthenticationFailed(val message: String) : TourControlConnectionEvent()
     data object Connected : TourControlConnectionEvent()
     data object Disconnected : TourControlConnectionEvent()
     data object SessionEnded : TourControlConnectionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : TourControlConnectionEvent()
+    /** The guide rejected the tour code; terminal, never retried (FND-8). */
+    data class CredentialRejected(val message: String) : TourControlConnectionEvent()
     data class Failed(val message: String) : TourControlConnectionEvent()
 }
 
@@ -37,6 +42,8 @@ class PresentationServiceException(message: String) : IllegalStateException(mess
 class TourControlService(
     private val transport: SessionControlTransport = LocalSessionControlTransport(),
 ) {
+    fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) =
+        transport.configureGuideAuthentication(authentication)
     private val mutableSnapshot = MutableStateFlow<PresentationSnapshotPayload?>(null)
     val snapshot: StateFlow<PresentationSnapshotPayload?> = mutableSnapshot.asStateFlow()
 
@@ -55,8 +62,22 @@ class TourControlService(
     private val mutableVisualFocusSnapshot = MutableStateFlow<VisualFocusSnapshotPayload?>(null)
     val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?> = mutableVisualFocusSnapshot.asStateFlow()
 
+    /** Guests admitted on the control lane, keyed by participant (FND-13); independent of audio readiness. */
+    private val mutableConnectedGuestCount = MutableStateFlow(0)
+    val connectedGuestCount: StateFlow<Int> = mutableConnectedGuestCount.asStateFlow()
+    private val connectedGuestIDs = mutableSetOf<UUID>()
+    private val guestAudioReports = mutableMapOf<UUID, AudioReadinessPayload>()
+    private val mutableAudioReadyGuestCount = MutableStateFlow(0)
+    val audioReadyGuestCount = mutableAudioReadyGuestCount.asStateFlow()
+
+    fun reportGuestAudio(status: AudioReadinessStatus, revision: ULong) {
+        if (role != PresentationServiceRole.GUEST || !transport.isActive) return
+        transport.send(SessionMessageKind.AUDIO_STATUS, AudioReadinessPayload(status, revision).encode())
+    }
+
     private var role: PresentationServiceRole? = null
     private var sessionID: UUID? = null
+    private var runGeneration = 0L
     private var connectionEventHandler: ((TourControlConnectionEvent) -> Unit)? = null
 
     val currentSlideID: String? get() = mutableSnapshot.value?.currentSlideID
@@ -71,7 +92,14 @@ class TourControlService(
         get() = currentSlideIndex?.let { it < mutableSlides.value.lastIndex } == true
 
     init {
-        transport.setEventHandler(::handle)
+        installTransportHandler()
+    }
+
+    private fun installTransportHandler() {
+        val generation = runGeneration
+        transport.setEventHandler { event ->
+            synchronized(this) { if (generation == runGeneration) handle(event) }
+        }
     }
 
     fun setConnectionEventHandler(handler: ((TourControlConnectionEvent) -> Unit)?) {
@@ -86,7 +114,10 @@ class TourControlService(
         credential: SessionCredential,
     ) {
         stop()
-        this.sessionID = sessionID
+        synchronized(this) {
+            this.sessionID = sessionID
+            installTransportHandler()
+        }
         transport.configureSession(sessionID, participantID, displayName, platform, credential)
     }
 
@@ -110,9 +141,10 @@ class TourControlService(
         transport.startGuest()
     }
 
-    fun endGuideSession() {
+    /** Flushes the authenticated leave without blocking the caller's thread (FND-8). */
+    suspend fun endGuideSession() {
         requireGuide()
-        transport.send(SessionMessageKind.LEAVE, byteArrayOf())
+        transport.sendLeave()
     }
 
     fun setGuestSocketFactory(factory: SocketFactory?) {
@@ -225,15 +257,61 @@ class TourControlService(
     }
 
     fun stop() {
+        synchronized(this) {
+            runGeneration++
+            role = null
+            sessionID = null
+            mutableSnapshot.value = null
+            mutableTargetSnapshot.value = null
+            mutableBearingSnapshot.value = null
+            mutableVisualFocusSnapshot.value = null
+            mutableSlides.value = emptyList()
+            mutableLastError.value = null
+            synchronized(connectedGuestIDs) {
+                connectedGuestIDs.clear()
+                guestAudioReports.clear()
+                mutableAudioReadyGuestCount.value = 0
+                mutableConnectedGuestCount.value = 0
+            }
+        }
+        // Native close can complete a callback: never hold the service lock across it.
         transport.stop()
-        role = null
-        sessionID = null
-        mutableSnapshot.value = null
-        mutableTargetSnapshot.value = null
-        mutableBearingSnapshot.value = null
-        mutableVisualFocusSnapshot.value = null
-        mutableSlides.value = emptyList()
-        mutableLastError.value = null
+    }
+
+    private fun recordGuestJoined(participantID: UUID) {
+        synchronized(connectedGuestIDs) {
+            connectedGuestIDs += participantID
+            guestAudioReports.remove(participantID)
+            updateAudioReadyCount()
+            mutableConnectedGuestCount.value = connectedGuestIDs.size
+        }
+    }
+
+    private fun recordGuestDisconnected(participantID: UUID) {
+        synchronized(connectedGuestIDs) {
+            connectedGuestIDs -= participantID
+            guestAudioReports.remove(participantID)
+            updateAudioReadyCount()
+            mutableConnectedGuestCount.value = connectedGuestIDs.size
+        }
+    }
+
+    /** Called only under the membership lock, after an authenticated control-lane report. */
+    private fun updateAudioReadyCount() {
+        mutableAudioReadyGuestCount.value = guestAudioReports.count { (id, report) ->
+            id in connectedGuestIDs && report.status == AudioReadinessStatus.PLAYING
+        }
+    }
+
+    private fun acceptAudioReport(envelope: com.aessam.toursession.SessionEnvelope) {
+        synchronized(connectedGuestIDs) {
+            if (envelope.sessionId != sessionID || envelope.senderId !in connectedGuestIDs) return
+            val incoming = AudioReadinessPayload.decode(envelope.payload)
+            val previous = guestAudioReports[envelope.senderId]
+            if (previous != null && incoming.revision <= previous.revision) return
+            guestAudioReports[envelope.senderId] = incoming
+            updateAudioReadyCount()
+        }
     }
 
     fun clearSession() {
@@ -287,6 +365,7 @@ class TourControlService(
             SessionControlEvent.Disconnected -> connectionEventHandler?.invoke(TourControlConnectionEvent.Disconnected)
             is SessionControlEvent.GuestJoined -> {
                 if (role == PresentationServiceRole.GUIDE) {
+                    recordGuestJoined(event.participant.participantId)
                     mutableSnapshot.value?.let { current ->
                         runCatching {
                             transport.send(SessionMessageKind.PRESENTATION_SNAPSHOT, current.encode())
@@ -310,6 +389,11 @@ class TourControlService(
                 }
             }
             is SessionControlEvent.EnvelopeReceived -> {
+                if (event.envelope.sessionId != sessionID) return
+                if (role == PresentationServiceRole.GUIDE && event.envelope.kind == SessionMessageKind.AUDIO_STATUS) {
+                    runCatching { acceptAudioReport(event.envelope) }.onFailure(::report)
+                    return
+                }
                 if (role != PresentationServiceRole.GUEST) return
                 runCatching {
                     when (event.envelope.kind) {
@@ -350,13 +434,21 @@ class TourControlService(
                     }
                 }.onFailure(::report)
             }
-            is SessionControlEvent.GuestDisconnected -> Unit
+            is SessionControlEvent.GuestDisconnected -> recordGuestDisconnected(event.participantID)
             is SessionControlEvent.VersionMismatch -> {
                 val message = versionMismatchMessage(event.remoteMajor, event.localMajor)
                 report(message)
                 connectionEventHandler?.invoke(
                     TourControlConnectionEvent.VersionMismatch(event.remoteMajor, event.localMajor),
                 )
+            }
+            is SessionControlEvent.CredentialRejected -> {
+                report(event.message)
+                connectionEventHandler?.invoke(TourControlConnectionEvent.CredentialRejected(event.message))
+            }
+            is SessionControlEvent.AuthenticationFailed -> {
+                report(event.message)
+                connectionEventHandler?.invoke(TourControlConnectionEvent.AuthenticationFailed(event.message))
             }
             is SessionControlEvent.Failed -> {
                 report(event.message)

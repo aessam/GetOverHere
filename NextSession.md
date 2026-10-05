@@ -1,241 +1,570 @@
-# GetOverHere Execution Plan
+# GetOverHere — Next Session
 
-**Date:** 2026-08-22
-**Status:** Approved with the 2026-08-22 review amendments. P0 remains the first execution checkpoint.
+## October 4 — current plan: `WirelessMegaphonePlan.md`
 
-## Intent
+Execution plan for the Sept 21 direction (one cross-platform app, Bluetooth as
+the no-router iPhone↔Android route, PDFs as page slides per ADR-072). Phases 0–4
+are device-free; Phase 5 is physical acceptance and waits for the user.
+Since Sept 21: deep code review `CodeReview-2026-09-22.md` (FND-1..34);
+FND-1 fixed in `5c13e79` (ADR-071). Commits `5c13e79`/`7391db7` are not pushed;
+push requires explicit approval. Hotspot fallback (DSCN-2) undecided.
+Xcode-beta is gone; `xcode-select` resolves to /Applications/Xcode.app (27.0).
+`verify_tour_session.sh` now defaults to the `iPhone 17` simulator and preflights it.
+Phase progress and evidence are appended to `ExperimentLog.md`.
 
-Preserve the existing local-LAN product as the guaranteed full-capability floor while pursuing operation without external network hardware. Use native cross-platform Wi-Fi Aware as the preferred direct high-bandwidth route and a bounded bitchat-style BLE relay overlay for universal discovery/control and gated degraded live voice. No-AP audio is a capability-dependent mode, not a universal product guarantee.
+## September 21 — current direction supersedes the USB steps below
 
-The tour product remains one guide to many guests with synchronized audio, slides, a shared target pin, and a sightline pointer. Only the target pin may leave a device; participant locations and headings remain local.
+User stopped USB gateway work: the available iPhone13Pro + Pixel11Pro did not
+establish the required wired network. A different USB-C iPhone reportedly enabled
+tethering, but replacement hardware is not the accepted product direction.
+Do not resume cable/adapter troubleshooting from the historical notes below.
 
-## Current evidence
+Priority is a usable wireless megaphone and synchronized PDF page viewer on the
+available iPhone and Android, without Internet or a shared router. Establish the
+supported cross-platform link and real audio first; no new transport architecture
+or product-completion claim is justified by the component tests alone. The
+Telegram transfer was clarified as AirDrop, not proof of a Telegram Wi-Fi Aware
+transport. Public API availability and the complete user journey remain unproven.
+Device addresses/debug activations below are historical, not current access.
 
-- The local-LAN product path works across the physical iPhone and Pixel, including audio and synchronized visual state.
-- The signed iOS Wi-Fi Aware entitlement and Android Aware capability checks pass on the target devices.
-- The production floor remains iOS 17, while Wi-Fi Aware requires newer supported hardware and OS versions. Mixed tour groups will therefore depend heavily on BLE when no LAN exists.
-- The target Pixel reports a maximum of eight NAN data paths. This is a device-specific limit, but it proves Aware overflow is normal product behavior rather than a theoretical edge case.
-- A separate cross-platform AirDrop-like application transferred files successfully on the same device class, which makes native Aware interoperability credible but does not prove this implementation.
-- The iOS Aware lab owns the only `NetworkListener` and `NetworkBrowser` that use Wi-Fi Aware. The production Aware lane classes have no application call sites, so the normal iOS app cannot currently establish an Aware session.
-- Android-hosted LocalOnlyHotspot/Wi-Fi Direct was unstable in physical use and is removed from the production direction.
-- bitchat implements protocol-compatible iOS/Android BLE controlled flooding and 16 kb/s live AAC voice frames. This proves an implementation path exists; it does not prove GetOverHere's group-size, latency, background, or battery requirements.
+## September 19 — physical qualification resumed; cable step pending
 
-## Architecture
+Cable follow-up: user reported iPhone+Pixel7 connected, but fresh ADB/USB
+inventory identifies Pixel11Pro (`192.168.1.17:43419`) as the phone with an
+attached Apple iPhone (USB vendor1452/product4776). Pixel7 remains USB-connected
+to Mac. Pixel11Pro reports data_role=host, current_mode=dfp,
+can_change_data_role=false; no wired IP interface. Its visible Settings USB
+tethering control is disabled. This is not the previously qualified opposite
+USB role. Ask which Lightning cable/adapter is being used before further setup;
+do not report a gateway transport failure when no IP link exists. iPhone is now
+unavailable through devicectl and its former debug endpoint failed with NWError.
 
-### Module ownership
+HEAD `7240253`. Both Pixels now run the reviewed Debug APK (SHA-256
+`c2ea45e02ffd401a7f326d2f4af66f931db721c7764ea1685ff27f1b2d558426`).
+Physical Aware fixture passes both directions: Pixel7 `2A111FDH2007A1`
+and Pixel11Pro `66180DLKX006ND`. Each guest verifies admission, pointer state,
+byte-exact512-byte asset and100 non-silent native-decoded frames. This is a
+synthetic source, not microphone-to-speaker or endurance proof. Commands and
+artifact locations are appended to ExperimentLog.md.
 
-| Module | Owns | Planned impact |
-|---|---|---|
-| Swift `TourSessionCore` | GOH2 wire contract, session state, deterministic CLI | Add transport-neutral realtime frame and relay/dedup fixtures only when required |
-| Kotlin `:tour-session-core` | Exact JVM equivalent of the Swift core | Match every Swift wire and state change byte-for-byte |
-| iOS app `Core/` | Aware pairing/connection owner, BLE link/relay transport, LAN transport | Complete the missing production Aware bootstrap; add bounded BLE transport behind existing interfaces |
-| Android app `core/` | Aware discovery/NDP, BLE link/relay transport, LAN transport | Repair the cross-platform Aware handshake and add the matching BLE transport |
-| Platform `Services/` | Audio lifecycle, presentation, assets, guidance, membership | Consume transport interfaces; remain unaware of radio-specific details |
-| Platform UI | Tour flow and diagnostic lab | Keep transport diagnostics out of production; expose only join/reconnect/degraded state |
-| `scripts/` and platform tests | Cross-language, simulation, build, and device gates | Add topology, stale-audio, route-switch, and physical-test harnesses |
+iPhone13Pro `00008110-000528410CF8801E`, iOS27, Developer Mode enabled:
+current Debug build installed from `/tmp/GetOverHere-20260919-device/Build/Products/Debug-iphoneos/GetOverHere.app`.
+Existing user edits to project.pbxproj and Info.Debug.plist are preserved;
+generated microphone/local-network usage descriptions verified. iPhone guide
+create/capture running, pointer selection and leave were exercised. Pixel7
+guide microphone startup also reached RUNNING, including strict Aware mode;
+no audience attached, so no live end-to-end claim. An earlier startup logged
+`Cannot start tour features (IllegalStateException)`; later attempts passed.
+Cause remains unproven; do not label it fixed.
 
-### Dependency direction
+User has been asked to connect iPhone directly to Pixel11Pro and enable USB
+tethering, leaving Pixel7 on Mac. Pixel11Pro secure wireless ADB verified at
+`192.168.1.17:43419`; rediscover with `adb mdns services` if it changes.
+Before rewiring, neither Pixel had a USB network interface. Next: verify actual
+wired addresses, enroll original iPhone guide + Android companion, then attach
+Pixel7 through strict Aware. Three phones cannot qualify the iOS audience branch.
 
-```mermaid
-graph TD
-    IOSUI[iOS UI] --> IOSService[iOS services]
-    AndroidUI[Android UI] --> AndroidService[Android services]
-    IOSService --> TransportAPI[Transport interfaces]
-    AndroidService --> TransportAPI
-    TransportAPI --> SessionCore[GOH2 session cores]
-    IOSAware[iOS Aware owner] --> TransportAPI
-    IOSBLE[iOS BLE overlay] --> TransportAPI
-    AndroidAware[Android Aware owner] --> TransportAPI
-    AndroidBLE[Android BLE overlay] --> TransportAPI
-    LAN[Existing LAN transport] --> TransportAPI
+iPhone authenticated debugger is temporarily available at `192.168.3.175:50999`;
+private credentials `/tmp/GetOverHere-20260919-private.Qhaw6V` (never print contents),
+CLI `Packages/AppDebugControl/.build/debug/goh-control`. Activation expires after
+15minutes. Pixel debug endpoints expire after10minutes and do not keep screens
+awake; re-enable through visible consent UI. Last Pixel11Pro client attempt
+returned TLS EOF and needs endpoint/state inspection before use. All created
+rooms were ended; transport fixtures finished. No paid resources, source repair,
+commit, push or tag change this checkpoint.
+
+## September 15 — review repairs implemented and software verified
+
+User approved finishing the software with unit tests, simulator/emulator and
+available local tools; physical phones remain deferred. F1–F12 are implemented.
+Branch `fix/deep-dive-2026-09-02`; reviewed base `ec1b0b8`. The repair commit
+contains this section (`git log -1 --oneline`). Stable LAN tag remains unchanged;
+no push or new tag was requested for this repair.
+
+Current evidence and artifact hashes:
+`benchmarks/2026-09-15-security-review/README.md`. The original report now starts
+with a per-finding repair disposition; original findings/red logs are retained.
+
+- All nine repository gates pass. Android app205, Kotlin core83, Swift core84;
+  iOS201 definitions/248 passing runs, four explicit hardware-only skips.
+- Emulator native gateway12, codec/reconnect8, setup/debug UI6; visible
+  consent/network-client/recorder22 checks pass. iOS setup/deeplink UI2 pass.
+- Mac↔Android native TLS passes both server orientations with exact65,536-byte
+  round trips. Stored certificate renewal and failed/expired TLS tests pass.
+- Both Release builds exclude debug control; generic signed iPhone Debug build
+  passes signature verification. No physical devices queried or installed.
+
+Repairs: bounded Android encoder replacement with signed-output regressions;
+companion-only bounded clock skew and local enrollment deadlines; new-enrollment
+certificate renewal; Apple route/candidate ownership; pre-ACK shared capacity;
+absolute TLS/header deadlines and failed-ACK cleanup; gateway-only reported write
+timeouts; visible/exhaustible native-owned recovery and explicit retries.
+
+Next is **physical qualification**, not another transport rewrite. Run
+`FieldAcceptance.md` A13–A20 with either original guide orientation, USB companion,
+Apple P2P iOS audience and Android Aware audience. Prove route provenance,
+ordinary room create/join and microphone-to-renderer/audio, slides/pointer/assets,
+cable/radio recovery, locked listeners, endurance and the actual supported cap.
+Any physical failure may require more fixes; no software gate promises otherwise.
+Do not ask for phones or probe them until the user says they are back.
+
+Useful artifacts: signed iPhone app at
+`/tmp/GetOverHereGatewayReviewDevice/Build/Products/Debug-iphoneos/GetOverHere.app`;
+Android APKs in the normal Debug/androidTest output paths. Exact commands and
+result bundles are in the evidence README. The first ad-hoc parallel simulator
+run was canceled after failures; use the existing serial main gate. An old
+companion-expiry assertion was corrected to the deliberate skew boundary and
+the full serial gate rerun successfully. Research archives and two-hub scope
+remain unchanged. No paid resources were started.
+The task-owned Android emulator was stopped after verification. Generated Kotlin
+session-marker cache was moved to `/tmp/GetOverHereGatewayReview-kotlin-sessions-20260915`;
+source files and evidence were retained. No shared simulator service was restarted.
+
+## September 15 — original review phase, before the repairs above
+
+Current HEAD remains `ec1b0b8`, branch `fix/deep-dive-2026-09-02`. User has no
+devices and requested an independent deep security/code review before further
+implementation. No production fixes or commit/push were performed this review.
+Report: `SecurityCodeReview-2026-09-15.md`, preserving supplied finding IDs F1–F10
+and adding F11 absolute TLS deadlines and F12 failed-ACK socket cleanup.
+
+The September11 passing baseline is not evidence that coding is complete.
+Isolated actual-code regressions now reproduce F1 terminal/stalled encoders and
+F2 clock-skew rejection on both platforms: Android3 failures, Swift1 failure.
+Run `bash scripts/review/gateway/run.sh`; intentionally red until corrected.
+Review tests are injected only with their Gradle init script/separate Swift
+package, not into the normal suites. Normal Android app198 tests and actual
+LocalLinkSecurity4 definitions/8 cases pass. Raw evidence is retained under
+`benchmarks/2026-09-15-security-review/`. All review jobs have finished.
+
+Next software work, after the review checkpoint: A1–A6 in the review report
+(codec recovery; skew/identity renewal; Apple endpoint ownership; atomic lane
+reservation/deadlines/cleanup; native-owned recovery state; full coordinated
+regressions). No transport rewrite, listener mesh or new debugger is required.
+Several supplied claims were narrowed: ordinary LAN bypasses the nearby copy
+deadline; a group is one lane; native Android recovery exists; iOS companion
+manual retry need not reenroll; two iOS hubs are outside the approved topology.
+
+Physical FieldAcceptance A13–A20 is still NOT RUN. Do not ask for phones or probe
+them while the user is away. The older candidate/build hashes below remain
+historical and must be rebuilt after fixes before the consolidated device run.
+
+## September 11 — two-hub software candidate verified; physical run next
+
+User approved `GatewayImplementationPlan.md`: either guide orientation, USB
+companion, Apple peer-to-peer iOS branch and Android Aware branch. TWO HUBS ONLY;
+no audience relay tree. Qualified cap may be below30. Companion keep-awake allowed,
+locked listeners still required. Plan/USB evidence checkpoint: `18d0c46`.
+
+The approved two-hub coding is implemented and the final software gate passed.
+This is not physical product qualification.
+GHP1/GHL1/GHD1 contracts, mutually pinned TLS1.3, original-guide fixed-lane
+forwarding, Apple peer/Aware branches, setup UI, debug adapters, native local
+recorders and evidence tools are implemented. Final ownership/recovery regressions
+passed, including Android guide-local Aware activation and preference restoration.
+ADR-069 records the boundaries. The implementation commit follows the `18d0c46`
+plan checkpoint; use `git log -1` for its exact revision. No stable tag was moved.
+Do not mistake a protocol or simulator test for physical gateway qualification.
+
+Device preflight at implementation start: both saved Pixel wireless endpoints
+timed out, `adb mdns services` empty; only Pixel7 remained listed offline. The
+iPhone17ProMax is paired/available; iPhone12mini unavailable. User was notified
+asynchronously; continue software work without waiting or changing radio settings.
+The user subsequently confirmed they are away from the workstation/devices and
+will notify us when back. A read-only iPhone process query also failed with
+CoreDevice4000/NWError54 despite the paired inventory. Do not keep probing,
+installing or asking for intermediate phone tests. Only simulator/emulator work
+is currently available. The consolidated next physical session is A13–A20 in
+`FieldAcceptance.md`; two iPhones and two Androids cover both branches, not capacity.
+
+Current reusable tools and collected software evidence:
+`scripts/gateway_tools.md`, `scripts/verify_tour_session.sh`,
+`scripts/verify_gateway_tls_interop.py`, and
+`benchmarks/2026-09-11-gateway-software/README.md`.
+Final evidence: `verify_tour_session.sh`9/9; Swift core81; Kotlin core82;
+Android app198 and native TLS/admission/recovery9; iOS app196 definitions/242 runs
+passed with four explicit physical-fixture skips. Gateway262 cross-language
+cases, v1/v2 admission and both signature directions pass. Production Gateway UI
+passes on simulator/emulator. Android debug5 plus visible client/recorder22 checks
+pass on the final APK. Actual Apple/Android TLS passes both server roles over
+test-only ADB tunnels with installed APK hashes and65,536 exact bytes each.
+Both Release debug-exclusion audits and the signed iPhone build integrity pass.
+
+Next action when the user returns: execute FieldAcceptance A13–A20 with one frozen
+candidate. Start iPhone guide → USB → Android companion → Android listener, add
+the iOS listener, then reverse hub roles. Do not build another debugger or resume
+the superseded listener-relay work below. Actual USB application routing/discovery,
+radio coexistence, locked speech, acoustic timing, cable/radio recovery, capacity
+and endurance are all NOT RUN. Four phones can validate both branches, not30.
+
+Builds retained locally: Android `app/build/outputs/apk/{debug,androidTest/debug,release}`;
+iPhone `/tmp/GetOverHereGatewayIOSDevice/Build/Products/Debug-iphoneos/GetOverHere.app`;
+iOS Release `/tmp/GetOverHereGatewayIOSRelease/Build/Products/Release-iphoneos/GetOverHere.app`.
+Android final debug SHA256:
+`33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a`.
+The session-owned Android emulator is stopped; test tunnels/credentials were
+removed. Existing physical devices and their radio settings were left untouched.
+All older sections below are chronological history, not the current work queue.
+
+## September 11 — direct USB network verified
+
+After the user reversed USB roles and enabled Pixel11Pro USB tethering, direct iPhone
+connectivity works: ncm0=10.255.230.95, peer=10.255.230.7; forced ncm0 ping5/5 passed,
+average RTT2.650ms. Wireless ADB remains available at192.168.1.17:33101 (Pixel11Pro)
+and192.168.1.165:42369 (Pixel7); endpoints may change. Attached iPhone USB serial
+00008150001208901AC0401C differs from the earlier12mini. Exact evidence in ExperimentLog.
+Still untested: application TCP/UDP throughput, actual tour relay/audio, Aware alongside
+USB networking, and lock/endurance. Do not disable tethering or radios without direction.
+
+## September 10, 19:41 — three-phone speed benchmarks complete
+
+Full results and repeat commands: [benchmarks/2026-09-10/README.md](benchmarks/2026-09-10/README.md).
+All seven Bluetooth configurations passed: four mixed guide-role orientations, both
+Android guide orientations, and iPhone with both Android listeners. Each guest verified
+three64KiB transfers per direction and50 echo samples. Aware bulk and tiny profiles
+completed three rounds per condition in both Android guide roles. All1,800 tiny echoes
+returned;176 had RTT≥150ms. Do not translate that RTT into one-way or acoustic latency.
+Both Androids currently report8 supported Aware data paths; only one peer was measured.
+
+Next product work remains Android-guide intermittent audio startup/encoder reset churn,
+then sustained real audio with both listeners, synchronized fan-out, locked/background,
+and acoustic/field qualification. Mixed Wi-Fi Aware is NOT established by these runs.
+
+## September 10, 19:30 — router-free UI passes; speed-test setup history
+
+Supersedes the admission/startup blockers below: Android GOL2 now separates metadata
+from admission; the iOS listener synchronously releases port50003 on stop. Physical
+five-cycle Create/End UI reproduction passed after the errno48 fix. Normal iOS Find
+enables Bluetooth without forcing experimental Wi-Fi Aware.
+
+User forgot the iPhone Wi-Fi network. USB UI control remained available. Both normal
+Create/Find/Join/Audio/Pointer directions passed afterward over Bluetooth; artifacts
+`GetOverHereNormalUI-7qjtk44m` and `GetOverHereNormalUI-_h_rr_y3` in the system temp folder.
+This does not erase the earlier Android-guide intermittent Waiting for Audio failure:
+Android encoder recreation churn was also observed during the passing run and remains
+unresolved. Do not call the media path endurance-qualified.
+
+Current request: benchmark two Androids plus iPhone. Android Aware bulk completed both
+guide orientations; `/tmp/GetOverHereAwareBenchmark.3koyid51/results.json` has verified
+byte totals and timings. New test-only Bluetooth GBB1 harness measures each direction
+and 64-byte echo RTT, plus two concurrent Android listeners under an iPhone guide.
+It uses synthetic payloads through the production L2CAP/guide-loopback adapter, not
+tour encryption/codec. Android and iOS protocol loopback smoke each passed1/1.
+The first physical pilot selected zero iOS tests; rejected, not a radio failure/pass.
+Corrected Swift Testing selectors require parentheses. Completed results supersede
+this setup status above.
+
+
+## September 10, 18:40 — actual visible iPhone ↔ Pixel tested
+
+**Current priority: fix Android-guide → iPhone-guest admission, then rerun both roles.
+Do not extend the debugger before this pair works.** User explicitly redirected work
+from tooling to the two-phone tour loop.
+
+- **F1 PASS, iPhone guide → Pixel11Pro guest over Bluetooth:** the real visible iPhone
+  AppCoordinator created the room via authenticated debug commands. Android's production
+  service joined with LAN removed from the selected record, asserted Bluetooth provenance,
+  received authoritative Pointer state and passed five successive live PCM checks:
+  **160,048 renderer-accepted bytes in5,008ms**, minimum128,000. iPhone reported one
+  audio-ready guest. This is live microphone/renderer evidence, not acoustic latency,
+  assets, locked endurance or30-device qualification.
+- **F2 FAIL, Pixel guide → visible iPhone guest:** discovery succeeded; Join failed with
+  `The guide connection closed before room admission.` No accepted playback. This matches
+  the earlier native metadata/admission endpoint-reuse failure. Separate fifth metadata
+  PSM remains the next candidate, not implemented. Preserve admission/signature checks.
+- **F3 Debug bridge proven for its immediate purpose:** approved relaunch succeeded;
+  network create/audio/features/lock/unlock/leave smoke passed; physical debug-panel UI
+  observer passed1/1. A second full smoke failed at room creation with occupied admission
+  port50003. The newly added isolated stop/restart regression passes on simulator AND
+  iPhone, so no speculative socket teardown patch was applied. Full-app reuse still needs
+  investigation. New deep-link UI test compiles but has not run.
+
+Both physical fixtures finished. iPhone test tour ended, audio idle, no active room;
+its original Bluetooth/Aware toggles false/false restored. No device radio/router settings
+changed. Bridge remains bounded to its15-minute launch lifetime. Evidence paths and
+exact commands are appended in ExperimentLog. The historical pending approval below
+was satisfied by the user's `Go`; the initial debugger build is commit `63bb77d`.
+
+## September 10 current task — iPhone network debug control
+
+User requested a debug server/library in the iPhone app plus a Mac command client,
+using the actual visible UI/coordinator to complete mixed-device debugging.
+Implementation and usage: [Packages/AppDebugControl/README.md](Packages/AppDebugControl/README.md).
+ADR-066 records its security/lifecycle boundary. Do not confuse debug-network access
+with completion of the tour's mixed Bluetooth transport.
+
+- **A10 implemented:** Debug-only SPM TLS 1.3 server/client, pinned ephemeral certificate,
+  authenticated/replay-bounded commands, actual AppCoordinator adapter, status/watch/wait,
+  room/navigation/audio commands, `goh-debug://panel`, explicit 15-minute activation,
+  bounded foreground keep-awake and Stop. Release excludes the server and URL scheme.
+- **A11 verified:** Two package tests pass with actual repeated TLS connections and
+  wrong-key/wrong-pin/replay rejection. Three simulator adapter tests pass. Signed iPhone
+  build-for-testing and unsigned Release build pass; Release plist/resource/symbol/string
+  check passes. Exact commands/artifacts are in ExperimentLog.
+- **A12 physical partial:** Installed initial bridge on the selected iPhone. Authenticated
+  `status` from the Mac to `192.168.3.132:50999` returned the actual foreground room list,
+  audio idle, both nearby toggles false. Subsequent requests timed out in connection
+  preparation; the saved endpoint file still said listening, which is not a liveness
+  guarantee. Lock-state query said no passcode required; it does not establish whether
+  the screen/app was active. Do not label the timeout's cause as proven.
+- **A13 next:** User approval to relaunch the updated debug app was requested asynchronously.
+  The latest keep-awake update is built but not yet installed/relaunched on the phone.
+  After approval, relaunch with fresh private credentials, run
+  `scripts/verify_iphone_debug_control.py --create-room`, then the opt-in visual observer
+  with `scripts/observe_iphone_debug_control.py`. Verify the debug panel and actual pointer
+  selection on the phone. End the owned test room/microphone. Deep-link registration is
+  confirmed by the simulator's system Open prompt, but panel presentation is not yet
+  visually verified. A manual lock can still suspend the endpoint; no background workaround.
+
+WIP checkpoint `7c3829b` saved prior mixed routing/Bluetooth work before package wiring;
+it is not a verified mixed-product completion commit. Stable LAN tag is unchanged.
+Important newer A8 result: three distinct native PSMs passed, and a four-lane Android
+endpoint map was implemented, but the live Android-guide→iPhone run still fails when
+metadata and admission reuse one PSM. A separate fifth metadata endpoint is the next
+candidate, **not implemented**. Artifact `/tmp/GetOverHereNearbyCross.JWNDfD` retains
+that failure. Use the visible debug bridge to investigate, then return to A8/A9.
+
+## September 10 active mixed-device repair
+
+The user has reauthorized physical testing and requested **Android and iPhone working together**. The September 8 unavailable-device restriction below is historical, not current. Selected pair: USB iPhone 12 mini `00008101-000C690C3A30001E` (iOS26.5.2) and Pixel11Pro `66180DLKX006ND` (SDK37/full37.0). Other connected devices are not part of this run. Different infrastructure networks do not prove a nearby route: the mixed harness explicitly selects Bluetooth and asserts native provenance. No radio, router, passcode, pairing or credential settings changed.
+
+Starting HEAD was `b3df039`; prior repair is now preserved in WIP checkpoint `7c3829b`, not declared verified. Stable LAN tag remains unchanged at `59b0402`. Xcode is now `/Users/aessam/Downloads/Xcode.app/Contents/Developer` (27.0), not the historical deleted beta path.
+
+- **A6 implemented/software-tested:** narrowly typed LAN admission reachability failure can try the matching nearby endpoint once, only before receiving any challenge bytes. Wrong code, partial/malformed challenges, identity/version rejection and reply failures remain terminal. Admitted nearby route ownership survives later LAN discovery; failed reconnect clears stale adapters without losing nearby intent. Android169 JVM tests passed; scoped iOS38methods/49runs passed. These counts precede subsequent live-test instrumentation. See ADR-064 and the September10 ExperimentLog entry.
+- **A7 physical evidence:** real iPhone guide UI passed Create/open/lock/edit/unlock, microphone startup, Slides/Map/Pointer and End Tour. Mixed protocol iPhone-guide→Pixel passed v2 locked admission, signed pointer, exact512-byte asset and at least100 nonzero decoded frames. This is generated-tone component evidence, not acoustic or live-service completion.
+- **A8 active blocker:** Pixel-guide→iPhone admits and decodes first audio, but opening additional native channels on the same Android PSM fails (`CBInternalErrorDomain 24`). A sequential native-only probe also opens only the first channel, so queued callback timing alone does not explain it. Separate-PSM and close/reopen probes isolate the public API behavior before a production redesign. Do not interpret private numeric error codes or retry blindly.
+- **A9 active live gate:** production microphone/playback/readiness test exists on both platforms; five successive one-second windows require increasing renderer-accepted PCM bytes. First iPhone-guide run failed discovery and logged Aware start despite the fixture selecting Bluetooth; fixture/production lifecycle investigation is in progress. No live mixed-session pass claimed.
+
+Reusable physical gate: `scripts/verify_nearby_cross_platform.sh` with `GOH_NEARBY_PROFILE=protocol|live|channel-probe`, exact selected-device variables, and `GOH_NEARBY_USE_BUILT=1` for frozen artifact reuse. Test-only channel probes do not qualify application lanes. Artifacts include build hashes, scoped logs and exact XCTest/instrumentation outcomes. See ExperimentLog for commands and failures. Do not rebuild APKs/DerivedData during an active pair run; a locally stopped adb command may leave its bounded remote fixture finishing.
+
+Finish A8/A9, retest both guide roles, rerun affected software gates, then record the exact verified commit and installed artifacts. Thirty-listener capacity, mixed Aware, native relays, radio-pressure scheduling and endurance remain pending; a working pair does not complete those gates. Preserve the full research archives and broader plan below.
+
+## September 8 verified implementation checkpoint — complete product still pending
+
+The user approved the complete plan: **30 mixed audio-ready listeners plus one guide**, router-free/no Internet, Wi-Fi and Bluetooth enabled; one-time OS pairing is allowed and independent of the optional editable room code. Wi-Fi-disabled BLE capacity is qualified separately. The user is now away from home: **no physical devices are available or authorized for this run**. Continue all coding and simulator/emulator work; defer device-only qualification to the consolidated acceptance round without repeated requests to reconnect phones.
+
+This checkpoint starts from documentation commit `aab2c10`, prior verified app milestone `7dca55f`. Its integrated source passed the final software gate and unsigned generic iOS build; all builders are finished and sources frozen. Stable LAN tag remains at `59b0402`. This is a verified direct-session implementation milestone, **not completion of native relays, bidirectional mixed Aware or the30-listener product**. Preserve focused commits and do not overlap shared build jobs.
+
+- [x] **A1 software:** Room-centric Create/Find Nearby/Join, actionable permission/errors, truthful audio startup/readiness, microphone restart and playback retry. Physical experience still needs qualification.
+- [x] **A2 software:** Guide key bound in admission v2, session pin continuity, and immutable sign-once production integration across all authoritative lanes. No human-identity or physical-radio guarantee.
+- [ ] **A3:** Typed native route ownership, participant/lane capacity accounting, public pairing eligibility/probe and evidence-based realtime lane completion.
+- [ ] **A4:** Bounded two-hop/five-child guide-authorized relay, per-listener fallback/recovery and duplicate/expiry enforcement.
+- [ ] **A5:** Shared audio/control/asset scheduling, late-join/current-content priority and complete field lifecycle.
+- [x] **Checkpoint verification:** Full host/simulator/emulator gate, unsigned generic iOS compile, exact artifact hashes and one field checklist.
+- [ ] **Final delivery:** Complete remaining A3/A4/A5 coding, then qualify both guides, lock/background, recovery, assets and a31-device walking tour. Physical gates remain untested until hardware is available.
+
+### Current verified implementation (September 8 checkpoint)
+
+- **A1 implemented/component-tested:** Find Nearby/Create activates permitted discovery on intent; no launch radio prompts; actionable join errors/progress; runtime audio errors and audio-only retry/microphone restart. Guest PLAYING follows renderer acceptance. Authenticated revision-checked readiness reports drive the guide's `audio ready` count. This is not acoustic proof.
+- **A2 implemented/component-tested:** both native apps use admission v2, one signer across all guide lanes, pinned guide identity, verification before AEAD, typed terminal signature errors, GOR2 versioned nearby discovery, optional matching fingerprints and 60 KiB asset chunks. Existing v1 stays only in core/explicit native compatibility fixtures. New app-to-old app requires updating both sides. See ADR-059.
+- **A3 partially implemented:** public Android SDK37.2 installed; compileSdk37.2 builds with AGP8.13.2, target36/min26 unchanged. Typed `NearbyGuestRoute(adapterHost, transport, roomID, routeID)` preflights selected room/guide/version, probes healthy cached routes and replaces failed ownership. Shared budgets permit 30 listeners ×3 persistent lanes +8 admissions; native participant caps reject listener31 without evicting healthy guests. These are not NDP or radio-capacity evidence. Android reuses one peer Network across lanes, reports actual resources and keeps compatibility/system-paired profiles distinct. Only the system-paired subscriber candidate is implemented; publisher remains open. The tiny-packet adapter benchmark and emulator/host smoke are implemented; no physical tiny-packet measurement or direct UDP/bypass exists yet.
+- **A4 prerequisite only:** mirrored, tested guide-owned topology planner (30 including relay-listeners, depth2, max5 children per relay, bounded leases/generations/subtree expiry). No native relay tickets/forwarding or group qualification yet.
+- **A5 partially implemented:** guide-owned fair bounded asset scheduler, current/next-slide priority, chunk-boundary guest yielding with exact partial resume, invalidation of stale reads/socket callbacks and readiness on participant replacement. Guide map import controls scroll on both platforms. Capture retains newest-one; pre-encode pending/retained inputs are bounded to eight with150ms monotonic freshness and preserved oldest-input timestamps. Stale cleanup/output cannot affect replacement runs (ADR-063). Asset payload pacing is not radio feedback or a complete audio/control/asset arbiter; field lifecycle qualification remains open.
+
+Final full gate: `/tmp/GetOverHere-integrated-candidate-20260908.log`, exit0, all9 host stages plus simulator UI, emulator and100 native CryptoKit↔Android signature checks. Core68 Swift/71 JVM; Android app158 JVM; Python benchmark12; emulator31 passes/5 capability or physical skips, including the tiny-packet smoke. iOS unit result `Test-GetOverHere-2026.09.08_11-32-23--0700.xcresult`:166 passes/203 parameterized passing runs,1 physical-only skip. UI `Test-GetOverHere-2026.09.08_11-33-16--0700.xcresult`:4 passes/7 runs,1 physical-only skip. Unsigned generic iOS compilation also passed. All failures and earlier passes remain recorded in ExperimentLog.
+
+Candidate Android APK: `Android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `9566fb7a8bcbbea4ccfc7c12972f040c32a4aff2a94f021674bff33e4eb75b9e`. Test APK SHA-256 `e8308fdfd67f040d7976182e35d5062203628eae2aa750d47ed1d37b1ae22bb6`. This is coordinated admission-v2 software; install both updated apps together in the eventual field round. The generic iOS build is unsigned, not an installable/TestFlight qualification.
+
+Retained failures and fixes are in ExperimentLog. Port isolation plus listener cancellation/rebind are now green. A later same-named typed-error mismatch came from TourSessionCore being statically linked into both app and hosted tests; removing only redundant test-target linkage fixed typed terminal rejection (ADR-062). Raw error log calls caught by the unchanged privacy audit were changed to type-only logs. The automatic simulator diagnostic collector was stopped once after its tests finished; no simulator service restarted. Default SwiftLint still reports style/complexity findings; no clean lint or physical-radio claim is made.
+
+One later device round is consolidated in [FieldAcceptance.md](FieldAcceptance.md). No devices should be queried, installed or toggled during the current away-from-home run.
+
+Public-pairing gap under active investigation: documented Android `WifiAwareNetworkSpecifier.Builder.setPort/setTransportProtocol` requires app-supplied security configuration, while framework-offloaded pairing does not expose its key. Do not add a dummy PSK or fixed-port workaround. System subscriber can consume Apple-published endpoint metadata; Android system publisher needs a supported endpoint contract or an explicitly implemented reverse-dial design. A reverse-dial candidate keeps logical guide/guest roles while iOS publishes native transport, with authenticated BLE control bootstrap, bounded streams and unchanged end-to-end v2/signatures. It is not yet implemented or qualified.
+
+### Remaining coding, separate from unavailable hardware
+
+- **A3 endpoint/latency work:** complete a supported Android-guide→Apple-listener transport-role contract, potentially reverse-dial; current publisher is explicitly unavailable. New API37 AwareDataPathRequest endpoint setters have the same supplied-security requirement, so they do not close it. Preserve compatibility Aware. Use the implemented `--profile tiny` adapter test, then expose/test actual native direct TCP/UDP endpoints for comparison before changing production realtime transport. The adapter benchmark must not be labelled direct UDP or production realtime ACK-lane performance.
+- **A4 member authority and relay integration:** the core topology planner is not forwarding. GOHRv2 binds the guide but does not enroll a guest signing key. Before native relays, select/review an explicitly versioned pairwise-admission enrollment extension (or new admission version), retaining at most8 expiring one-use contexts. Do not enroll member keys using the shared media secret or reuse the guest ECDH private key for signing. Guide-signed grants must bind the enrolled member key, room, parent, generation, lanes/directions, expiry, depth≤2 and children≤5; each native link requires fresh mutual key-possession proofs. Extend ADR-038 explicitly for certified guest asset requests/status/readiness/heartbeat/leave, never guest-authored guide authority. Root remains sole admission/membership authority.
+- **A4 replay/native proof:** move replay/stream authorization to the session owner across route changes. Obtain a nonce-bound signed guide freshness anchor with active stream IDs and monotonic sequence floors before enabling a replacement route; floors cannot decrease. Add immutable-byte root→relay→leaf and authenticated restricted uplink socket tests, copied-grant/replay/expired lease/third-hop/listener31 rejection, partition/relay-loss cleanup. Then integrate bounded native simultaneous upstream/downstream roles with generation ownership. Do not enable a blind GOD1 duplex proxy or count a copied ticket/UUID as possession proof.
+- **A5 pressure scheduling:** retain the now-bounded producer queues and independent native writers, since a single serial writer would introduce cross-lane head-of-line blocking. Add measured write-pressure instrumentation and, if needed, a shared nonblocking write-admission policy for native nearby lanes. Such a policy can prioritize new writes and bound asset work, not preempt bytes already submitted to a radio. Current asset scheduling already handles fair admission/current-content/resume; do not rebuild the caches.
+
+Physical qualification still includes mixed pairing both guide roles, simultaneous relay radio roles, actual NDP ceiling, Wi-Fi-off BLE group cap, microphone-to-speaker latency/skew, active lock/interruptions, movement and60–90-minute endurance with30 mixed listeners. No simulator result resolves those items. Preserve LAN and do not silently substitute a mandatory AP for the approved target.
+
+The sections below retain the preceding handoff/evidence. This active checklist supersedes their statement that implementation has not started.
+
+## Preserved pre-implementation handoff (historical September 7 state)
+
+The following sections preserve the handoff after benchmark commit `7dca55f` and the research archive. Their completion/pending labels describe that checkpoint; the September8 implementation section above is current. Both archived reports label their research date **8 September 2026**. Archiving the reports itself was documentation-only; new software evidence is recorded above and in ExperimentLog.md.
+
+**The product is not finished.** Direct Android BLE/Aware fixtures and the two-phone Aware throughput benchmark pass. Thirty-person capacity, mixed-platform Aware, live acoustic/locked/endurance qualification, production guide-key pinning, authenticated relay and complete hybrid scheduling remain unfinished. The user wants all coherent coding/software gates before one consolidated manual acceptance package, not repeated intermediate builds for feedback.
+
+### Repository and checkpoint
+
+- Workspace: `/Users/aessam/tmp/ios-macos-apps/GetOverHere`.
+- Branch: `fix/deep-dive-2026-09-02`.
+- Latest verified implementation: `7dca55fe482ecf0d51aa74122118389ad84a6446` (`Benchmark Android Aware and avoid listener port collisions`). A later documentation commit does not imply a newly tested app binary.
+- Stable annotated tag: `stable-local-network` → `59b0402c91cfabb3eb839800b2b8521be90854e0`, annotation `Stable Local Network`. **Do not move it.** No push without a sharing request; no co-author in commits.
+- All previously launched benchmark and qualification jobs finished. No paid resources were started. Dedicated simulator/emulator were retained; check actual availability before use, without restarting shared services.
+- [Historical checkpoints and original P0–P8 plan](NextSession-History.md) preserve all older phases, failures and acceptance gates. Their “discovery only”, “no production Aware owner”, unavailable-Android, and mandatory-code statements are not current state.
+- [ADR.md](ADR.md), [LessonsLearned.md](LessonsLearned.md), and [ExperimentLog.md](ExperimentLog.md) retain decision, debugging and exact-command evidence.
+
+## Product and boundaries
+
+One walking guide speaks to approximately **30 listeners**, shares slides/images, a map target and a sightline pointer. Guest locations/headings remain local. This is not a multi-speaker conference. Thirty is the target, not a measured supported group size.
+
+Rooms start open. Both apps expose **Lock Room with Code** and a guide-editable code. No mandatory tour code, QR, cloud account, Internet service or external router for the intended router-free experience. Native system device-pairing consent is distinct from optional application room locking.
+
+| Network condition | Current direction | Evidence boundary |
+| --- | --- | --- |
+| Shared LAN, no Internet | Preserve existing LAN audio/control/assets | No 30-device qualification or newly implemented multicast follows from research |
+| No AP, Wi-Fi and Bluetooth enabled | Capability-gated Aware plus BLE, pursuing public mixed-platform interoperability | Android direct Aware fixture passes; speed run retained AP association but used explicit Aware sockets |
+| Wi-Fi radio disabled, Bluetooth enabled | BLE direct lanes and separately qualified fallback voice | Two-Android functional fixtures pass; mixed/locked/group acoustic behavior unproven |
+
+True radio groupcast, IP multicast, discovery advertising, replicated peer unicast and application relaying are different mechanisms. Research found no usable ordinary-app one-transmission-to-30-mixed-phones router-free API; this is an API finding, not proof that every standard or chipset lacks group addressing.
+
+**Keep router-free as the objective and LAN as fallback.** A mandatory portable AP, hotspot/Wi-Fi Direct dependency, public release cap, mandatory human verification, individual member revocation, or lowered OS baseline is not approved merely because a report recommends it. No private APIs, root/jailbreak, unrelated cleanup or silent plaintext fallback.
+
+## Completed implementation and qualification
+
+| ID | Completed work | Evidence and remaining limit |
+| --- | --- | --- |
+| C1 | LAN software hardening: encrypted GOH2 v4 realtime/control/assets, native encoded audio, sequence/expiry/replay policies, jitter buffering, presentation/focus/target/pointer state, content validation/recovery | Historical G1–G6/P3 in ExperimentLog; reuse existing features/tests. Group/endurance qualification remains open |
+| C2 | Open-by-default admission, optional lock/editable code, discovery lock state; admitted guests keep sessions on lock/edit/unlock | ADR-052, September 4 history; lock changes are not member revocation |
+| C3 | Apple→Android codec initialization/crash fix; reverse Android→iOS real codec fixtures; fixed leading-zero ECDH and main-gate admission parity | `59b0402`, `492572e`, ADR-053/055; fixtures are not acoustic qualification |
+| C4 | BLE/LAN discovery merge, explicit feature-boundary permissions, role-specific bounded scan/advertise lifecycle and error recovery | `7a41610`, `492572e`, ADR-054/055; original discovery-only capability superseded by C5 |
+| C5 | Direct BLE L2CAP and native Aware owners feed admission/realtime/control/assets through GOD1 fixed-lane adapters; capability-aware joining, cleanup and endpoint re-resolution | `8c73fa9`, ADR-056. Android PIN-derived SK-128 and Apple system pairing are not yet an interoperable mixed-Aware profile |
+| C6 | Native realtime bounds: eight queued frames, 150 ms queued-audio expiry, one-second write/ACK deadline, four-frame native ACK window | ADR-056; Android BLE both guide directions with Wi-Fi disabled before joining. No relay/acoustic/group claim |
+| C7 | Fatal Aware owner teardown/retry, stale-generation isolation, per-peer failure separation; iOS error/context surfaced without guessing `-11992` | `9f47662`, simulator lifecycle regressions; exact iPhone cause unresolved |
+| C8 | Swift/Kotlin guide-side admission drain after local EOF, capped at five seconds awaiting peer completion | `c1c18d0`, deterministic red/green/timeout tests and physical BLE both roles; no wire change |
+| C9 | Canonical P-256 low-S GOS1 primitives over immutable GOH2 ciphertext; externally supplied guide/session pin | `477f244`, ADR-057, native provider parity. **Core only:** admission key delivery, lifecycle pinning and production signing integration not done |
+| C10 | Native two-Android Aware benchmark with exact payload/sequence/counter verification, foreground/keyguard monitoring, setup/RTT/thermal metrics, bounded runner/APK manifests | `7dca55f`, all 18 measured trials pass; synthetic transport, not full-tour encryption/codec throughput |
+| C11 | Confirmed fixed-port collision repaired through dynamic listener allocation/advertisement; native stage logs; benchmark completion-owner lifetime fixed | `7dca55f`, occupied-port/completion regressions red then green. Not every older discovery failure is explained |
+| C12 | Full frozen software gate and post-fix Android Aware tour fixtures in both guide orientations | Logs below; no new iPhone, group, acoustic, deliberate lock or endurance qualification |
+| C13 | Both research reports archived with their references; corrections and ordered follow-up recorded | This documentation checkpoint, not new app implementation |
+
+### Final benchmark, not the preliminary pilots
+
+Three 10-second measured trials per mode, three modes, both guide roles. Every received 65,536-byte block, sequence and counterpart byte total checked; warm-up excluded. Receiver goodput includes receive/drain time.
+
+| Guide | Median guide→guest | Median guest→guide | Median duplex guide→guest | Median duplex guest→guide |
+| --- | ---: | ---: | ---: | ---: |
+| Pixel 11 Pro | 300.05 Mbps | 292.46 Mbps | 180.56 Mbps | 181.44 Mbps |
+| Pixel 7 | 307.41 Mbps | 299.36 Mbps | 185.69 Mbps | 181.37 Mbps |
+
+Highest sustained 10-second one-way trial: **326.61 Mbps**. Idle 100-sample RTT p50/p95: **14.64/155.02 ms** forward and **17.47/171.04 ms** reverse. Loaded duplex per-trial p95 reached **234.47 ms**. Guest-local four-channel setup: **2.14/3.99 seconds**. Native thermal status 0 at recorded samples is not battery/endurance proof.
+
+Evidence: `/tmp/GetOverHere-aware-benchmark-final.log`; `/tmp/GetOverHereAwareBenchmark.po2lx70k/` contains `manifest.json`, `results.json`, forward/reverse guide/guest output, emulator regressions and scoped app logs. Durable results, hashes, method and failed attempts are in the **2026-09-07 — Two-phone Android Aware throughput benchmark** section of [ExperimentLog.md](ExperimentLog.md). Temporary files may disappear; reading logs is not a new rerun.
+
+Measured APKs came from `c1c18d0` plus changes subsequently committed in `7dca55f`. App SHA-256: `783139bc2b5231b1a4d310e4619070eec6a86cc328d31b92b22a6e8a772bfe0a`; test APK SHA-256: `cc34a08e989d75f709f05ef51458abaaab747de60f29a02f8632a311bc744dfd`.
+
+Wi-Fi stayed enabled, phones were USB-connected and foreground, AP association was not removed. Payload used explicit Aware sockets, not USB/Internet/LAN fallback. Distance/RF conditions were not measured. Do not use the short pilot's higher peak, equate RTT/2 with measured one-way delay, or infer 30-peer scheduling from bulk throughput.
+
+### Passing gates and failures retained
+
+- Full host/iOS unit/UI/Android emulator/native-provider gate: `/tmp/GetOverHere-aware-benchmark-virtual-final.log`, ending `Virtual-device verification passed; physical audio and radio gates remain separate`, including 100 native cross-provider signature checks.
+- Actual Aware tour: `/tmp/GetOverHere-aware-dynamic-tour-forward.log` and `/tmp/GetOverHere-aware-dynamic-tour-reverse.log`; both complete harnesses passed admission/control/exact assets/non-silent native-decoded audio. These are not microphone→speaker tests; the legacy tour fixture does not enforce continuous foreground/keyguard state like the benchmark.
+- Disabled-Wi-Fi BLE: `/tmp/GetOverHere-drain-off-forward.log` and `/tmp/GetOverHere-drain-off-reverse.log`; both original Wi-Fi settings restored/read back enabled. A prior guide was observed asleep behind keyguard; that is not controlled lock-transition qualification.
+- Retain startup failure `/tmp/GetOverHere-aware-benchmark-pilot.log`, occupied-port red/green `/tmp/GetOverHere-aware-port-red.log` and `/tmp/GetOverHere-aware-port-green.log`, failed long completion `/tmp/GetOverHere-aware-benchmark-measured.log`, and completion regression `/tmp/GetOverHere-aware-bench-end-red.log`. Earlier `/tmp/GetOverHere-aware-benchmark-virtual.log` caught the deliberately red completion test; it is not final qualification.
+- Older reverse-Aware discovery intermittency and iPhone `-11992` remain separate failures; later passing runs do not erase them.
+
+## Research archive and adjudication
+
+- **RES-C — [Claude report: full supplied text and source list](Research-Claude-2026-09-08.md).** Section 12 retains its references. Do not adopt its categorical lock/interoperability/scale conclusions.
+- **RES-G — [ChatGPT report: full supplied text and source list](Research-ChatGPT-2026-09-08.md).** Stronger experimental starting point. Portable-AP primary mode, rekey/removal, PAKE library/profile and LAN multicast rewrite are proposals, not automatically authorized changes.
+- [CrossPlatformP2PResearchPrompt.md](CrossPlatformP2PResearchPrompt.md) is the earlier research brief, not necessarily the exact latest prompt used for these reports. The user supplied both full reports in the conversation; their entire research was not independently rerun locally.
+
+Report-local codes collide. Prefix them with RES-C or RES-G. **F1–F6 and A1–A4 below retain the codes from the latest conversation synthesis**, not the older checkpoints or report-local numbering.
+
+### F1–F6 — Corrections governing follow-up
+
+- **F1 — Lock is not suspension.** Claude's blanket claim that iPhone Aware audio must stop on lock is wrong. Apple allows Aware while the app executes in the background, closes connections on suspension, and separately describes idle cleanup. Genuine active background audio is a path to qualify; fresh locked discovery, idle pauses and relay-only execution are separate. No silent audio to manufacture background execution. [Apple DTS 787570](https://developer.apple.com/forums/thread/787570).
+- **F2 — Offloaded pairing is a candidate, not confirmed on our phones.** Android documents `setFrameworkOffloadedPairingEnabled` as added in **version 37.2**, system-mediated pairing, override of app pairing configuration and a recommended setup timeout of at least 30 seconds. Major API 37 does not prove this addition or hardware role support. Check SDK/runtime and documented bootstrapping capabilities before an isolated probe. [PublishConfig.Builder](https://developer.android.com/reference/android/net/wifi/aware/PublishConfig.Builder#setFrameworkOffloadedPairingEnabled(boolean)), [SubscribeConfig.Builder](https://developer.android.com/reference/android/net/wifi/aware/SubscribeConfig.Builder), [Characteristics](https://developer.android.com/reference/android/net/wifi/aware/Characteristics).
+- **F3 — Latency cause is unknown.** [NearbySocketBridge.kt](Android/app/src/main/java/com/aessam/comeoverhere/core/NearbySocketBridge.kt) already sets `tcpNoDelay = true` in `NearbyTCPConnection`. Audit all legs and compare direct TCP, direct UDP and current adaptation before blaming Nagle. Apple exposes realtime performance mode, voice traffic class and performance reports; inspect existing settings and measure. [WWDC25 optimization guidance](https://developer.apple.com/videos/play/wwdc2025/228/).
+- **F4 — No security shortcuts.** Discovery-advertised/self-signed keys do not establish trusted human guide identity. Admission binding and session pinning provide continuity within the stated first-contact model. Signing every Nth frame leaves a gap unless a reviewed construction authenticates all others. Intended producer work is encrypt/sign once then copy immutable bytes, not 30 signing operations per frame. ADR-038/057 and [SignedGuideFrame.swift](Packages/TourSessionCore/Sources/TourSessionCore/SignedGuideFrame.swift) define the prerequisite; app integration remains pending.
+- **F5 — Neither report qualifies 30 or authorizes routers.** Claude's initial mixed-router-free “yes” contradicts its later “not supported”; separated platform islands do not deliver one guide to a mixed group. ChatGPT's AP design still needs qualification and is not the selected product direction. Mixed Aware is unproven, not universally proved impossible. Shared-LAN multicast is not an already completed replacement for our lanes.
+- **F6 — Wire/software capacity also matters.** The ~79 kb/s/listener estimates omit some existing protocol metadata. Measure serialized GOH2/GOS1, native framing/ACK and per-peer costs. [NearbySocketBridge.kt](Android/app/src/main/java/com/aessam/comeoverhere/core/NearbySocketBridge.kt) defaults to **32 concurrent connections**, not guests, with multiple lanes per session. Audit all admission/link/queue caps before choosing group capacity; do not arbitrarily raise a constant.
+
+Other cautions: keep iOS 26.4 guards until actual API requirements are checked and preserve the iOS 17 baseline. Device PIN security is distinct from guide-editable room code (RES-G conflates them once). Historical eight-NDP diagnostic is a per-device observation to reread, not a universal limit. PAKE does not remove online guessing or authenticate human identity. Both reports' latency thresholds are proposed, not accepted tour SLAs. Unchecked API/hardware specifics remain research leads.
+
+## Planned work — execution order and gates
+
+Nothing below is completed by saving reports. Safe security/hybrid coding need not wait for an unavailable iPhone; physical gates control claims. Preserve focused verified commits. Begin with tiny harness smoke, not the Cartesian product of every proposed experiment.
+
+### A1 — Android resource and small-packet latency harness
+
+1. Extend the existing test-only benchmark boundary. Capture build/full SDK support, Aware availability, maximum/current NDPs/interfaces and network-bound provenance before/after one peer and multiple sockets. Keep diagnostics scoped; never log PINs, keys, payloads or unrelated traffic.
+2. Map sockets to NDPs and audit every app cap: native connections, pending admissions, lanes per participant, queues. Resources are observations, not reservations. Two phones cannot prove 30-peer capacity.
+3. Add deterministic probes at actual serialized audio size/cadence. Compare current loopback adaptation, direct TCP with recorded options, and a test-only native UDP path. Record loss/late delivery, jitter, queue age and p50/p95/p99 RTT; do not use RTT/2 as measured one-way delay.
+4. Emulator protocol smoke, bounded physical pilots both roles, then randomized controlled comparisons. Start idle versus paced assets before saturation. AP-unassociated/radio changes require explicitly scoped/restorable setup. No hidden automatic retries.
+5. Instrument per-stage timestamps and reusable result manifests. Decide production UDP/native-lane changes from evidence, retaining the known-good adapter until admission, crypto, expiry, replay, reconnect and lane tests pass. Do not blindly carry reliable-stream ACK semantics into expiring UDP.
+
+**Gate:** exact payload/sequence tests, native route proof, resource accounting and reproducible latency distributions leading to a transport decision. Maps to RES-G E1/E2 and RES-C E2/E3.
+
+### A2 — Public pairing probe and iPhone failure isolation
+
+1. Check installed SDK/runtime for the documented 37.2 addition, pairing and bootstrapping roles. No private API/reflection bypass. Keep Android↔Android PIN-secured operation as a separate compatibility profile.
+2. Where supported, add an isolated framework-offloaded-pairing probe using matching Apple declarations/public contracts. Do not rename production `_goh-tour._tcp` to a report's `_udp` example without changing the matching transport contract.
+3. Record discovery, consent/bootstrap, pairing persistence, NDP, endpoint/socket readiness, real byte exchange and reconnect separately in both roles. Verify additional-port API availability before lowering iOS guards.
+4. Once an iPhone is available/authorized, capture the exact operation returning `NWError.wifiAware(-11992)` and scoped diagnostics. Entitlements are present; meaning/cause is unknown. Full sysdiagnose/bugreports can include unrelated private data: obtain only as needed within authorization.
+5. Preserve P1's four focused physical-debug sessions/two-engineering-day stop-loss unless changed by the user. New documented capability is a concrete hypothesis; absent hardware is not a reason for blind retries. A failed route does not block unrelated BLE/security coding.
+
+**Gate:** real direct bytes and reconnect both orientations without LAN fallback, then repeated pairing and production lanes. API existence/pairing callbacks alone fail the gate. Maps to RES-G E3/RES-C E4. Two-Android authorization is not iPhone authorization.
+
+### A3 — Admission-bound guide key and immutable production frames
+
+1. Define a versioned direct-admission reply/transcript delivering the ephemeral guide verification key, bound to session/guide IDs, roles, request and key confirmation. Keep rooms open/code-free by default, state first-contact trust limits, and reject key substitution during session/reconnect.
+2. Integrate sign-once/verify-before-open across every authoritative realtime/control/asset producer and receiver, not only core fixtures. Reuse identical signed ciphertext across routes; socket writers never allocate nonces. Keep replay/expiry/version rejection.
+3. Audit [HybridSessionTransports.swift](iOS/GetOverHere/Core/HybridSessionTransports.swift) and Android equivalents: route fan-out can enter separate sealing owners. Consolidate at the logical producer rather than wrap independently sealed copies. Update native GOH2-kind inspectors/frame ceilings for the outer GOS1 header and 72-byte wrapper/signature overhead.
+4. Add cross-language/native-provider tests for pins, guide/session IDs, tamper, truncation, replay, version, reconnect, overlapping route bytes, evil-twin limitations and bounded expensive work. Crypto does not prevent relay drop/delay.
+5. Keep ADR-052 short-code active malicious-guide/offline attack and session-wide revocation limits explicit. PAKE library/profile, optional SAS/QR, individual rekey/removal and expanded epochs are **pending design/scope decisions**, not approved merely by the reports. No custom crypto or raw-code comparison replacement.
+
+**Gate:** production direct/overlapping delivery preserves identical signed bytes and only session-pinned guide authority; malicious admitted guests cannot forge guide frames; open/lock/edit/unlock and LAN remain green. Use ADR-038/057, both security sections and RES-G E9 with F4 corrections.
+
+### A4 — Direct audio qualification, bounded relay and hybrid completion
+
+1. Measure real capture→codec→AEAD/sign→native link→decode→playback on both Android roles, then mixed BLE/Aware where available. Use synchronized/external acoustic measurement for mouth-to-ear/playback skew. Generated decoded tones prove codec/transport only; distinguish headphones/receiver from group loudspeakers.
+2. Test active capture/playback after lock separately from fresh locked discovery, idle pauses, relay-only backgrounding, interruptions/headset changes and power modes. Audit genuine iOS audio/background modes and Android role-correct foreground services. No fake silent audio.
+3. Select bounded relay topology from A1 resource evidence, after A3 key/bootstrap integration. Implement central/peripheral and publish/subscribe coexistence, fixed fan-out/depth, session leases, TTL, split horizon, dedup, expiry, rate limits and successor recovery. No unsigned relay, arbitrary flooding, guest-authored authoritative traffic or stored speech.
+4. Test deterministic line/star/overlapping-star/partition/relay-loss simulations before physical claims. Relay upstream/downstream both consume resources; a tree relieves guide fan-out but not total transmissions. Two phones cannot validate a five-by-five tree.
+5. Complete per-participant routes and explicit capacity overflow, connected versus audio-ready counts, pin/session continuity, snapshots and dedup before playback/state. Never evict healthy guests for overflow. Current discovery preference is LAN→Aware→BLE; target route preference/failover needs explicit policy/tests, not historical prose treated as implemented behavior.
+6. Reuse existing asset hashes/manifests, transfer bounds, resume and state snapshots. Add shared scheduling for audio/control versus current/next slides and bulk assets; test uncached/degraded states, backpressure and late joins. Do not rebuild tested caches.
+7. Progress physical scale through capacity-minus-one/capacity/capacity-plus-one, then larger available groups toward 30 after direct/software gates. BLE Wi-Fi-disabled qualification is separate and restores settings. Run 60–90-minute walking/lock/coexistence cases with battery/thermal/range evidence, selecting actual acceptance thresholds before declaring passes.
+
+**Gate:** no authority escalation, duplicate playback/state, stale backlog, hidden route failures or invented capacity; supported size equals largest passing physical group. Maps to RES-G E4/E5/E6/E8/E9, RES-C E1/E5/E6 and historical P4–P8. RES-G E7 portable-AP qualification is a fallback proposal, not authority to buy equipment or mandate a router.
+
+### Integrated delivery after coding
+
+- Run host/core/cross-language/security/route/topology gates and full simulator/emulator suites against reachable production paths. Commit focused verified milestones, not two unproven radio changes together.
+- Prepare one integrated iOS/Android candidate with exact commit/APK/build identities, install/log-capture instructions, one ordered acceptance checklist and one feedback template.
+- Checklist: both guides; LAN without Internet; no-AP Aware; Wi-Fi-disabled BLE; open/lock/wrong-code/edit/unlock; live megaphone; slides/assets/pin/pointer; late join; route/radio recovery; lock/background/interruptions; endurance; measured capacity and explicit untested cases.
+- Unavailable iPhone/group gates remain untested, not passed. One feedback round cannot guarantee no further hardware fixes.
+
+## Resume environment and commands
+
+Last authorized pair: Pixel 11 Pro `66180DLKX006ND`, Pixel 7 `2A111FDH2007A1`, API 37 at benchmark time. User said both unlocked without passcode. Check availability before running; only wake/dismiss non-secure keyguard, never change credentials. iPhone unavailable/out of scope until reauthorized. Emulator `emulator-5554`, API 36 at last run.
+
+ADB `/Users/aessam/Library/Android/sdk/platform-tools/adb`; Java `/Applications/Android Studio.app/Contents/jbr/Contents/Home`; Xcode `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer`. Dedicated simulator `B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98` (`GOH-Signature-20260907`, iPhone 17 Pro/iOS 26.4.1 at last run). DerivedData `/tmp/GetOverHereSignatureIOS`.
+
+```bash
+# Read-only preflight; no install or radio mutation.
+git status --short
+git log -8 --oneline
+python3 scripts/benchmark_android_aware.py --guide 66180DLKX006ND --guest 2A111FDH2007A1 --preflight-only
+
+# Existing benchmark, both roles, 3 x 10 seconds per mode.
+bash scripts/benchmark_android_aware.sh --guide 66180DLKX006ND --guest 2A111FDH2007A1
+
+# Actual Aware tour; repeat with guide/guest reversed.
+GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+
+# BLE disabled-Wi-Fi fixture; restores original Wi-Fi settings.
+GOH_NEARBY_WIFI_OFF=1 GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+
+# Boot dedicated simulator before the full virtual gate.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcrun simctl bootstatus B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98 -b
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereSignatureIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh
 ```
 
-Platform frameworks remain in application implementations. The Swift and Kotlin session cores stay platform-neutral and equivalent.
+Benchmark shell normally builds after preflight. `--smoke-only` runs emulator regressions but still preflights the physical pair. `--reuse-installed` (benchmark) and `GOH_NEARBY_REUSE_INSTALLED=1` (tour) verify exact app/test APK hashes; omit reuse after changes. [Cross-platform fixture](scripts/verify_nearby_cross_platform.sh) exists but no physical run completed; inspect preflight/roles before use with an authorized iPhone.
 
-## Selected transport model
+Never overlap physical installs/tests on the same pair or edit executing harness/app/test sources. Use bounded background jobs/named logs, report progress, and check completion without busy polling. Prior CoreSimulator restart approval is not continuing authority to restart shared services. Preserve unrelated edits; do not touch unrelated sockets/processes or clean shared caches/devices.
 
-| Transport | Product role | Commitment |
-|---|---|---|
-| Existing local LAN | Audio, control, and assets on every supported OS when a usable LAN exists | Guaranteed full-capability floor; maintained and tested as a first-class route |
-| Native Wi-Fi Aware | Preferred direct audio, control, and asset route without an access point | Capability-, interoperability-, and data-path-limit gated |
-| BLE controlled relay overlay | Universal discovery, authentication bootstrap, control, membership, and degraded compressed voice | Control is required; voice ships only if P5 passes |
+## Pending decisions and next concrete action
 
-The app may run BLE and IP transports concurrently. Per-participant preference is healthy Aware, then LAN, then BLE. Stable session, participant, stream, and sequence identifiers suppress duplicates and allow a guest to change routes without becoming a second listener.
+- **D1:** Actual pairing SDK/runtime/hardware support and Apple interoperability in both roles; precise `-11992` operation.
+- **D2:** Small-packet transport choice and latency cause; native codec PLC/FEC controls must be checked before promising them.
+- **D3:** Admission key-binding/first-contact trust profile; reviewed PAKE and individual revocation are separate decisions.
+- **D4:** Measured direct cap, relay topology, background policy, battery/acoustic thresholds; no fixed 30-person claim.
+- **D5:** Mandatory router, new LAN multicast lane or OS-baseline change needs explicit direction, not automatic research adoption.
 
-Aware and BLE voice have independent planning risks of 35% and 45%. A rough compounded model leaves a 15–25% chance that neither no-AP audio route is shippable. In that outcome BLE remains control-only and a local LAN remains required for tour audio. Product claims and UI must state that directly.
-
-The plan does not bridge Apple peer-to-peer Wi-Fi to Android Wi-Fi Direct, elect an Android hotspot host, or depend on a portable router.
-
-## Scope
-
-### In scope
-
-- Cross-platform Aware discovery, pairing, NDP establishment, and an initial application connection.
-- iOS production ownership of Aware listeners, browsers, accepted connections, and reconnects.
-- Encoded, sequenced, expiring realtime audio suitable for Aware and BLE.
-- BLE devices operating as central and peripheral, with bounded forwarding, split horizon, TTL, deduplication, jitter, rate limits, and successor recovery.
-- BLE delivery of authoritative control snapshots and degraded live audio.
-- Per-participant route selection across Aware, LAN, and BLE without duplicate state or audio.
-- End-to-end application payload encryption using per-tour keys and per-packet nonces, independent of link encryption.
-- Existing slides, shared-screen state, target pin, pointer, listener count, reconnect, and privacy behavior across the selected route.
-- Deterministic CLI topology simulation and focused commits at every passed gate.
-
-### Out of scope
-
-- Android LocalOnlyHotspot or Wi-Fi Direct as a production dependency.
-- Bridging incompatible Apple and Android proprietary peer-to-peer Wi-Fi networks.
-- General-purpose ad-hoc routing, Internet relay, Nostr, store-and-forward chat, or courier delivery.
-- Guest microphone transmission or multiple guides.
-- Forwarding participant location or heading data.
-- Shipping an unbounded BLE file flood. BLE asset transfer remains experimental and subordinate to live audio.
-
-## Execution phases and gates
-
-### P0 — Baseline and traceability
-
-**Result:** P0 is complete. Harness and baseline verifier passed on 2026-08-23. The harness correctly rejected a missing Android device and a locked iPhone before starting capture. The first complete two-device artifact belongs to the deferred P3 physical gate, not P0.
-
-- Commit this planning/ADR/lesson update as one documentation checkpoint after approval.
-- Preserve the working LAN path as the rollback baseline.
-- Add a reusable physical-test script that captures app events and platform radio logs without inspecting private frameworks or binaries.
-
-**Gate P0:** clean focused commit; existing `scripts/verify_tour_session.sh` remains green.
-
-### P3 — Harden transport-neutral payloads and replace raw PCM/TCP audio
-
-**Progress:** The software integration is complete on the LAN floor as of 2026-08-27. Realtime, control, and asset lanes use encrypted GOH2 v3; audio negotiates native Opus then AAC-LC, accumulates PCM16 into codec frames, applies sequence/expiry metadata, compensates for cross-device clock offset, and decodes through a bounded jitter buffer. Swift/Kotlin wire fixtures, LAN loopbacks, the source audit, the full iOS Simulator suite, and three native Android emulator tests pass. Physical codec, RF, latency, background, thermal, and battery gates remain pending. Actual byte-identical delivery of one sealed frame across concurrent LAN/Aware/BLE routes remains a P6 integration gate; unqualified Aware/Multipeer audio fails closed meanwhile.
-
-- Lock the frame rules before fixtures: one logical frame is encrypted exactly once at creation, then the byte-identical sealed frame is routed one or many times. Socket writers never encrypt or choose nonces.
-- Make the encrypted protocol a hard version break. A legacy or unsupported major produces an explicit version-mismatch event and user state rather than a generic connection/radio failure.
-- Probe installed native encoders and decoders first. Query Apple Audio Format Services on the physical iPhone and Android `MediaCodecList` on the physical Pixel before a codec identifier enters the wire fixture; do not add `libopus` during this spike.
-- Select the codec from that evidence: native Opus with 20 ms frames is preferred; native AAC-LC 16 kHz/16 kb/s is the fallback if the supported-device native Opus gate fails.
-- Define one cross-platform encoded realtime frame with stream ID, sequence, capture timestamp, codec configuration, expiry, and sealed payload.
-- Add route-independent authenticated encryption for realtime, control, and asset payloads; remove every plaintext application payload path from the working LAN product.
-- Use datagrams where the transport supports them, a bounded jitter buffer, packet-loss concealment, and stale-frame dropping.
-- Preserve receiver/headset default output and the background audio lifecycle.
-
-**Gate P3:** native codec capability and encode/decode probes are recorded for both physical target devices; exact Swift/Kotlin frame, byte-identical multi-route ciphertext, tamper/replay, and version-rejection fixtures pass; the source/wire verifier finds no plaintext application payload path; 30-minute physical LAN audio passes in both guide directions; mouth-to-ear latency, loss, jitter depth, thermal state, and battery delta are recorded; an injected loss burst never creates an unbounded playback backlog.
-
-### P1 — Reproduce and repair the isolated Wi-Fi Aware lab
-
-- Run iPhone publisher → Android subscriber and Android publisher → iPhone subscriber.
-- Test with infrastructure Wi-Fi disconnected, connected to the same LAN, and only one device connected to infrastructure Wi-Fi.
-- Record the first failing stage: discovery, PIN bootstrapping, pairing persistence, NDP, socket readiness, or UDP exchange.
-- Compare only public API usage and observable behavior with the working AirDrop-like application.
-- Keep the lab isolated until both directions pass.
-- Timebox the lab to four focused physical-debug sessions or two engineering days, whichever comes first. Each session must isolate one failing stage and end with recorded evidence.
-
-**Gate P1:** both directions establish a direct Aware data path and run the deterministic 20 ms probe for 15 minutes with zero malformed frames, measured loss/RTT, and a successful disconnect/reconnect. If the gate has not passed at the stop-loss, record the exact blocker, park Aware until new vendor/OS evidence or a concrete code hypothesis exists, and continue with LAN plus P4/P5.
-
-### P2 — Complete the production Aware connection owner
-
-- Add the missing iOS production listener/browser/pairing owner.
-- Reconcile it with Android's existing production Aware session owner.
-- Establish one initial authenticated connection, then open realtime, control, and asset lanes from that established Aware relationship.
-- Keep iOS 17 support for LAN/BLE; Aware remains runtime-capability gated.
-
-**Gate P2:** iOS guide ↔ Android guest works in both guide directions without a LAN, authenticates all three GOH2 lanes, counts one stable participant, transfers one slide, and restores state after reconnect.
-
-### P4 — BLE control overlay
-
-- Implement ADR-038 first: create one ephemeral P-256 guide signing key per tour, pin its verification key through QR or a prior direct authenticated guide connection, and sign each immutable sealed guide frame once before fan-out.
-- Verify the guide signature before decrypting or applying any relayed frame. Reject unsigned frames, changed ciphertext/signatures, and keys that do not match the pinned guide key.
-- Do not relay guest-authored application frames in P4. BLE topology and link-admission messages remain point-to-point; any later guest-frame relay requires guide-issued participant certificates.
-- Reuse the validated bitchat concepts, not its product or entire codebase: central+peripheral roles, TTL, message deduplication, split horizon, deterministic fan-out, relay jitter, and bounded topology announcements.
-- Keep one authoritative guide. Use epochs, leases, and an ordered successor set instead of full Raft.
-- Start with a maximum of six direct central links as an experimental policy, not a platform guarantee.
-- Forward only authenticated current-session traffic.
-
-**Gate P4:** byte-exact Swift/Kotlin fixtures prove one signed sealed frame verifies unchanged across direct and relayed delivery, and reject unsigned, wrong-key, modified-ciphertext, and modified-signature cases. Deterministic simulation then passes line, star, overlapping-star, partition, duplicate-flood, relay/successor loss, and reconnect scenarios at 1/5/10/20/50 logical nodes; physical 2/5/10-device discovery and control convergence are measured foreground and locked.
-
-### P5 — BLE live-voice fallback
-
-- Send encoded live frames at realtime priority through the BLE overlay.
-- Never retransmit expired audio, persist it, or allow it behind asset traffic.
-- Bound relay depth initially to two hops and drop frames that cannot meet the playback deadline.
-- Keep presentation snapshots on the reliable control path.
-
-**Gate P5:** after the initial one-guide/two-direct/one-relayed proof, physical voice gates progress through 5 and 10 mixed iOS/Android devices. One-hop and two-hop mouth-to-ear latency, loss, queue depth, thermal state, battery use, and locked/pocketed behavior are recorded. There is no queue growth or duplicate playback. If this gate fails, BLE remains control-only.
-
-### P6 — Hybrid route selection
-
-- Prefer a healthy authenticated Aware route, then LAN, then BLE.
-- Select routes per participant; do not switch an entire tour because one guest lacks Aware.
-- Never attempt more Aware peers than current runtime resources permit. On the target Pixel's reported eight-path limit, guest #9 tries authenticated LAN, then BLE voice if P5 passed, then explicit BLE control-only mode with audio unavailable.
-- Do not evict an existing Aware guest to admit an overflow guest. A control-only guest is not counted as receiving audio; the guide sees separate connected and audio-ready counts without radio diagnostics.
-- Send authoritative snapshots after every route change.
-- Deduplicate overlapping delivery by session/stream/sequence before playback or state application.
-
-**Gate P6:** guests with different available transports participate in the same tour; capacity-plus-one overflow and route loss/recovery produce no duplicate participant, audio, slide, pin, or pointer state. A 60-minute physical run keeps Aware, BLE central, BLE peripheral, LAN, audio encode, and active playback/control traffic enabled concurrently on the guide while recording coexistence loss, thermal state, and battery delta.
-
-### P7 — Assets and degraded behavior
-
-- Use Aware/LAN for full slide and map assets.
-- Measure low-priority BLE slide transfer only after P5 passes; pause or throttle it whenever audio is active or backpressured.
-- When an uncached asset cannot arrive over the current route, show an explicit pending/degraded state while audio and control continue.
-
-**Gate P7:** cached slides always follow control state over BLE; an uncached slide either transfers within the measured bound without harming audio or produces the explicit degraded state. PMTiles remains an Aware/LAN or preloaded asset.
-
-### P8 — Scale and product acceptance
-
-- Mixed-route tour gates: 8, 16, 32, then 50 guests. Direct Aware count never exceeds the guide's runtime resources; test capacity-minus-one, capacity, and capacity-plus-one before larger mixed-route gates.
-- BLE physical topology gates: 2, 5, then 10 devices, with larger counts covered first by deterministic simulation.
-- Exercise both guide platforms, mixed infrastructure-Wi-Fi states, lock/background, leave/rejoin, session restart, slides, pin, pointer, asset transfer, interference, and churn.
-- Name and run the common AP-less field case: mixed iOS 17–current and Android guests, at least half locked and carried in pockets, with unsupported/exhausted Aware peers using BLE.
-
-**Gate P8:** every product requirement has physical evidence in `ExperimentLog.md`; no privacy payload regression; no capacity claim exceeds the largest passing physical gate.
-
-## Execution flow
-
-```mermaid
-graph TD
-    P0[P0: baseline + focused commit] --> P3[P3: encrypted encoded realtime]
-    P3 --> P1[P1: timeboxed physical Aware lab]
-    P1 --> G1{Both Aware directions pass?}
-    G1 -->|no| R1[Park Aware; LAN floor + BLE work continue]
-    G1 -->|yes| P2[P2: production Aware owner]
-    P2 --> P4[P4: BLE control overlay]
-    R1 --> P4
-    P4 --> P5[P5: BLE voice]
-    P5 --> G2{BLE voice meets latency and stability gate?}
-    G2 -->|no| R2[BLE remains control-only]
-    G2 -->|yes| P6[P6: hybrid per-participant routing]
-    R2 --> P6
-    P6 --> P7[P7: assets + degraded behavior]
-    P7 --> P8[P8: scale + product acceptance]
-    style G1 fill:#ffd
-    style G2 fill:#ffd
-```
-
-## Cross-cutting action
-
-**A8 — Traceability applies to every phase.** Before risky work, preserve the last passing state. After each gate: run the relevant verifier, append exact commands/results to `ExperimentLog.md`, update `ADR.md` or `LessonsLearned.md` when the conclusion changes, review the diff, and create one focused commit before starting the next phase. Never bundle two unproven radio changes into one commit.
-
-## Definition of done
-
-- The guaranteed floor is a first-class mixed iOS/Android LAN tour with full audio, control, and assets and no Internet dependency.
-- Supported Aware devices can run the full tour without an external access point after P1/P2 pass.
-- Guests without a usable Aware path still discover, authenticate, and receive current control state; they receive no-AP live audio only if P5 passes.
-- If both Aware and BLE voice gates fail for a participant, the app explicitly requires a usable LAN for audio. No product claim promises AP-less audio to every supported phone.
-- Audio, slides, shared map target, pointer, membership, background behavior, and reconnect pass in both guide directions.
-- Every payload is authenticated and encrypted end-to-end at the application layer.
-- Participant location and heading never enter a transport payload.
-- The supported group size equals the largest passing physical gate, not a theoretical number.
-
-## Risks and rollback
-
-| Risk | Estimated likelihood | Early detection | Prevention | Rollback |
-|---|---:|---|---|---|
-| Android↔iOS Aware pairing/NDP remains unstable | 35% | P1 cannot pass both roles repeatedly | Isolated lab, public APIs only, exact stage logs | Keep production LAN untouched; continue BLE control/voice work independently |
-| Continuous BLE voice congests relay links | 45% | Queue depth, loss, or latency grows at one relay | Compressed frames, deadline drops, two-hop cap, no retransmission | BLE returns to control-only |
-| Locked/background relay disappears | 40% | P4/P5 locked-device topology partitions | Platform audio lifecycle, successor set, route snapshots | Require direct BLE/Aware audio; relays become opportunistic |
-| Aware runtime capacity is exhausted | High in groups above a device's NDP limit | Available path count reaches zero; capacity-plus-one gate | Per-participant admission and explicit overflow policy | LAN, then gated BLE voice, then control-only |
-| Concurrent guide radios degrade one another or drain the battery | 35% | P6 coexistence loss, thermal state, or battery delta exceeds the route-specific baseline | Run the complete radio mix together; disable unused routes per participant | Keep LAN floor; reduce concurrent optional radios |
-| Concurrent Aware/LAN/BLE duplicates membership or playback | 25% | Duplicate participant IDs or sequence playback in P6 | One route lease per participant plus pre-delivery dedup | Disable automatic switching; require explicit reconnect |
-| Radio work outruns traceability again | 20% | Multiple transport changes appear before a passing gate/commit | A8 checkpoint rule and focused commits | Return to the last passing commit and rerun its gate |
-
-Probabilities are planning estimates, not measured field rates. Treating the 35% Aware and 45% BLE-voice estimates as roughly independent gives a 15.75% dual-failure case; shared RF, background, and device factors justify planning for a 15–25% range. In that case the LAN floor remains the only full audio route.
-
-## Recommended execution mode
-
-Gate-by-gate. Commit P0, execute P3 on the working LAN path, then run the timeboxed P1 lab. A P1 failure parks Aware and proceeds to P4/P5; it does not block transport-neutral product improvements or BLE evaluation. Do not start a phase until its incoming gate passes.
+**Start with A1:** inspect/extend `AwarePhysicalBenchmarkTest`, `AwareBenchmarkProtocol` and active native Aware owner for resource counters/tiny-packet comparison, preserving passing bulk mode. During initial read-only inspection check SDK/runtime eligibility for A2. Continue A3/A4 software without repeatedly requesting unavailable iPhone tests. No A1–A4 implementation was started by this documentation request.

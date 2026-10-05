@@ -49,7 +49,9 @@ sealed class BLECommand {
         val createdBy: String,
         val audioQuality: AudioQuality,
         val wifiSSID: String?,
-        val audioHostIP: String? = null
+        val audioHostIP: String? = null,
+        val roomAdmissionVersion: Int? = null,
+        val isRoomLocked: Boolean? = null,
     ) : BLECommand()
 
     data class ChannelUnavailable(val channelID: String) : BLECommand()
@@ -72,6 +74,8 @@ sealed class PeerEvent {
 
 // MARK: - Control Plane (BLE)
 
+enum class BluetoothDiscoveryMode { OFF, BROWSING, ADVERTISING }
+
 interface ControlPlane {
     val localPeer: PeerInfo
     val connectedPeers: StateFlow<List<PeerInfo>>
@@ -82,12 +86,14 @@ interface ControlPlane {
     fun stop()
     fun broadcast(command: BLECommand)
     fun send(command: BLECommand, to: PeerInfo)
+    fun setBluetoothDiscoveryMode(mode: BluetoothDiscoveryMode)
 }
 
 // MARK: - Audio Plane
 
 interface AudioPlane {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
 
     fun startBroadcasting(channelID: String, quality: AudioQuality)
     fun sendAudio(data: ByteArray)
@@ -106,6 +112,7 @@ interface AudioPlane {
 }
 
 sealed class AudioSessionEvent {
+    data class AuthenticationFailed(val message: String) : AudioSessionEvent()
     data class Joined(val participant: ParticipantSession) : AudioSessionEvent()
     data class Disconnected(val connectionID: String) : AudioSessionEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : AudioSessionEvent()
@@ -115,17 +122,21 @@ sealed class AudioSessionEvent {
 // MARK: - Reliable Session Control Transport
 
 sealed class SessionControlEvent {
+    data class AuthenticationFailed(val message: String) : SessionControlEvent()
     data object Connected : SessionControlEvent()
     data class GuestJoined(val participant: ParticipantSession) : SessionControlEvent()
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionControlEvent()
     data class GuestDisconnected(val participantID: UUID) : SessionControlEvent()
     data object Disconnected : SessionControlEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionControlEvent()
+    /** The sealed handshake frame failed AEAD authentication or the guide proof mismatched; never an EOF. */
+    data class CredentialRejected(val message: String) : SessionControlEvent()
     data class Failed(val message: String) : SessionControlEvent()
 }
 
 interface SessionControlTransport {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
     var hostIP: String?
 
     fun configureSession(
@@ -136,26 +147,35 @@ interface SessionControlTransport {
         credential: SessionCredential,
     )
     fun setEventHandler(handler: ((SessionControlEvent) -> Unit)?)
+    /** Throws `IllegalStateException` when the lane cannot start (unconfigured, bind/listen failure). */
     fun startGuide()
     fun startGuest()
     fun send(kind: SessionMessageKind, payload: ByteArray)
+    /**
+     * Enqueues one authenticated leave frame to every connected peer and suspends until delivery or
+     * the 2 s deadline; never blocks the calling thread.
+     */
+    suspend fun sendLeave()
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
     fun clearSession()
 }
 
 sealed class SessionAssetEvent {
+    data class AuthenticationFailed(val message: String) : SessionAssetEvent()
     data object Connected : SessionAssetEvent()
     data class GuestJoined(val participant: ParticipantSession) : SessionAssetEvent()
     data class EnvelopeReceived(val envelope: SessionEnvelope) : SessionAssetEvent()
     data class GuestDisconnected(val participantID: UUID) : SessionAssetEvent()
     data object Disconnected : SessionAssetEvent()
     data class VersionMismatch(val remoteMajor: Int, val localMajor: Int) : SessionAssetEvent()
+    data class CredentialRejected(val message: String) : SessionAssetEvent()
     data class Failed(val message: String) : SessionAssetEvent()
 }
 
 interface SessionAssetTransport {
     val isActive: Boolean
+    fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
     var hostIP: String?
 
     fun configureSession(
@@ -188,6 +208,8 @@ fun BLECommand.toJson(): ByteArray {
                 put("audioQuality", audioQuality.rawValue)
                 if (wifiSSID != null) put("wifiSSID", wifiSSID) else put("wifiSSID", JsonNull)
                 if (audioHostIP != null) put("audioHostIP", audioHostIP) else put("audioHostIP", JsonNull)
+                roomAdmissionVersion?.let { put("roomAdmissionVersion", it) }
+                isRoomLocked?.let { put("isRoomLocked", it) }
             }
         }
         is BLECommand.ChannelEnded -> buildJsonObject {
@@ -241,7 +263,9 @@ fun parseBLECommand(data: ByteArray): BLECommand? {
                     createdBy = inner["createdBy"]!!.jsonPrimitive.content,
                     audioQuality = AudioQuality.fromRaw(inner["audioQuality"]!!.jsonPrimitive.content),
                     wifiSSID = inner["wifiSSID"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content },
-                    audioHostIP = inner["audioHostIP"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content }
+                    audioHostIP = inner["audioHostIP"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content },
+                    roomAdmissionVersion = inner["roomAdmissionVersion"]?.jsonPrimitive?.content?.toIntOrNull(),
+                    isRoomLocked = inner["isRoomLocked"]?.jsonPrimitive?.content?.toBooleanStrictOrNull(),
                 )
             }
             "channelEnded" in obj -> {

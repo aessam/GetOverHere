@@ -1,8 +1,14 @@
 package com.aessam.comeoverhere
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.aessam.toursession.EncodedAudioFramePayload
+import com.aessam.toursession.hexToByteArray
 import com.aessam.comeoverhere.core.NativeRealtimeAudioCodecFactory
 import com.aessam.comeoverhere.core.RealtimeAudioDecoderInterface
+import com.aessam.comeoverhere.core.RealtimeAudioEncoderInterface
+import com.aessam.comeoverhere.core.RealtimeAudioCodecProvider
+import com.aessam.comeoverhere.core.NativeEncodedAudioPacket
 import com.aessam.comeoverhere.core.AudioQuality
 import com.aessam.comeoverhere.core.AudioSessionEvent
 import com.aessam.comeoverhere.core.UDPAudioPlane
@@ -23,6 +29,62 @@ import kotlin.math.sin
 
 @RunWith(AndroidJUnit4::class)
 class NativeRealtimeAudioCodecTest {
+    @Test fun exportsProductionAndroidPackets() {
+        val output = java.io.File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir,
+            "android-native-codec.hex")
+        output.bufferedWriter().use { writer ->
+            SessionAudioCodec.entries.forEach { codec ->
+                NativeRealtimeAudioCodecFactory.makeEncoder(codec).use { encoder ->
+                    var packets = 0
+                    repeat(64) { frame ->
+                        val samples = encoder.inputPCMByteCount / 2
+                        val pcm = ByteBuffer.allocate(encoder.inputPCMByteCount).order(ByteOrder.LITTLE_ENDIAN)
+                        repeat(samples) { index ->
+                            pcm.putShort((sin((frame * samples + index) * 440 * 2 * PI / 16_000) * 8_000).toInt().toShort())
+                        }
+                        encoder.encode(pcm.array())?.let { packet ->
+                            val payload = EncodedAudioFramePayload(packet.configuration, 1, 2, packet.bytes).encode()
+                            writer.appendLine(payload.joinToString("") { "%02x".format(it.toInt() and 255) })
+                            packets++
+                        }
+                    }
+                    assertTrue("Missing production Android $codec packets", packets >= 32)
+                }
+            }
+        }
+        assertTrue("Android fixture export is empty", output.length() > 0)
+    }
+
+    @Test fun decodesProductionApplePackets() {
+        val packets = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("apple-native-codec.hex").bufferedReader().useLines { lines ->
+                lines.map { EncodedAudioFramePayload.decode(it.hexToByteArray()) }.toList()
+            }
+        SessionAudioCodec.entries.forEach { codec ->
+            val frames = packets.filter { it.configuration.codec == codec }
+            assertTrue("Missing Apple $codec packets", frames.isNotEmpty())
+            val decoder = NativeRealtimeAudioCodecFactory.makeDecoder(frames.first().configuration)
+            var bytes = 0
+            val decodedPCM = java.io.ByteArrayOutputStream()
+            try {
+                frames.forEach { frame -> decoder.decode(frame.encodedBytes)?.let { bytes += it.size; decodedPCM.write(it) } }
+                assertTrue("Apple $codec produced no decoded audio", bytes > 0)
+                val config = frames.first().configuration
+                val frameBytes = (config.sampleRate * config.frameDurationMilliseconds / 1_000 * config.channelCount * 2).toInt()
+                val expected = frames.size * frameBytes
+                assertTrue("Apple $codec PCM duration mismatch: $bytes bytes, expected approximately $expected",
+                    bytes in (expected - 2 * frameBytes)..(expected + 2 * frameBytes))
+                val pcm = ByteBuffer.wrap(decodedPCM.toByteArray()).order(ByteOrder.LITTLE_ENDIAN)
+                val samples = List(bytes / 2) { pcm.short.toInt() }.drop(frameBytes)
+                val rms = kotlin.math.sqrt(samples.sumOf { it.toDouble() * it } / samples.size)
+                assertTrue("Apple $codec decoded silence", rms > 1_000)
+                val crossings = samples.zipWithNext().count { (a, b) -> a <= 0 && b > 0 }
+                val frequency = crossings * 16_000.0 / samples.size
+                assertTrue("Apple $codec changed tone frequency to $frequency Hz", kotlin.math.abs(frequency - 440) < 10)
+            } finally { decoder.close() }
+        }
+    }
+
     @Test
     fun opusAndAacLcEncodeAndDecodeNativePcm16Frames() {
         SessionAudioCodec.entries.forEach(::assertCodecRoundtrip)
@@ -38,14 +100,42 @@ class NativeRealtimeAudioCodecTest {
 
     @Test
     fun nativeCodecCrossesEncryptedRealtimeTransport() {
+        assertEncryptedTransport(NativeRealtimeAudioCodecFactory)
+    }
+
+    @Test fun applePacketsCrossEncryptedRealtimeTransport() {
+        val frames = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("apple-native-codec.hex").bufferedReader().useLines { lines ->
+                lines.map { EncodedAudioFramePayload.decode(it.hexToByteArray()) }.toList()
+            }
+        val replay = object : RealtimeAudioCodecProvider by NativeRealtimeAudioCodecFactory {
+            override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface {
+                val packets = frames.filter { it.configuration.codec == codec }
+                return object : RealtimeAudioEncoderInterface {
+                    override val codec = codec
+                    override val inputPCMByteCount = if (codec == SessionAudioCodec.OPUS) 640 else 2_048
+                    private var index = 0
+                    override fun encode(pcm16LittleEndian: ByteArray): NativeEncodedAudioPacket {
+                        val packet = packets[index++ % packets.size]
+                        return NativeEncodedAudioPacket(packet.configuration, packet.encodedBytes)
+                    }
+                    override fun close() = Unit
+                }
+            }
+        }
+        assertEncryptedTransport(replay)
+    }
+
+    private fun assertEncryptedTransport(provider: RealtimeAudioCodecProvider) {
         val port = 50_034
-        val guide = UDPAudioPlane(audioPort = port)
+        val guide = UDPAudioPlane(codecProvider = provider, audioPort = port)
         val guest = UDPAudioPlane(audioPort = port)
         val sessionID = UUID.randomUUID()
         val credential = SessionCredential.derive("23456789AB", sessionID)
         val joined = CountDownLatch(1)
         val audioReceived = CountDownLatch(1)
         try {
+            guide.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guide.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -59,6 +149,7 @@ class NativeRealtimeAudioCodecTest {
             guide.startBroadcasting(sessionID.toString(), AudioQuality.STANDARD)
 
             guest.hostIP = "127.0.0.1"
+            guest.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
             guest.configureSession(
                 sessionID,
                 UUID.randomUUID(),
@@ -67,7 +158,8 @@ class NativeRealtimeAudioCodecTest {
                 credential,
             )
             guest.startListening(sessionID.toString()) { pcm ->
-                if (pcm.isNotEmpty() && pcm.size % Short.SIZE_BYTES == 0) audioReceived.countDown()
+                // Concealment emits silence too: only actual decoded tone proves this path.
+                if (pcm.any { it != 0.toByte() } && pcm.size % Short.SIZE_BYTES == 0) audioReceived.countDown()
             }
 
             assertTrue("Native-codec guest did not join", joined.await(5, TimeUnit.SECONDS))

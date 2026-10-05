@@ -17,6 +17,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
     case bearingSnapshot = 0x21
     case targetSnapshot = 0x22
     case visualFocusSnapshot = 0x23
+    case audioStatus = 0x24
     case assetManifest = 0x30
     case assetChunk = 0x31
     case tourPackManifest = 0x32
@@ -28,7 +29,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
         case .audioFrame:
             .realtime
         case .hello, .welcome, .heartbeat, .leave, .authChallenge, .presentationSnapshot, .bearingSnapshot,
-             .targetSnapshot, .visualFocusSnapshot:
+             .targetSnapshot, .visualFocusSnapshot, .audioStatus:
             .control
         case .assetManifest, .assetChunk, .tourPackManifest, .assetRequest, .assetStatus:
             .asset
@@ -50,7 +51,7 @@ public enum ParticipantPlatform: UInt8, Sendable {
 public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
     case truncated
     case invalidMagic
-    case unsupportedMajorVersion(UInt8)
+    case unsupportedMajorVersion(received: UInt8, supported: UInt8)
     case unknownLane(UInt8)
     case unknownMessageKind(UInt8)
     case wrongLane(kind: SessionMessageKind, actual: SessionLane)
@@ -70,6 +71,7 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
     case tooManyAssets(Int)
     case invalidAssetKind(UInt8)
     case duplicateAssetID(String)
+    case duplicateSlideID(String)
     case invalidAssetChunk
     case invalidAssetStatus(UInt8)
     case invalidAuthenticationNonceLength(Int)
@@ -81,7 +83,8 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .truncated: "truncated data"
         case .invalidMagic: "invalid GOH2 magic"
-        case let .unsupportedMajorVersion(version): "unsupported major version \(version)"
+        case let .unsupportedMajorVersion(received, supported):
+            "unsupported major version \(received); this build requires \(supported)"
         case let .unknownLane(raw): "unknown lane \(raw)"
         case let .unknownMessageKind(raw): "unknown message kind \(raw)"
         case let .wrongLane(kind, actual): "\(kind) requires \(kind.requiredLane), got \(actual)"
@@ -102,6 +105,7 @@ public enum SessionProtocolError: Error, Equatable, CustomStringConvertible {
         case let .tooManyAssets(count): "manifest has \(count) assets; maximum is 65535"
         case let .invalidAssetKind(raw): "invalid tour asset kind \(raw)"
         case let .duplicateAssetID(assetID): "duplicate tour asset ID \(assetID)"
+        case let .duplicateSlideID(slideID): "duplicate slide ID \(slideID)"
         case .invalidAssetChunk: "asset chunk exceeds declared asset length"
         case let .invalidAssetStatus(raw): "invalid asset status \(raw)"
         case let .invalidAuthenticationNonceLength(count):
@@ -178,7 +182,7 @@ public struct SessionEnvelope: Equatable, Sendable {
         }
         let major = try reader.readUInt8()
         guard major == majorVersion else {
-            throw SessionProtocolError.unsupportedMajorVersion(major)
+            throw SessionProtocolError.unsupportedMajorVersion(received: major, supported: majorVersion)
         }
         let minor = try reader.readUInt8()
         let laneRaw = try reader.readUInt8()

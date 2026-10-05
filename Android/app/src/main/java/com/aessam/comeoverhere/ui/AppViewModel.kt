@@ -16,9 +16,20 @@ class AppViewModel(
 ) : ViewModel() {
 
     val channels = channelService.channels
+    val strictAwareOnly = channelService.strictAwareOnly
+    fun setStrictAwareOnly(value: Boolean) = channelService.setStrictAwareOnly(value)
+    val awareSettings = channelService.awareSettings
+    fun canJoin(channel: Channel) = channelService.canJoin(channel)
+    val bluetoothDiscoveryEnabled = channelService.bluetoothDiscoveryEnabled
+    fun setBluetoothDiscoveryEnabled(enabled: Boolean) = channelService.setBluetoothDiscoveryEnabled(enabled)
     val activeChannelID = channelService.activeChannelID
     val listenState = channelService.listenState
     val listenerCount = channelService.listenerCount
+    val connectedGuestCount = channelService.connectedGuestCount
+    val audioReadyGuestCount = channelService.audioReadyGuestCount
+    val guideKeyFingerprint = channelService.guideKeyFingerprint
+    val activeTransportRoute = channelService.activeTransportRoute
+    val speakerFeedbackWarning = channelService.speakerFeedbackWarning
     val readyParticipantCount = channelService.readyParticipantCount
     val listenerOutput = channelService.listenerOutput
     val presentationSnapshot = channelService.presentationSnapshot
@@ -30,8 +41,17 @@ class AppViewModel(
     val offlineMapStatus = channelService.offlineMapStatus
     val tourFeatureError = channelService.tourFeatureError
     val tourCode = channelService.tourCode
+    val isRoomLocked = channelService.isRoomLocked
+    val isUpdatingRoomAccess = channelService.isUpdatingRoomAccess
+    val roomAccessError = channelService.roomAccessError
+    fun updateRoomAccess(locked: Boolean, code: String) = channelService.updateRoomAccess(locked, code)
     val connectionState = channelService.connectionState
     val reconnectAttempt = channelService.reconnectAttempt
+    val audioRuntimeState = channelService.audioRuntimeState
+    val audioRuntimeError = channelService.audioRuntimeError
+    val joinStage = channelService.joinStage
+    fun restartMicrophone() = channelService.restartMicrophone()
+    fun retryAudio() = channelService.retryAudio()
     val targetSnapshot = channelService.targetSnapshot
     val bearingSnapshot = channelService.bearingSnapshot
     val visualFocusSnapshot = channelService.visualFocusSnapshot

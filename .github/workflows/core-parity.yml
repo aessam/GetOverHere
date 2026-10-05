@@ -1,0 +1,39 @@
+name: core-parity
+
+# DSCN-3 / ADR-051: the shared Swift and Kotlin session cores must emit identical GOH2 bytes on
+# every push. No app build, no simulator, no emulator; the full gate stays local and physical.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: core-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-parity:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # Package.swift is swift-tools-version 6.2. Toolchain selection lives here, never in the
+      # script, so the script cannot mutate a developer machine.
+      - name: Select a Swift 6.2 toolchain
+        run: |
+          if ! swift --version 2>&1 | grep -Eq 'Swift version (6\.([2-9]|[1-9][0-9])|[7-9]\.)'; then
+            app="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1)"
+            [[ -n "$app" ]] || { echo 'error: no Xcode with Swift 6.2+ on this runner' >&2; exit 1; }
+            sudo xcode-select -s "$app/Contents/Developer"
+          fi
+          swift --version
+
+      - name: Core parity
+        run: scripts/verify_core_parity.sh

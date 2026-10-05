@@ -6,6 +6,8 @@ import com.aessam.comeoverhere.service.FileTourAssetCache
 import com.aessam.toursession.AssetChunkPayload
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -60,6 +62,51 @@ class TourAssetCacheTest {
                 )
             }
             assertEquals(0, corruptCache.resumeOffset(hash, bytes.size.toLong()))
+        } finally {
+            assertTrue("Temporary asset cleanup failed", root.deleteRecursively())
+        }
+    }
+
+    @Test
+    fun lengthMismatchedCompleteEntryIsDeletedAndReportedMissing() {
+        val root = Files.createTempDirectory("GetOverHereAssetCacheTests-").toFile()
+        try {
+            val bytes = "offline-tour-asset".toByteArray()
+            val hash = MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+            val cache = FileTourAssetCache(root)
+            val corruptComplete = root.resolve("complete").resolve(hash)
+            corruptComplete.writeBytes(ByteArray(10))
+
+            assertNull(cache.readyFile(hash, bytes.size.toLong()))
+            assertFalse("corrupt entry must be removed", corruptComplete.exists())
+            assertEquals(0, cache.resumeOffset(hash, bytes.size.toLong()))
+
+            val ready = cache.ingest(
+                AssetChunkPayload(hash, 0, bytes.size.toLong(), bytes),
+            ) as AssetCacheIngestResult.Ready
+            assertArrayEquals(bytes, ready.file.readBytes())
+            assertEquals(ready.file, cache.readyFile(hash, bytes.size.toLong()))
+        } finally {
+            assertTrue("Temporary asset cleanup failed", root.deleteRecursively())
+        }
+    }
+
+    @Test
+    fun oversizedPartialIsDeletedAndResumeRestartsAtZero() {
+        val root = Files.createTempDirectory("GetOverHereAssetCacheTests-").toFile()
+        try {
+            val bytes = "offline-tour-asset".toByteArray()
+            val hash = MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+            val cache = FileTourAssetCache(root)
+            val oversizedPartial = root.resolve("partial").resolve("$hash.part")
+            oversizedPartial.writeBytes(ByteArray(30))
+
+            assertEquals(0, cache.resumeOffset(hash, bytes.size.toLong()))
+            assertFalse("oversized partial must be removed", oversizedPartial.exists())
         } finally {
             assertTrue("Temporary asset cleanup failed", root.deleteRecursively())
         }

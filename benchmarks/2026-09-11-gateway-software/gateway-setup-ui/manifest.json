@@ -1,0 +1,52 @@
+{
+  "app": {
+    "api": "36",
+    "artifact_verification": {
+      "method": "adb_sha256",
+      "verified": true
+    },
+    "id": "emulator-5554",
+    "installed_sha256": "33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a",
+    "interfaces": "lo               UNKNOWN        127.0.0.1/8 ::1/128 \ndummy0           UNKNOWN        fe80::3822:86ff:feb6:3875/64 \nifb0             DOWN           \nifb1             DOWN           \ntunl0@NONE       DOWN           \ngre0@NONE        DOWN           \ngretap0@NONE     DOWN           \nerspan0@NONE     DOWN           \nip_vti0@NONE     DOWN           \nip6_vti0@NONE    DOWN           \nsit0@NONE        DOWN           \nip6tnl0@NONE     DOWN           \nip6gre0@NONE     DOWN           \nhwsim0           DOWN           \neth0             UP             10.0.2.15/24 fec0::5054:ff:fe12:3456/64 fe80::5054:ff:fe12:3456/64 \nwlan0            UP             10.0.2.16/24 fec0::7eee:62f0:4b7e:a6fc/64 fec0::380c:3543:b6b3:8174/64 fe80::b8b5:6cd2:34c:4b87/64 \nthread-wpan      DOWN",
+    "model": "Android SDK built for arm64",
+    "os": "16",
+    "physical": false,
+    "platform": "android",
+    "scope": "read_only_inventory",
+    "wifi_enabled": true
+  },
+  "command": {
+    "argv": [
+      "/Users/aessam/Library/Android/sdk/platform-tools/adb",
+      "-s",
+      "emulator-5554",
+      "shell",
+      "am",
+      "instrument",
+      "-w",
+      "-r",
+      "-e",
+      "class",
+      "com.aessam.comeoverhere.GatewaySetupUITest",
+      "com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner"
+    ],
+    "timeout_s": 90
+  },
+  "scope": "emulator_production_gateway_setup_ui_only",
+  "test": {
+    "api": "36",
+    "artifact_verification": {
+      "method": "adb_sha256",
+      "verified": true
+    },
+    "id": "emulator-5554",
+    "installed_sha256": "ee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c",
+    "interfaces": "lo               UNKNOWN        127.0.0.1/8 ::1/128 \ndummy0           UNKNOWN        fe80::3822:86ff:feb6:3875/64 \nifb0             DOWN           \nifb1             DOWN           \ntunl0@NONE       DOWN           \ngre0@NONE        DOWN           \ngretap0@NONE     DOWN           \nerspan0@NONE     DOWN           \nip_vti0@NONE     DOWN           \nip6_vti0@NONE    DOWN           \nsit0@NONE        DOWN           \nip6tnl0@NONE     DOWN           \nip6gre0@NONE     DOWN           \nhwsim0           DOWN           \neth0             UP             10.0.2.15/24 fec0::5054:ff:fe12:3456/64 fe80::5054:ff:fe12:3456/64 \nwlan0            UP             10.0.2.16/24 fec0::7eee:62f0:4b7e:a6fc/64 fec0::380c:3543:b6b3:8174/64 fe80::b8b5:6cd2:34c:4b87/64 \nthread-wpan      DOWN",
+    "model": "Android SDK built for arm64",
+    "os": "16",
+    "physical": false,
+    "platform": "android",
+    "scope": "read_only_inventory",
+    "wifi_enabled": true
+  }
+}

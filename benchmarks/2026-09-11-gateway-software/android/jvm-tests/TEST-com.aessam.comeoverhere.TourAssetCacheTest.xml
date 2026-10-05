@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.TourAssetCacheTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:49.441Z" hostname="redacted" time="0.007">
+  <properties/>
+  <testcase name="oversizedPartialIsDeletedAndResumeRestartsAtZero" classname="com.aessam.comeoverhere.TourAssetCacheTest" time="0.003"/>
+  <testcase name="lengthMismatchedCompleteEntryIsDeletedAndReportedMissing" classname="com.aessam.comeoverhere.TourAssetCacheTest" time="0.002"/>
+  <testcase name="transferResumesVerifiesSha256AndRejectsCorruption" classname="com.aessam.comeoverhere.TourAssetCacheTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Asset cache: removed oversized partial f04f10eb432b3c2c6ec662cdd982ef9a18f2019cd296bdda2e1deb9c9478b2a3 (expected 18, got 30)
+Asset cache: removed length-mismatched complete entry f04f10eb432b3c2c6ec662cdd982ef9a18f2019cd296bdda2e1deb9c9478b2a3 (expected 18, got 10)
+]]></system-err>
+</testsuite>

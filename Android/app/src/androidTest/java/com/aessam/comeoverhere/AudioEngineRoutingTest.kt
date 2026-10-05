@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.service.AudioEngine
@@ -15,6 +16,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
@@ -22,11 +24,33 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AudioEngineRoutingTest {
+    @Test fun playbackReadinessRequiresAcceptedPCMAndResetsForEachRun() {
+        var acceptedRuns = 0
+        audioEngine.onPlaybackBufferAccepted = { acceptedRuns++ }
+        audioEngine.startPlayback()
+        assertTrue(audioEngine.isPlaying)
+        assertEquals(0, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(0))
+        assertEquals(0, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(1, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(1, acceptedRuns)
+        audioEngine.stopPlayback()
+        audioEngine.stopPlayback()
+        assertFalse(audioEngine.isPlaying)
+        audioEngine.startPlayback()
+        assertEquals(1, acceptedRuns)
+        audioEngine.enqueuePlayback(ByteArray(320))
+        assertEquals(2, acceptedRuns)
+    }
     private lateinit var audioEngine: AudioEngine
     private lateinit var audioManager: AudioManager
+    private lateinit var activity: ActivityScenario<MainActivity>
 
     @Before
     fun setUp() {
+        activity = ActivityScenario.launch(MainActivity::class.java)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         audioEngine = AudioEngine(context)
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -34,12 +58,18 @@ class AudioEngineRoutingTest {
 
     @After
     fun tearDown() {
+        audioEngine.stopCapture()
         audioEngine.stopPlayback()
+        activity.close()
     }
 
     @Test
     fun listenerOutputSwitchesPhysicalCommunicationDevice() {
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        assumeTrue(
+            "No built-in earpiece; private communication-device routing requires physical hardware",
+            audioManager.availableCommunicationDevices.any { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE },
+        )
 
         audioEngine.setListenerOutput(ListenerOutput.PRIVATE_AUDIO)
         audioEngine.startPlayback()
@@ -61,7 +91,9 @@ class AudioEngineRoutingTest {
             audioEngine.startCapture().first()
         }
 
-        assertEquals(0, frame.size % Float.SIZE_BYTES)
+        // ADR-034: one 10 ms PCM16 mono frame (160 samples), never a Float32 buffer.
+        assertEquals(AudioEngine.SAMPLE_RATE / 100 * Short.SIZE_BYTES, frame.size)
+        assertEquals(0, frame.size % Short.SIZE_BYTES)
         assertTrue(frame.isNotEmpty())
     }
 }

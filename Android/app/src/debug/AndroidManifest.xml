@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- This activity only presents consent. No intent extra activates commands. -->
+        <activity android:name=".debug.GatewayDebugActivity" android:exported="true"
+            android:label="GetOverHere debug control" />
+    </application>
+</manifest>

@@ -5,7 +5,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT_PACKAGE="$PROJECT_ROOT/Packages/TourSessionCore"
 ANDROID_ROOT="$PROJECT_ROOT/Android"
-ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}}"
 SWIFT_SCRATCH="${GOH_SWIFT_SCRATCH:-/tmp/GetOverHereTourSessionSwift}"
 KOTLIN_CLI="$ANDROID_ROOT/tour-session-cli/build/install/tour-session-cli/bin/tour-session-cli"
 EXPECTED="initial=slides:0|guide=map:1,pointer:2|guest=pointer:2|stale=pointer:2|late=pointer:2"

@@ -4,6 +4,8 @@ import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Mac
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 class SessionSecurityException(message: String) : IllegalArgumentException(message)
@@ -17,16 +19,32 @@ class SessionCredential private constructor(internal val key: ByteArray) {
     companion object {
         const val SHORT_CODE_LENGTH = 10
         const val ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        /** PBKDF2-HMAC-SHA256 iteration count; a wire contract shared with the Swift core (ADR-042). */
+        const val STRETCH_ITERATIONS = 600_000
+        /** Appended to the session ID wire bytes to form the PBKDF2 salt; a wire contract (ADR-042). */
+        const val STRETCH_SALT_LABEL = "GetOverHere/GOH4/credential-salt/v1"
+        /** PBKDF2 output length in bytes; a wire contract (ADR-042). */
+        const val STRETCHED_KEY_SIZE = 32
 
         fun derive(shortCode: String, sessionID: UUID): SessionCredential {
             val normalized = normalize(shortCode)
             if (normalized.length != SHORT_CODE_LENGTH || normalized.any { it !in ALPHABET }) {
                 throw SessionSecurityException("tour code must contain 10 unambiguous letters or digits")
             }
-            val inputKey = normalized.toByteArray(StandardCharsets.US_ASCII)
-            val pseudoRandomKey = SessionAuthenticator.hmac(sessionID.wireBytes(), inputKey)
+            val salt = sessionID.wireBytes() + STRETCH_SALT_LABEL.toByteArray(StandardCharsets.US_ASCII)
+            val pseudoRandomKey = stretch(normalized, salt)
             val info = "GetOverHere/GOH2/session-key/v1".toByteArray(StandardCharsets.US_ASCII) + byteArrayOf(1)
             return SessionCredential(SessionAuthenticator.hmac(pseudoRandomKey, info))
+        }
+
+        /** PBKDF2-HMAC-SHA256 over an already-normalized tour code; the alphabet is ASCII so UTF-8 equals the Swift bytes. */
+        internal fun stretch(shortCode: String, salt: ByteArray): ByteArray {
+            val spec = PBEKeySpec(shortCode.toCharArray(), salt, STRETCH_ITERATIONS, STRETCHED_KEY_SIZE * 8)
+            try {
+                return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+            } finally {
+                spec.clearPassword()
+            }
         }
 
         fun generateShortCode(random: SecureRandom = SecureRandom()): String = buildString {

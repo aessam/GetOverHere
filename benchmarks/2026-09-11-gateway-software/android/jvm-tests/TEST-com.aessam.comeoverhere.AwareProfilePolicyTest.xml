@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.AwareProfilePolicyTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:18.797Z" hostname="redacted" time="0.005">
+  <properties/>
+  <testcase name="noUndocumentedSystemPublisherOrDummyPasswordFallback" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.0"/>
+  <testcase name="pendingReservationsAreSharedAndNeverEvictEstablishedPeers" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.003"/>
+  <testcase name="adapterEndpointCannotPretendToBeLanAndOwnershipIsExplicit" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.0"/>
+  <testcase name="unknownAndInvalidSnapshotsDoNotInventAnEightPathCapacity" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.001"/>
+  <testcase name="reachableMetadataMustMatchSelectedRoomGuideAndAdmissionVersion" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.0"/>
+  <testcase name="exactRuntimeHardwareRoleAndDiscoveryResourcesGateSystemProfile" classname="com.aessam.comeoverhere.AwareProfilePolicyTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

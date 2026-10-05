@@ -28,52 +28,169 @@ object TourSessionFixtures {
         ).encode(),
     )
 
-    fun describeHello(encoded: ByteArray): String {
-        val envelope = SessionEnvelope.decode(encoded)
-        if (envelope.kind != SessionMessageKind.HELLO) {
-            throw SessionProtocolException("expected hello, got ${envelope.kind.wireName}")
-        }
-        val hello = HelloPayload.decode(envelope.payload)
+    /**
+     * Describes one or more `|`-separated plaintext envelopes, one line per envelope. The
+     * output is the cross-language decode contract: payload enums as decimal raw values,
+     * UUIDs lowercased, bytes and free-form strings as lowercase UTF-8 hex (DSCN-21).
+     */
+    fun describeEnvelopes(hexList: String): String =
+        hexList.split("|").joinToString("\n") { describe(SessionEnvelope.decode(it.hexToByteArray())) }
+
+    fun describeAudioFrame(encoded: ByteArray): String {
+        val frame = EncodedAudioFramePayload.decode(encoded)
         return listOf(
+            "codec=${frame.configuration.codec.rawValue}",
+            "sampleRate=${frame.configuration.sampleRate}",
+            "channelCount=${frame.configuration.channelCount}",
+            "frameDurationMilliseconds=${frame.configuration.frameDurationMilliseconds}",
+            "bitRate=${frame.configuration.bitRate}",
+            "codecSpecificData=${frame.configuration.codecSpecificData.lowercaseHex()}",
+            "capturedAtNanoseconds=${frame.capturedAtNanoseconds}",
+            "expiresAtNanoseconds=${frame.expiresAtNanoseconds}",
+            "encodedBytes=${frame.encodedBytes.lowercaseHex()}",
+        ).joinToString("|")
+    }
+
+    private fun text(value: String): String = value.toByteArray(Charsets.UTF_8).lowercaseHex()
+
+    private fun describe(envelope: SessionEnvelope): String {
+        val fields = mutableListOf(
             "session=${envelope.sessionId.toString().lowercase()}",
             "sender=${envelope.senderId.toString().lowercase()}",
             "lane=${envelope.lane.wireName}",
             "kind=${envelope.kind.wireName}",
             "sequence=${envelope.sequence}",
-            "role=${hello.role.wireName}",
-            "platform=${hello.platform.wireName}",
-            "name=${hello.displayName}",
-            "capabilities=${hello.capabilities}",
-            "requestedLane=${hello.requestedLane.wireName}",
-        ).joinToString("|")
+        )
+        when (envelope.kind) {
+            SessionMessageKind.HELLO -> {
+                val hello = HelloPayload.decode(envelope.payload)
+                fields += listOf(
+                    "role=${hello.role.rawValue}",
+                    "platform=${hello.platform.rawValue}",
+                    "name=${text(hello.displayName)}",
+                    "capabilities=${hello.capabilities}",
+                    "requestedLane=${hello.requestedLane.rawValue}",
+                )
+            }
+            SessionMessageKind.AUTH_CHALLENGE -> {
+                val challenge = AuthChallengePayload.decode(envelope.payload)
+                fields += listOf(
+                    "requestedLane=${challenge.requestedLane.rawValue}",
+                    "challengeNonce=${challenge.challengeNonce.lowercaseHex()}",
+                )
+            }
+            SessionMessageKind.WELCOME -> {
+                val welcome = WelcomePayload.decode(envelope.payload)
+                fields += listOf(
+                    "requestedLane=${welcome.requestedLane.rawValue}",
+                    "guideNonce=${welcome.guideNonce.lowercaseHex()}",
+                    "credentialProof=${welcome.credentialProof.lowercaseHex()}",
+                )
+            }
+            SessionMessageKind.HEARTBEAT, SessionMessageKind.LEAVE -> {
+                fields += "payloadBytes=${envelope.payload.size}"
+            }
+            SessionMessageKind.PRESENTATION_SNAPSHOT -> {
+                val presentation = PresentationSnapshotPayload.decode(envelope.payload)
+                fields += listOf(
+                    "stateVersion=${presentation.stateVersion}",
+                    "deckID=${presentation.deckID.toString().lowercase()}",
+                    "slide=${text(presentation.currentSlideID ?: "")}",
+                    "visible=${presentation.isVisible}",
+                    "effectiveAtMilliseconds=${presentation.effectiveAtMilliseconds}",
+                )
+            }
+            SessionMessageKind.BEARING_SNAPSHOT -> {
+                val bearing = BearingSnapshotPayload.decode(envelope.payload)
+                fields += listOf(
+                    "stateVersion=${bearing.stateVersion}",
+                    "reference=${bearing.reference.rawValue}",
+                    "bearingMilliDegrees=${bearing.bearingMilliDegrees}",
+                    "visible=${bearing.isVisible}",
+                )
+            }
+            SessionMessageKind.TARGET_SNAPSHOT -> {
+                val target = TargetSnapshotPayload.decode(envelope.payload)
+                fields += listOf(
+                    "stateVersion=${target.stateVersion}",
+                    "targetID=${target.targetID.toString().lowercase()}",
+                    "latitudeE7=${target.latitudeE7}",
+                    "longitudeE7=${target.longitudeE7}",
+                    "label=${text(target.label)}",
+                    "visible=${target.isVisible}",
+                )
+            }
+            SessionMessageKind.AUDIO_STATUS -> {
+                val status = AudioReadinessPayload.decode(envelope.payload)
+                fields += listOf("status=${status.status.rawValue}", "revision=${status.revision}")
+            }
+            SessionMessageKind.VISUAL_FOCUS_SNAPSHOT -> {
+                val focus = VisualFocusSnapshotPayload.decode(envelope.payload)
+                fields += listOf("stateVersion=${focus.stateVersion}", "mode=${focus.mode.rawValue}")
+            }
+            SessionMessageKind.ASSET_MANIFEST -> {
+                val manifest = AssetManifestPayload.decode(envelope.payload)
+                val assets = manifest.assets.joinToString(";") {
+                    "${text(it.slideID)},${it.sha256},${it.byteLength},${it.order},${text(it.mimeType)}"
+                }
+                fields += listOf(
+                    "deckID=${manifest.deckID.toString().lowercase()}",
+                    "manifestVersion=${manifest.manifestVersion}",
+                    "assets=$assets",
+                )
+            }
+            SessionMessageKind.TOUR_PACK_MANIFEST -> {
+                val manifest = TourPackManifestPayload.decode(envelope.payload)
+                val assets = manifest.assets.joinToString(";") {
+                    "${text(it.assetID)},${it.kind.rawValue},${it.sha256},${it.byteLength},${it.order},${text(it.mimeType)}"
+                }
+                fields += listOf(
+                    "packID=${manifest.packID.toString().lowercase()}",
+                    "manifestVersion=${manifest.manifestVersion}",
+                    "displayName=${text(manifest.displayName)}",
+                    "assets=$assets",
+                )
+            }
+            SessionMessageKind.ASSET_CHUNK -> {
+                val chunk = AssetChunkPayload.decode(envelope.payload)
+                fields += listOf(
+                    "sha256=${chunk.sha256}",
+                    "offset=${chunk.offset}",
+                    "totalLength=${chunk.totalLength}",
+                    "bytes=${chunk.bytes.lowercaseHex()}",
+                )
+            }
+            SessionMessageKind.ASSET_REQUEST -> {
+                val request = AssetRequestPayload.decode(envelope.payload)
+                fields += listOf("sha256=${request.sha256}", "offset=${request.offset}")
+            }
+            SessionMessageKind.ASSET_STATUS -> {
+                val status = AssetStatusPayload.decode(envelope.payload)
+                fields += listOf(
+                    "sha256=${status.sha256}",
+                    "status=${status.status.rawValue}",
+                    "byteLength=${status.byteLength}",
+                    "detail=${text(status.detail)}",
+                )
+            }
+            SessionMessageKind.AUDIO_FRAME -> {
+                fields += "audio=${describeAudioFrame(envelope.payload)}"
+            }
+        }
+        return fields.joinToString("|")
     }
 
     fun encryptedHelloFixture(): SealedSessionEnvelope =
         SessionFrameSealer(fixtureCredential()).seal(helloEnvelope(), streamId)
 
-    fun describeEncryptedHello(encoded: ByteArray): String {
+    /** Opens one sealed envelope with the fixture credential and describes it. */
+    fun describeSealed(encoded: ByteArray): String {
         val sealed = SealedSessionEnvelope.decode(encoded)
         val opened = SessionFrameOpener(fixtureCredential()).open(sealed)
         check(opened is SessionFrameOpenResult.Opened) { "a fresh fixture cannot be a duplicate" }
-        val envelope = opened.envelope
-        if (envelope.kind != SessionMessageKind.HELLO) {
-            throw SessionProtocolException("expected hello, got ${envelope.kind.wireName}")
-        }
-        val hello = HelloPayload.decode(envelope.payload)
-        return listOf(
-            "version=${SealedSessionEnvelope.MAJOR_VERSION}.${SealedSessionEnvelope.MINOR_VERSION}",
-            "session=${envelope.sessionId.toString().lowercase()}",
-            "sender=${envelope.senderId.toString().lowercase()}",
-            "stream=${sealed.streamId.toString().lowercase()}",
-            "lane=${envelope.lane.wireName}",
-            "kind=${envelope.kind.wireName}",
-            "sequence=${envelope.sequence}",
-            "role=${hello.role.wireName}",
-            "platform=${hello.platform.wireName}",
-            "name=${hello.displayName}",
-            "capabilities=${hello.capabilities}",
-            "requestedLane=${hello.requestedLane.wireName}",
-        ).joinToString("|")
+        return "version=${SealedSessionEnvelope.MAJOR_VERSION}.${sealed.minorVersion}" +
+            "|stream=${sealed.streamId.toString().lowercase()}|" +
+            describe(opened.envelope)
     }
 
     fun encodedAudioFixture(): EncodedAudioFramePayload = EncodedAudioFramePayload(
@@ -184,7 +301,11 @@ object TourSessionFixtures {
         )
         val hash = (0 until 32).joinToString("") { "%02x".format(it) }
         val asset = SlideAssetDescriptor("gate-left", hash, 2048, 0, "image/jpeg")
-        val manifest = AssetManifestPayload(deckId, 3, listOf(asset))
+        // Two more slides share order 0 so the fixture pins the UTF-8 tie-break (DSCN-7):
+        // U+FF5E (ef bd 9e) precedes U+1F5FA (f0 9f 97 ba) although UTF-16 orders them the other way.
+        val astralSlide = SlideAssetDescriptor("gate-\uD83D\uDDFA", "ef".repeat(32), 512, 0, "image/jpeg")
+        val fullwidthSlide = SlideAssetDescriptor("gate-\uFF5E", "12".repeat(32), 256, 0, "image/jpeg")
+        val manifest = AssetManifestPayload(deckId, 3, listOf(astralSlide, asset, fullwidthSlide))
         val manifestEnvelope = SessionEnvelope(
             lane = SessionLane.ASSET,
             kind = SessionMessageKind.ASSET_MANIFEST,
@@ -209,7 +330,28 @@ object TourSessionFixtures {
             1,
             "image/jpeg",
         )
-        val tourPack = TourPackManifestPayload(packId, 4, "Alhambra", listOf(slideAsset, mapAsset))
+        val astralAsset = TourAssetDescriptor(
+            "plaza-\uD83D\uDDFA",
+            TourAssetKind.SLIDE,
+            "ef".repeat(32),
+            512,
+            2,
+            "image/jpeg",
+        )
+        val fullwidthAsset = TourAssetDescriptor(
+            "plaza-\uFF5E",
+            TourAssetKind.SLIDE,
+            "12".repeat(32),
+            256,
+            2,
+            "image/jpeg",
+        )
+        val tourPack = TourPackManifestPayload(
+            packId,
+            4,
+            "Alhambra",
+            listOf(slideAsset, astralAsset, mapAsset, fullwidthAsset),
+        )
         val tourPackEnvelope = SessionEnvelope(
             lane = SessionLane.ASSET,
             kind = SessionMessageKind.TOUR_PACK_MANIFEST,
@@ -236,6 +378,15 @@ object TourSessionFixtures {
             senderId = guestId,
             payload = status.encode(),
         )
+        val chunk = AssetChunkPayload(asset.sha256, 1024, asset.byteLength, ByteArray(16) { (0x30 + it).toByte() })
+        val chunkEnvelope = SessionEnvelope(
+            lane = SessionLane.ASSET,
+            kind = SessionMessageKind.ASSET_CHUNK,
+            sequence = 16,
+            sessionId = sessionId,
+            senderId = guideId,
+            payload = chunk.encode(),
+        )
         return listOf(
             presentationEnvelope.encode().lowercaseHex(),
             bearingEnvelope.encode().lowercaseHex(),
@@ -245,8 +396,62 @@ object TourSessionFixtures {
             tourPackEnvelope.encode().lowercaseHex(),
             requestEnvelope.encode().lowercaseHex(),
             statusEnvelope.encode().lowercaseHex(),
+            chunkEnvelope.encode().lowercaseHex(),
         ).joinToString("|")
     }
+
+    /**
+     * Plaintext authChallenge, welcome, and leave envelopes as they appear before and after
+     * admission on every lane. The leave payload is empty, matching production.
+     */
+    fun handshakeFixtureHex(): String {
+        val challengeEnvelope = SessionEnvelope(
+            lane = SessionLane.CONTROL,
+            kind = SessionMessageKind.AUTH_CHALLENGE,
+            sequence = 1,
+            sessionId = sessionId,
+            senderId = guideId,
+            payload = AuthChallengePayload(SessionLane.CONTROL, ByteArray(16) { it.toByte() }).encode(),
+        )
+        val welcomeEnvelope = SessionEnvelope(
+            lane = SessionLane.CONTROL,
+            kind = SessionMessageKind.WELCOME,
+            sequence = 2,
+            sessionId = sessionId,
+            senderId = guideId,
+            payload = WelcomePayload(
+                SessionLane.CONTROL,
+                ByteArray(16) { (0x20 + it).toByte() },
+                ByteArray(32) { (0xc0 + it).toByte() },
+            ).encode(),
+        )
+        val leaveEnvelope = SessionEnvelope(
+            lane = SessionLane.CONTROL,
+            kind = SessionMessageKind.LEAVE,
+            sequence = 43,
+            sessionId = sessionId,
+            senderId = guestId,
+            payload = byteArrayOf(),
+        )
+        return listOf(
+            challengeEnvelope.encode().lowercaseHex(),
+            welcomeEnvelope.encode().lowercaseHex(),
+            leaveEnvelope.encode().lowercaseHex(),
+        ).joinToString("|")
+    }
+
+    fun realtimeAudioEnvelope(): SessionEnvelope = SessionEnvelope(
+        lane = SessionLane.REALTIME,
+        kind = SessionMessageKind.AUDIO_FRAME,
+        sequence = 77,
+        sessionId = sessionId,
+        senderId = guideId,
+        payload = encodedAudioFixture().encode(),
+    )
+
+    /** The realtime audioFrame envelope sealed exactly as it travels on the wire. */
+    fun encryptedRealtimeFixture(): SealedSessionEnvelope =
+        SessionFrameSealer(fixtureCredential()).seal(realtimeAudioEnvelope(), streamId)
 
     fun authenticationFixtureHex(): String {
         val credential = SessionCredential.derive("23456789AB", sessionId)
@@ -376,6 +581,39 @@ object TourSessionFixtures {
             "stale=${guest.mode.name.lowercase()}:${guest.stateVersion}",
             "late=${late.mode.name.lowercase()}:${late.stateVersion}",
         ).joinToString("|")
+    }
+
+    /**
+     * Deterministic playout-decision script shared with the Swift core (ADR-045). Every pop is
+     * at now=200 except the final pop at 2_000, which expires the buffered frame 12.
+     * Tokens: `w` wait, `f<seq>` frame, `c<seq>` conceal. Expected: `w,w,f1,f2,w,c3,f4,f10,f11,w`.
+     */
+    fun simulatePlayout(): String {
+        val payload = EncodedAudioFramePayload(
+            configuration = encodedAudioFixture().configuration,
+            capturedAtNanoseconds = 100,
+            expiresAtNanoseconds = 1_000,
+            encodedBytes = byteArrayOf(1),
+        )
+        val jitter = EncodedAudioJitterBuffer(targetFrameCount = 2, maximumFrameCount = 4)
+        val tokens = mutableListOf<String>()
+        fun pop(now: Long) {
+            tokens += when (val decision = jitter.popForPlayout(now)) {
+                EncodedAudioPlayoutDecision.Wait -> "w"
+                is EncodedAudioPlayoutDecision.Frame -> "f${decision.frame.sequence}"
+                is EncodedAudioPlayoutDecision.Conceal -> "c${decision.missingSequence}"
+            }
+        }
+        fun offer(sequence: Long) {
+            jitter.offer(SequencedEncodedAudioFrame(sequence, payload), 200)
+        }
+        pop(200)
+        offer(1); pop(200)
+        offer(2); pop(200); pop(200); pop(200)
+        offer(4); pop(200); pop(200)
+        offer(10); offer(11); pop(200); pop(200)
+        offer(12); pop(2_000)
+        return tokens.joinToString(",")
     }
 
     fun deterministicUuid(index: Int): UUID {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.GatewayRoutePolicyTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:24.206Z" hostname="redacted" time="0.006">
+  <properties/>
+  <testcase name="remoteIPv6ScopeIsReplacedWithSelectedLocalUSBInterface" classname="com.aessam.comeoverhere.GatewayRoutePolicyTest" time="0.004"/>
+  <testcase name="numericWiredAddressRejectsHostnamesAndMalformedIPv4" classname="com.aessam.comeoverhere.GatewayRoutePolicyTest" time="0.0"/>
+  <testcase name="wiredSubnetCheckDoesNotAcceptUnrelatedLANOrDifferentFamily" classname="com.aessam.comeoverhere.GatewayRoutePolicyTest" time="0.0"/>
+  <testcase name="strictAwarePolicyNeverOffersLANOrBluetoothFallback" classname="com.aessam.comeoverhere.GatewayRoutePolicyTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

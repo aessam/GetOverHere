@@ -1,0 +1,16 @@
+{
+  "commit": "63bb77d1e1806b5adf269fe4b1caa2902624ffdf",
+  "dirty": true,
+  "guide": "66180DLKX006ND",
+  "guest": "2A111FDH2007A1",
+  "millis": 5000,
+  "rounds": 3,
+  "profile": "bulk",
+  "smoke_only": false,
+  "apk_sha256": {
+    "com.aessam.comeoverhere": "1696c5a1a10bdd17241b6ee18228845122fd9c2bf9d57050b4dbe57a17b63252",
+    "com.aessam.comeoverhere.test": "de8f8c7966040b4450987ed535c63455dbdd4dc48818f7694eb9d822e61b4614"
+  },
+  "scope": "PIN-secured Android Aware TCP with guide-side asset adapter; no direct UDP or acoustic measurement",
+  "payload": "synthetic verified bulk data; no tour AEAD/codec"
+}

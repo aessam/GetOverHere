@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.NearbyAvailabilityTrackerTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:35.028Z" hostname="redacted" time="0.0">
+  <properties/>
+  <testcase name="onlyRealAvailabilityTransitionsRestartRadioOwnership" classname="com.aessam.comeoverhere.NearbyAvailabilityTrackerTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

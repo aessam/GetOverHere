@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.RoomDiscoveryIndexTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:49.190Z" hostname="redacted" time="0.001">
+  <properties/>
+  <testcase name="bluetoothLossDoesNotRemoveLAN" classname="com.aessam.comeoverhere.RoomDiscoveryIndexTest" time="0.0"/>
+  <testcase name="unresolvedLANIsNotMislabelledAsBluetooth" classname="com.aessam.comeoverhere.RoomDiscoveryIndexTest" time="0.0"/>
+  <testcase name="bluetoothCannotOverwriteLANAndLossFallsBack" classname="com.aessam.comeoverhere.RoomDiscoveryIndexTest" time="0.0"/>
+  <testcase name="threeSourcesFallBackWithoutInventingAnAddress" classname="com.aessam.comeoverhere.RoomDiscoveryIndexTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

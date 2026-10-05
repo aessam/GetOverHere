@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.ChannelServiceLifecycleTest" tests="40" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:59:30.805Z" hostname="redacted" time="5.641">
+  <properties/>
+  <testcase name="guideAuthenticationFailureDoesNotReconnectOrDiscardSelectedRoom" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.399"/>
+  <testcase name="suspendedNearbyRecoveryIsSingleFlightAndCannotMutateReplacementRoom" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.256"/>
+  <testcase name="captureStreamEndSurfacesError" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.066"/>
+  <testcase name="reconnectExhaustionErasesTransportCredentials" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.188"/>
+  <testcase name="endTourTeardownSurvivesANoOpLeave" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.062"/>
+  <testcase name="unreachableNearbyFallbackStopsAfterOneAttempt" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.012"/>
+  <testcase name="nearbyLoopbackRetainsActualCarrierAndRouteIdentityAcrossReconnect" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.36"/>
+  <testcase name="oldAudioRunAuthenticationCallbackCannotFailNewRoom" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.357"/>
+  <testcase name="roomSettingsPreserveExistingConnections" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.183"/>
+  <testcase name="canceledLANAdmissionCannotPrepareNearbyOrMutateReplacementSession" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.063"/>
+  <testcase name="terminalLANAdmissionNeverFallsThroughToNearby" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.047"/>
+  <testcase name="bluetoothObservationPreservesActiveSession" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.166"/>
+  <testcase name="connectedAndAudioReadyCountsAreIndependent" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.059"/>
+  <testcase name="failedMicrophoneRestartKeepsTourAvailableForAnotherRetry" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.06"/>
+  <testcase name="endTourFlushesLeaveOffMainAndClearsAfterDelivery" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.058"/>
+  <testcase name="playbackStartupFailureIsRetryableWithoutClearingRoomOrOtherLanes" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.198"/>
+  <testcase name="microphoneRestartPreservesRoomAndControlAssetSessions" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.058"/>
+  <testcase name="versionMismatchErasesTransportCredentials" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.169"/>
+  <testcase name="bluetoothDiscoveryLifecycle" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.168"/>
+  <testcase name="assetCredentialRejectionIsTerminalAndPreservesPinnedGuide" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.172"/>
+  <testcase name="guideAddressChangeReconfiguresWithoutClearingSession" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.17"/>
+  <testcase name="guideInstallsOneAuthorityInEveryLaneAndShowsItsFingerprint" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.062"/>
+  <testcase name="playbackWriteFailureAndFocusLossStopClaimingLiveAudio" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.169"/>
+  <testcase name="unreachableLANFallsBackOnceToMatchingNearbyForEveryLane" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.164"/>
+  <testcase name="bluetoothGuideLifecycle" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.059"/>
+  <testcase name="failedNearbyAdmissionClosesRouteAndPermitsRetry" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.008"/>
+  <testcase name="forcedPrivateOutputCallbackUpdatesListenerOutput" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.168"/>
+  <testcase name="controlAdmissionDoesNotClaimPlaybackBeforeRendererAcceptsPCM" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.164"/>
+  <testcase name="failedNearbyRecoveryDoesNotReopenStaleAdaptersOrSwitchToAdvertisedLAN" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.168"/>
+  <testcase name="oldCaptureFinalizerFailureCannotFailReplacementGuideOrGuest" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.341"/>
+  <testcase name="endTourTeardownDoesNotDiscardAFollowingCreate" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.11"/>
+  <testcase name="createChannelRollsBackWhenControlLaneFailsToBind" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.056"/>
+  <testcase name="canceledQueuedJoinCannotRestoreConnectingStateOrStartAdmission" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.003"/>
+  <testcase name="changedNearbyGuideDuringReconnectIsTerminalWithoutReadmission" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.164"/>
+  <testcase name="credentialRejectionIsTerminal" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.163"/>
+  <testcase name="queuedOldConnectedEventCannotCancelSuspendedNearbyRecovery" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.171"/>
+  <testcase name="createChannelPublishesOnlyAfterCaptureStarts" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.059"/>
+  <testcase name="nearbyRouteSurvivesLANAnnouncementAndReconnectWithoutReadmission" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.161"/>
+  <testcase name="assetTransferFailureSurfacesInTourFeatureError" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.008"/>
+  <testcase name="speakerOutputExposesFeedbackWarning" classname="com.aessam.comeoverhere.ChannelServiceLifecycleTest" time="0.167"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

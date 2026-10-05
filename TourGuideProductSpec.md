@@ -3,16 +3,29 @@
 **Status:** Authoritative implementation target
 **Date:** 2026-08-22
 
+**Active execution scope (2026-09-11):** The approved two-hub mode in ADR-069 and
+`GatewayImplementationPlan.md` adds an explicitly paired iPhone/Android USB link.
+Either phone is the sole guide; the companion proxies to that guide. iOS listeners
+use Apple peer-to-peer Wi-Fi and Android listeners use Wi-Fi Aware. No audience
+relays are included in this mode. The audience cap is physically qualified and
+may be below30; the companion is not counted as a listener. The companion may
+remain awake, but locked audience playback remains required. This supersedes the
+island-bridge exclusion and mandatory30/relay execution target below only for the
+approved two-hub mode. Existing direct LAN/Bluetooth/Aware functionality remains.
+Implementation and radio/lock/acoustic qualification are separate checkpoints.
+
+**Implementation checkpoint (2026-09-08, in progress):** Direct Bluetooth admission/audio/control/assets and native Aware ownership remain experimental. Admission-bound guide-key pinning and sign-once native lanes are implemented (ADR-059); open-room first contact does not prove human identity. Typed native routes and shared software capacity accounting are implemented, with integration gates recorded in `NextSession.md`. A public Android system-paired subscriber candidate is separate from Android compatibility PIN/NDP; mixed-platform Aware is not complete. Signed native relaying, 30-listener radio capacity and locked-device field requirements remain targets, not delivered claims. The user is away from hardware; current execution is host/simulator/emulator only. One consolidated field checklist is in `FieldAcceptance.md`.
+
 ## Objective
 
-One guide speaks to a local group of iOS and Android guests without Internet access. A usable local LAN is the guaranteed full-capability floor. Supported groups may operate without external network hardware through validated Wi-Fi Aware and BLE routes. During the same live session the guide can present slides, drop a geographic target pin, or point along a compass bearing. Guests hear the guide, receive the current visual state, and recover it after joining late or reconnecting.
+The target is one walking guide and 30 mixed iOS/Android audio-ready listeners without Internet or an external router. Wi-Fi and Bluetooth radios may remain enabled; first-use system pairing is allowed and distinct from the optional room code. Preserve the tested local-LAN implementation as a fallback. Router-free operation uses qualified Wi-Fi Aware and BLE routes; Wi-Fi-disabled BLE capacity has its own qualification. During the same live session the guide can present slides, drop a geographic target pin, or point along a compass bearing. Guests hear the guide, receive the current visual state, and recover it after joining late or reconnecting. Discovery, connected sockets or control-only listeners do not satisfy the audio-ready group target.
 
 ## Architecture
 
 | Module | Ownership | Public surface | Dependencies |
 |---|---|---|---|
-| `TourSessionCore` Swift package | Canonical Swift wire contracts, state rules, fixtures, CLI | GOH2 envelopes, payloads, registries, deterministic encoders | Foundation only |
-| `:tour-session-core` Kotlin module | Canonical Kotlin/JVM equivalent | Same GOH2 contracts and behavior | Kotlin/JVM only |
+| `TourSessionCore` Swift package | Canonical Swift wire contracts, state rules, fixtures, CLI | GOH2/GOS1 envelopes, admission, payloads, registries, deterministic encoders | Foundation, CryptoKit and CommonCrypto |
+| `:tour-session-core` Kotlin module | Canonical Kotlin/JVM equivalent | Same GOH2/GOS1 contracts and behavior | Kotlin/JVM and Java cryptography providers |
 | Swift/Kotlin session CLIs | Host simulation and cross-language proof | Fixture, decode, churn, fault, state, shared-screen, and recovery commands | Respective session core |
 | iOS `GetOverHere` app | Apple transports, services, cache, location/heading, SwiftUI | App-internal protocols and user interface | Swift session core; platform frameworks; map renderer |
 | Android `:app` | Android transports, services, cache, location/heading, Compose | App-internal interfaces and user interface | Kotlin session core; Android frameworks; map renderer |
@@ -101,13 +114,14 @@ TourPack
 - **The pin is the only geographic coordinate sent by the product.**
 - Wire contracts must contain no participant-location or location-history payload.
 - Location permission descriptions state that location is used only on-device to show the user relative to the shared pin.
-- Session discovery is not authentication. Production onboarding requires possession of a per-tour credential delivered by QR or short code.
+- Discovery is not authentication. Rooms start open: anyone nearby may request admission. The guide can enable `Lock Room with Code` and edit the code. Admission establishes a separate hidden per-tour media credential; QR scanning and manual code entry are not required for open rooms (ADR-052).
+- A room code is an access restriction, not verified guide identity. A malicious guide can solicit a locked-room proof and test code guesses offline; stretching raises the cost but does not prevent this. Short codes must not be described as strong protection against an active impersonator. Previously admitted guests retain access after a code change.
 - Admission authentication is not payload confidentiality. Realtime, control, and asset payloads require route-independent authenticated encryption derived from the per-tour credential.
 - A logical application frame is encrypted once at creation and remains byte-identical across every route. Transport writers cannot reseal it or allocate a new nonce.
 - Legacy plaintext protocol majors are rejected with an explicit version-mismatch state. There is no plaintext downgrade.
 - Per-tour credentials and derived keys are not stored in `UserDefaults` or plain preferences.
 - Logs contain no credentials, participant locations, slide contents, or persistent personal identifiers.
-- V1 has no individual mid-tour credential revocation. Ending and restarting the tour rotates the code and derived keys for the whole session.
+- There is no individual mid-tour credential revocation. Ending and restarting the tour rotates the hidden media credential and derived keys for the whole session; editing the visible lock code changes future admission only.
 
 ## Transport Classes
 
@@ -124,6 +138,7 @@ TourPack
 - BLE is the universal discovery and bootstrap path and is expected to serve many AP-less guests that do not meet the Aware OS/hardware floor. Its controlled relay overlay carries current authenticated control state and membership; compressed live voice is allowed only if the dedicated physical gate passes.
 - Route selection is per participant. A tour may contain Aware, LAN, and BLE guests simultaneously.
 - Aware admission stops at the guide device's reported current resource limit. An overflow guest tries LAN, then validated BLE voice, then explicit control-only mode with audio unavailable. Existing Aware guests are not evicted.
+- Control-only fallback is a visible degraded state, not completion of the audio-ready group requirement or evidence for a supported listener count.
 - Stable session, participant, stream, and sequence identifiers suppress duplicates across overlapping transports and reconnects.
 - Android LocalOnlyHotspot/Wi-Fi Direct, portable routers, and bridges between Apple peer-to-peer Wi-Fi and Android Wi-Fi Direct are not production dependencies.
 - BLE asset transfer is subordinate to live audio. Full slides and PMTiles prefer Aware/LAN or content prepared before the tour.
@@ -177,7 +192,7 @@ These defaults are active and do not block implementation:
 5. The isolated physical Wi-Fi Aware lab proves discovery, pairing, NDP establishment, socket traffic, disconnect, and reconnect in both iOS/Android role directions before production promotion.
 6. Physical iPhone and Android tests prove both guide directions while compressed audio, slide changes, target changes, and asset transfers run together across each supported route.
 7. BLE physical gates progress through 2/5/10 mixed iOS/Android devices and record direct and relayed control/voice latency, loss, queue depth, battery, thermal state, and locked/pocketed behavior. BLE voice is removed if its gate fails.
-8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets.
+8. A mixed AP-less field case includes iOS 17–current and Android guests with at least half the phones locked and carried in pockets. Fresh discovery while locked and continued delivery after joining then locking are separate acceptance cases. Bluetooth background modes are declared on iOS and active-session radio ownership is retained, but neither case is physically qualified. Wi-Fi-radio-off BLE tests are separate from no-access-point Aware tests.
 9. Aware tests exercise capacity-minus-one, capacity, and capacity-plus-one. Overflow follows ADR-031 and never changes the existing Aware participant set.
 10. One guide runs Aware, BLE central, BLE peripheral, LAN, audio encode, and active traffic concurrently for 60 minutes while coexistence loss, thermal state, and battery delta are recorded.
 11. Lock/background, leave/rejoin, channel restart, malformed asset, missing map, denied location, poor heading accuracy, and mixed transport availability are exercised.

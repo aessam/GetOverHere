@@ -7,9 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4FB443DEBCD075AED5820E98 /* LocalLinkSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */; };
 		A10000000000000000000001 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000003 /* TourSessionCore */; };
-		A10000000000000000000002 /* TourSessionCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000004 /* TourSessionCore */; };
 		A20000000000000000000001 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* MapLibre */; };
+		A30000000000000000000001 /* AppDebugControl in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000003 /* AppDebugControl */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +40,7 @@
 		D95FA6202F71F52300456E8F /* Exceptions for "GetOverHere" folder in "GetOverHere" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Info.Debug.plist,
 				Info.plist,
 			);
 			target = D95FA5E52F71F52100456E8F /* GetOverHere */;
@@ -71,8 +73,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A30000000000000000000001 /* AppDebugControl in Frameworks */,
 				A10000000000000000000001 /* TourSessionCore in Frameworks */,
 				A20000000000000000000001 /* MapLibre in Frameworks */,
+				4FB443DEBCD075AED5820E98 /* LocalLinkSecurity in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,7 +84,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000000000000000000002 /* TourSessionCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,8 +137,10 @@
 			);
 			name = GetOverHere;
 			packageProductDependencies = (
+				A30000000000000000000003 /* AppDebugControl */,
 				A10000000000000000000003 /* TourSessionCore */,
 				A20000000000000000000003 /* MapLibre */,
+				FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */,
 			);
 			productName = GetOverHere;
 			productReference = D95FA5E62F71F52100456E8F /* GetOverHere.app */;
@@ -158,9 +163,6 @@
 				D95FA5F82F71F52100456E8F /* GetOverHereTests */,
 			);
 			name = GetOverHereTests;
-			packageProductDependencies = (
-				A10000000000000000000004 /* TourSessionCore */,
-			);
 			productName = GetOverHereTests;
 			productReference = D95FA5F52F71F52100456E8F /* GetOverHereTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -182,8 +184,6 @@
 				D95FA6022F71F52200456E8F /* GetOverHereUITests */,
 			);
 			name = GetOverHereUITests;
-			packageProductDependencies = (
-			);
 			productName = GetOverHereUITests;
 			productReference = D95FA5FF2F71F52200456E8F /* GetOverHereUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -222,7 +222,9 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */,
+				A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */,
 				A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
+				0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D95FA5E72F71F52100456E8F /* Products */;
@@ -430,7 +432,12 @@
 				DEVELOPMENT_TEAM = VW9YC3A6JM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = GetOverHere/Info.plist;
+				INFOPLIST_FILE = GetOverHere/Info.Debug.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth connects nearby tour rooms and carries tour audio and controls when Wi-Fi is unavailable. Your location is not shared.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the companion phone's public pairing QR code to verify the wired connection.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location stays on this device and is used only to show your position, distance, and direction relative to the guide's shared pin.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -465,6 +472,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GetOverHere/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Bluetooth connects nearby tour rooms and carries tour audio and controls when Wi-Fi is unavailable. Your location is not shared.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the companion phone's public pairing QR code to verify the wired connection.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GetOverHere uses your local network to discover nearby channels and stream audio directly between devices without a backend.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location stays on this device and is used only to show your position, distance, and direction relative to the guide's shared pin.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "GetOverHere needs microphone access to broadcast audio to nearby devices on your local network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -613,9 +625,17 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/LocalLinkSecurity;
+		};
 		A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Packages/TourSessionCore;
+		};
+		A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/AppDebugControl;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -636,15 +656,20 @@
 			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
 			productName = TourSessionCore;
 		};
-		A10000000000000000000004 /* TourSessionCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/TourSessionCore" */;
-			productName = TourSessionCore;
-		};
 		A20000000000000000000003 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000005 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
 			productName = MapLibre;
+		};
+		A30000000000000000000003 /* AppDebugControl */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A30000000000000000000005 /* XCLocalSwiftPackageReference "../Packages/AppDebugControl" */;
+			productName = AppDebugControl;
+		};
+		FF7FFBEA3DF65C027B4DD786 /* LocalLinkSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0FB865640AED83FE254DD600 /* XCLocalSwiftPackageReference "../Packages/LocalLinkSecurity" */;
+			productName = LocalLinkSecurity;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

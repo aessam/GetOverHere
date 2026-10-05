@@ -31,6 +31,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
     BEARING_SNAPSHOT(0x21, SessionLane.CONTROL),
     TARGET_SNAPSHOT(0x22, SessionLane.CONTROL),
     VISUAL_FOCUS_SNAPSHOT(0x23, SessionLane.CONTROL),
+    AUDIO_STATUS(0x24, SessionLane.CONTROL),
     ASSET_MANIFEST(0x30, SessionLane.ASSET),
     ASSET_CHUNK(0x31, SessionLane.ASSET),
     TOUR_PACK_MANIFEST(0x32, SessionLane.ASSET),
@@ -49,6 +50,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
             BEARING_SNAPSHOT -> "bearingSnapshot"
             TARGET_SNAPSHOT -> "targetSnapshot"
             VISUAL_FOCUS_SNAPSHOT -> "visualFocusSnapshot"
+            AUDIO_STATUS -> "audioStatus"
             ASSET_MANIFEST -> "assetManifest"
             ASSET_CHUNK -> "assetChunk"
             TOUR_PACK_MANIFEST -> "tourPackManifest"
@@ -155,7 +157,7 @@ data class SessionEnvelope(
             }
             val major = reader.readUInt8()
             if (major != MAJOR_VERSION) {
-                throw SessionProtocolException("unsupported major version $major")
+                throw UnsupportedSessionVersionException(major, MAJOR_VERSION)
             }
             val minor = reader.readUInt8()
             val lane = SessionLane.fromRaw(reader.readUInt8())

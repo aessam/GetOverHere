@@ -10,10 +10,16 @@ struct ChannelDetailView: View {
     @State private var photoImportError: String?
     @State private var mapImportError: String?
     @State private var guestMinimizedSlide = false
-    @State private var selectedFeature: TourFeature = .slides
+    private var selectedFeature: TourFeature {
+        get { coordinator.selectedTourFeature }
+        nonmutating set { coordinator.selectedTourFeature = newValue }
+    }
     @State private var isMapImporterPresented = false
+    @State private var isPDFImporterPresented = false
+    @State private var isRenderingPDF = false
     @State private var pendingTargetCoordinate: CLLocationCoordinate2D?
     @State private var targetLabelDraft = ""
+    @State private var roomCodeDraft = ""
 
     private var service: ChannelService { coordinator.channelService }
     private var presentation: TourControlService { service.tourControlService }
@@ -100,38 +106,31 @@ struct ChannelDetailView: View {
 
     private func guideView(_ channel: Channel) -> some View {
         VStack(spacing: 0) {
-            sessionHeader(channel, accent: .red, status: "LIVE")
-            if let tourCode = service.tourCode {
-                HStack {
-                    Text("TOUR CODE")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Text(tourCode)
-                        .font(.title3.monospaced().bold())
-                        .textSelection(.enabled)
-                    Spacer()
-                    Text("Share with guests")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 10)
-            }
-            Divider()
-            featurePicker
-                .padding(.horizontal)
-                .padding(.top, 8)
-            Group {
-                switch selectedFeature {
-                case .slides: guideSlideStage
-                case .map: guideMapStage
-                case .pointer: guidePointerStage
+            ScrollView {
+                VStack(spacing: 0) {
+                    sessionHeader(channel, accent: .red, status: audioStatusText)
+                    audioRecoveryControls
+                    guideIdentityDetails
+                    roomAccessControls
+                    Divider()
+                    featurePicker
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    Group {
+                        switch selectedFeature {
+                        case .slides: guideSlideStage
+                        case .map: guideMapStage
+                        case .pointer: guidePointerStage
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 280)
                 }
             }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("guideTourControls")
             Divider()
             HStack {
-                Label("\(service.listenerCount) listeners", systemImage: "person.2.fill")
+                Label("\(service.connectedGuestCount) connected · \(service.tourControlService.audioReadyGuestCount) audio ready", systemImage: "person.2.fill")
                     .foregroundStyle(.secondary)
                 if !presentation.slides.isEmpty {
                     Text("\(service.assetTransferService.readyParticipantIDs.count) ready")
@@ -171,6 +170,7 @@ struct ChannelDetailView: View {
             } else {
                 if let url = guideCurrentSlideURL {
                     SlideImage(url: url)
+                        .frame(height: 280)
                         .padding(.horizontal)
                 }
 
@@ -245,21 +245,85 @@ struct ChannelDetailView: View {
         .padding(.vertical)
     }
 
-    private var photoPicker: some View {
-        PhotosPicker(
-            selection: $selectedPhotos,
-            maxSelectionCount: 50,
-            matching: .images
-        ) {
-            Label("Add Slides", systemImage: "photo.badge.plus")
+    private var roomAccessControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Lock Room with Code", isOn: Binding(
+                get: { service.isRoomLocked },
+                set: { service.updateRoomAccess(locked: $0, code: roomCodeDraft) }
+            ))
+            .accessibilityIdentifier("roomLockToggle")
+            .disabled(service.isUpdatingRoomAccess)
+            HStack {
+                TextField("Room code (4–64 characters)", text: $roomCodeDraft)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .fontDesign(.monospaced)
+                    .accessibilityIdentifier("roomCodeField")
+                if service.isRoomLocked {
+                    Button("Save Code") { service.updateRoomAccess(locked: true, code: roomCodeDraft) }
+                        .disabled(service.isUpdatingRoomAccess || !RoomAccessPolicy.isValidCode(roomCodeDraft)
+                            || roomCodeDraft == service.tourCode)
+                }
+            }
+            Text(service.roomAccessError ?? (service.isRoomLocked
+                ? "New guests need this code. Connected guests stay connected."
+                : "Room is open. Set a code, then turn on the lock."))
+                .font(.caption)
+                .foregroundStyle(service.roomAccessError == nil ? Color.secondary : Color.red)
         }
-        .buttonStyle(.bordered)
-        .disabled(service.isImportingSlides)
+        .padding(.horizontal)
+        .padding(.bottom, 10)
+        .onChange(of: channelIdentity, initial: true) { _, _ in roomCodeDraft = service.tourCode ?? "" }
+    }
+
+    private var channelIdentity: String? { service.activeChannelID }
+
+    private var photoPicker: some View {
+        HStack {
+            PhotosPicker(
+                selection: $selectedPhotos,
+                maxSelectionCount: 50,
+                matching: .images
+            ) {
+                Label("Add Slides", systemImage: "photo.badge.plus")
+            }
+            .buttonStyle(.bordered)
+            Button {
+                isPDFImporterPresented = true
+            } label: {
+                Label(isRenderingPDF ? "Preparing PDF" : "Import PDF", systemImage: "doc.richtext")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("importPDF")
+            // Attached to this button: a second importer on the same view as the map importer is ignored.
+            .fileImporter(isPresented: $isPDFImporterPresented, allowedContentTypes: [.pdf],
+                          allowsMultipleSelection: false) { result in
+                Task { await importPDF(result) }
+            }
+        }
+        .disabled(service.isImportingSlides || isRenderingPDF)
+    }
+
+    @MainActor
+    private func importPDF(_ result: Result<[URL], Error>) async {
+        isRenderingPDF = true
+        defer { isRenderingPDF = false }
+        do {
+            guard let url = try result.get().first else { return }
+            let slides = try await PDFSlideRenderer.render(try await PDFSlideRenderer.readDocument(at: url))
+            photoImportError = nil
+            await service.importSlides(slides)
+        } catch {
+            photoImportError = error.localizedDescription
+        }
     }
 
     private func guestView(_ channel: Channel) -> some View {
         VStack(spacing: 0) {
             sessionHeader(channel, accent: .blue, status: guestConnectionStatus)
+            audioRecoveryControls
+            guideIdentityDetails
             Divider()
             featurePicker
                 .padding(.horizontal)
@@ -292,7 +356,7 @@ struct ChannelDetailView: View {
                     }
                 } else {
                     ContentUnavailableView(
-                        "Listening to the guide",
+                        service.audioRuntimeState == .running ? "Listening to the guide" : "Connected to the tour",
                         systemImage: "headphones",
                         description: Text("Slides and the shared destination appear here when the guide presents them.")
                     )
@@ -301,6 +365,20 @@ struct ChannelDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                if let warning = service.speakerFeedbackWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                // FAILED already renders the reason in the header status line (ADR-041).
+                if service.connectionState != .failed, let error = service.tourFeatureError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            .padding(.horizontal)
             HStack {
                 Button {
                     service.setListenerOutput(service.listenerOutput.toggled)
@@ -327,10 +405,18 @@ struct ChannelDetailView: View {
             Image(systemName: service.isCreator ? "megaphone.fill" : "speaker.wave.3.fill")
                 .font(.title2)
                 .foregroundStyle(accent)
-                .symbolEffect(.variableColor, isActive: service.listenState != .idle)
+                .symbolEffect(.variableColor, isActive: service.audioRuntimeState == .running)
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.name).font(.headline)
-                Text(status).font(.caption.bold()).foregroundStyle(accent)
+                Text(status)
+                    .font(.caption.bold())
+                    .foregroundStyle(service.connectionState == .failed ? Color.red : accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !service.isCreator {
+                    Text(guestRouteLabel)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("guestTransportRoute")
+                }
             }
             Spacer()
             if !service.isCreator {
@@ -348,17 +434,68 @@ struct ChannelDetailView: View {
     }
 
     private var guestConnectionStatus: String {
-        switch service.connectionState {
-        case .idle: "IDLE"
-        case .connecting: "CONNECTING"
-        case .connected: "LISTENING"
-        case let .reconnecting(attempt): "RECONNECTING \(attempt)/5"
-        case .failed: "CONNECTION FAILED"
+        service.connectionState == .connected ? audioStatusText
+            : service.connectionState.guestStatusText(error: service.tourFeatureError)
+    }
+
+    private var guestRouteLabel: String {
+        if case .reconnecting = service.connectionState { return "Reconnecting" }
+        return switch service.guestRoute?.transport {
+        case .bluetooth: "Bluetooth"
+        case .wifiAware: "Wi-Fi Aware"
+        case .applePeer: "Apple peer-to-peer"
+        case .localLAN, nil: "Local network"
+        }
+    }
+
+    private var audioStatusText: String {
+        switch service.audioRuntimeState {
+        case .idle: "AUDIO OFF"
+        case .starting: service.isCreator ? "STARTING MICROPHONE" : "WAITING FOR AUDIO"
+        case .running: service.isCreator ? "LIVE" : "LISTENING"
+        case .interrupted: "AUDIO INTERRUPTED"
+        case .failed: "AUDIO UNAVAILABLE"
+        }
+    }
+
+    @ViewBuilder
+    private var guideIdentityDetails: some View {
+        if let fingerprint = service.guideKeyFingerprint {
+            DisclosureGroup("Guide identity") {
+                Text(fingerprint).font(.caption.monospaced())
+                    .accessibilityIdentifier("guideKeyFingerprint")
+                Text(service.isCreator ? "Guests can compare this session fingerprint with you."
+                     : "The session key is pinned. The guide’s identity is unverified until you compare this fingerprint with them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var audioRecoveryControls: some View {
+        if service.audioRuntimeState == .failed || service.audioRuntimeState == .interrupted {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(service.audioRuntimeError ?? "Audio was interrupted. Return to the tour to resume.")
+                    .font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("audioRuntimeError")
+                Button(service.isCreator ? "Restart Microphone" : "Retry Audio") {
+                    if service.isCreator { service.restartMicrophone() }
+                    else { service.retryAudio() }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("retryTourAudio")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
         }
     }
 
     private var featurePicker: some View {
-        Picker("Tour feature", selection: $selectedFeature) {
+        Picker("Tour feature", selection: Binding(get: { selectedFeature }, set: { selectedFeature = $0 })) {
             ForEach(TourFeature.allCases) { feature in
                 Label(feature.title, systemImage: feature.systemImage).tag(feature)
             }
@@ -388,6 +525,7 @@ struct ChannelDetailView: View {
                     pendingTargetCoordinate = coordinate
                 }
                 .id(configuration.styleJSON)
+                .frame(minHeight: 300)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal)
                 Text("Long-press the map to place or move the guest target.")
@@ -665,7 +803,7 @@ struct ChannelDetailView: View {
     }
 }
 
-private enum TourFeature: String, CaseIterable, Identifiable {
+enum TourFeature: String, CaseIterable, Identifiable {
     case slides
     case map
     case pointer

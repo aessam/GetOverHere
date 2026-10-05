@@ -1,0 +1,9 @@
+{
+  "apk_sha256": {
+    "com.aessam.comeoverhere": "33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a",
+    "com.aessam.comeoverhere.test": "ee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c"
+  },
+  "device": "emulator-5554",
+  "schema": 1,
+  "scope": "emulator_debug_adapter_only"
+}

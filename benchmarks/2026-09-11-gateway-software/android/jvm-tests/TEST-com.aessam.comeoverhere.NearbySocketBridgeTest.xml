@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.NearbySocketBridgeTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:36.187Z" hostname="redacted" time="11.567">
+  <properties/>
+  <testcase name="publicMetadataRoundtripsOverActualSockets" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="0.002"/>
+  <testcase name="abandonedAdmissionDrainHasABoundedLifetime" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="5.002"/>
+  <testcase name="admissionReplyRemainsAvailableUntilNativePeerCloses" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="0.206"/>
+  <testcase name="unchangedAdmissionHandlesOpenLockEditUnlockThroughBridge" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="6.355"/>
+  <testcase name="wrongRoomAndMalformedSelectorNeverOpenLocalLane" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="0.001"/>
+  <testcase name="stopClosesPendingSelectorAndBridgeCanRestart" classname="com.aessam.comeoverhere.NearbySocketBridgeTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

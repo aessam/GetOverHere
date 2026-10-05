@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.RoomAdmissionTransportTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:48.867Z" hostname="redacted" time="0.322">
+  <properties/>
+  <testcase name="lockEditUnlockPreservesMediaSecret" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.317"/>
+  <testcase name="refusedConnectionIsTypedReachabilityFailure" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.001"/>
+  <testcase name="emptyChallengeDisconnectIsReachabilityButTruncatedChallengeIsTerminal" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.001"/>
+  <testcase name="replyDisconnectAfterCredentialRequestIsNeverAReachabilityFailure" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.002"/>
+  <testcase name="discoveryRoundtrip" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.0"/>
+  <testcase name="completeMalformedChallengeIsNeverAReachabilityFailure" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.001"/>
+  <testcase name="fullSocketRejectsReplyWithoutWaiting" classname="com.aessam.comeoverhere.RoomAdmissionTransportTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

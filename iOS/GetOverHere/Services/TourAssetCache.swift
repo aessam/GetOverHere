@@ -9,6 +9,9 @@ enum AssetCacheIngestResult: Equatable, Sendable {
 
 enum AssetCacheError: LocalizedError, Equatable {
     case invalidHash(String)
+    /// Deprecated (DSCN-17, ADR-049): no longer thrown. A length-mismatched complete entry or an
+    /// oversized partial is repaired in place (deleted, one stderr line) and reported as missing
+    /// (`nil` / offset 0) so the transfer service re-requests it. Kept until a deletion round.
     case lengthMismatch(expected: UInt64, actual: UInt64)
     case offsetMismatch(expected: UInt64, actual: UInt64)
     case checksumMismatch(expected: String, actual: String)
@@ -49,6 +52,11 @@ final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
         partialDirectory = rootDirectory.appending(path: "partial", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: completeDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: partialDirectory, withIntermediateDirectories: true)
+        // Received tour content is re-fetchable session data, not user data (FND-13): keep it out of backups.
+        var root = rootDirectory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try root.setResourceValues(values)
     }
 
     func readyURL(sha256: String, expectedLength: UInt64) async throws -> URL? {
@@ -65,7 +73,8 @@ final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
             let actual = try fileSize(at: partial)
             guard actual <= expectedLength else {
                 try fileManager.removeItem(at: partial)
-                throw AssetCacheError.lengthMismatch(expected: expectedLength, actual: actual)
+                fputs("Asset cache: removed oversized partial \(sha256) (expected \(expectedLength), got \(actual))\n", stderr)
+                return 0
             }
             return actual
         }
@@ -89,7 +98,10 @@ final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         let actual = try fileSize(at: url)
         guard actual == expectedLength else {
-            throw AssetCacheError.lengthMismatch(expected: expectedLength, actual: actual)
+            // Repair locally and report missing; a removeItem failure still throws (loud).
+            try fileManager.removeItem(at: url)
+            fputs("Asset cache: removed length-mismatched complete entry \(sha256) (expected \(expectedLength), got \(actual))\n", stderr)
+            return nil
         }
         return url
     }

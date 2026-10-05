@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.TourContentStoreTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-12T02:40:51.191Z" hostname="redacted" time="0.006">
+  <properties/>
+  <testcase name="importedSlidesAreHashedPersistedAndOrdered" classname="com.aessam.comeoverhere.TourContentStoreTest" time="0.002"/>
+  <testcase name="offlineMapIsCopiedHashedAndManifested" classname="com.aessam.comeoverhere.TourContentStoreTest" time="0.002"/>
+  <testcase name="slidesCanBeReorderedAndRemoved" classname="com.aessam.comeoverhere.TourContentStoreTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

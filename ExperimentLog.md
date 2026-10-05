@@ -663,3 +663,1429 @@ Commands and results:
    - Result: passed. Android unit tests and lint completed with no errors.
 2. `scripts/verify_tour_session.sh`
    - Result: all nine stages passed: 26 Swift core tests, Kotlin core tests, byte-exact cross-language encrypted fixtures, security/source audits, Android API-floor lint, Android loopback/APK, and the complete iOS simulator suite including explicit simulator capture failure and credential erasure. Final output: `Tour session verification passed`.
+
+## 2026-09-02 — G1 cores: typed version error, guest mismatch text, canonical asset order, cross-decoded fixtures
+
+Environment (run on 2026-09-03): Apple M4 Max, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), Apple Swift 6.4 (swiftlang-6.4.0.25.4), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` (openjdk 21.0.8), simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG1/ios`, gate derived data `/tmp/GetOverHereFixG1/verifier-ios`, Swift scratch `/tmp/GetOverHereFixG1/swift` (focused) and `/tmp/GetOverHereFixG1/verifier-swift` (gate). No physical device; no emulator needed for this group.
+
+Implementation:
+
+- `SessionProtocolError.unsupportedMajorVersion(received:supported:)` on both Swift decode paths; Kotlin plaintext decode throws `UnsupportedSessionVersionException`; the nine iOS catch sites bind both majors from the decoder; `ChannelService.versionMismatchMessage` on both platforms; guest status presenters (`guestStatusText` / `guestConnectionStatusText`) render the recorded reason on FAILED, red and wrapping on iOS.
+- Tour-pack and slide manifests order by `(order, UTF-8 bytes)` and dedup on exact bytes on both cores (ADR-041, DSCN-7); new `SessionProtocolError.duplicateSlideID`.
+- Generalized CLI describers (`decode HEX[|HEX...]`, `decode-encrypted`, `decode-audio`), new `handshake` and `realtime-fixture` commands, `state` fixture extended with two tie-breaking slides, two tie-breaking tour-pack assets, and an `assetChunk` envelope; verifier stages 3/4 rewritten with variable-assigned, non-empty-guarded compares, cross-decodes for state/handshake/realtime/audio, and the per-element UTF-8 ordering invariant.
+
+Commands and results:
+
+1. Baseline before edits: `swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG1/swift`
+   - Result: 26 tests in 2 suites passed.
+2. Baseline before edits: `cd Android && JAVA_HOME=... ./gradlew :tour-session-core:test :tour-session-cli:installDist`
+   - Result: BUILD SUCCESSFUL (8 tasks up-to-date).
+3. Fail-before on unchanged sources: `swift test ... --filter 'tourPackOrderingIsUTF8ByteOrderWithExactDedup|slideManifestOrderingIsUTF8ByteOrderWithExactDedup'`
+   - Result: 2 tests failed with 5 issues. Tour pack: `Caught error: duplicate tour asset ID café` (NFC/NFD collapsed by `Set<String>`). Slide manifest: order `[astral, fullwidth, gate-left]`, `[[195,169],[122]]`, `[[97,98],[97]]` (no tie-break).
+4. Fail-before on unchanged sources: `./gradlew :tour-session-core:test --tests '...plaintextProtocolRejectsLegacyMajorExplicitly' --tests '...tourPackOrderingIsUtf8ByteOrderWithExactDedup' --tests '...slideManifestOrderingIsUtf8ByteOrderWithExactDedup'`
+   - Result: 3 tests completed, 3 failed (AssertionError at :147 caused by base `SessionProtocolException`; :177 astral sorted before fullwidth; :237 slide order).
+5. Fail-before for the two-value error shape: `swift build --build-tests ...` with `plaintextVersionMismatchCarriesBothMajors` added
+   - Result: `SessionProtocolTests.swift:164:40: error: extra argument 'supported' in call` and `:169:101`.
+6. After FND-10 edits: `swift test ...` → 29 tests, only the two FND-11 tie-break tests failing; `./gradlew :tour-session-core:test :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.GuestConnectionStatusTest' --continue` → core 29 tests, 2 failed (same two), `GuestConnectionStatusTest` 4/4; `DEVELOPER_DIR=... xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG1/ios test -only-testing:GetOverHereTests/GuestConnectionStatusTests -only-testing:GetOverHereTests/LocalSessionTransportTests` → exit 0.
+7. Golden generation after FND-11 edits: `swift build ... --product tour-session-swift`, `./gradlew :tour-session-cli:installDist`, then `diff <(swift-cli $c) <(kotlin-cli $c)` for `fixture encrypted-fixture audio-fixture state handshake realtime-fixture auth`
+   - Result: all seven identical. Cross-decodes (`decode`, `decode-encrypted`, `decode-audio`) of the other side's bytes identical in both directions for state (9 lines), handshake (3 lines), sealed realtime, and audio. Under bash, `state` elements 5 (assetManifest) and 6 (tourPackManifest) each contain `efbd9e` before `f09f97ba`. The 2-asset tie manifest hex was taken from the Swift and Kotlin test failure output against a `PENDING` placeholder and diffed: identical. Only identical strings were pasted into both test files.
+8. `swift test ...` → 32 tests in 2 suites passed. `./gradlew :tour-session-core:test` → BUILD SUCCESSFUL, `SessionProtocolTest` 20/20, `ParticipantRegistryTest` 12/12.
+9. `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG1/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG1/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG1/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG1/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: all nine stages passed. Stage 1: 32 Swift tests. Stage 2: Kotlin core tests and CLI install. Stages 3/4: exact bytes and cross-decodes for hello, encrypted hello, audio, handshake, realtime, state, auth, plus the per-element ordering invariant. Stage 8: `:app:testDebugUnitTest` 13 classes, 35 tests, 0 failures, `assembleDebug` built. Stage 9: `Test-GetOverHere-2026.09.03_16-26-16--0700.xcresult` totalTestCount 43, passedTests 43, failedTests 0. Final output: `Tour session verification passed`.
+
+## 2026-09-02 — G2 credential: PBKDF2 stretch and sealed major 4
+
+Environment (run on 2026-09-03): Apple M4 Max, macOS 27.0, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), Apple Swift 6.4 (swiftlang-6.4.0.25.4), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` (openjdk 21.0.8), simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG2/ios`, gate derived data `/tmp/GetOverHereFixG2/verifier-ios`, Swift scratch `/tmp/GetOverHereTourSessionSwift` (focused) and `/tmp/GetOverHereFixG2/verifier-swift` (gate). Android emulator `GetOverHere_API_36` (AVD, `emulator-5554`, Android 16, API 36, arm64-v8a, "Android SDK built for arm64"), already booted. No physical device.
+
+Implementation:
+
+- `SessionCredential.derive` on both cores now runs PBKDF2-HMAC-SHA256 (600,000 iterations, 32 bytes, salt = sessionID wire bytes || `GetOverHere/GOH4/credential-salt/v1`) over the normalized ASCII code before the unchanged HMAC expansion; CommonCrypto `CCKeyDerivationPBKDF` on Apple with `SessionSecurityError.keyStretchFailed(status)`, `javax.crypto` `PBKDF2WithHmacSHA256` on the JVM/Android. Iteration count, salt label, and output size are public wire-contract constants (ADR-042).
+- `SealedSessionEnvelope.majorVersion` / `MAJOR_VERSION` 3 → 4; majors 2 and 3 are rejected as `unsupportedMajorVersion(received:supported:)` / `UnsupportedSessionVersionException`.
+- Goldens regenerated on both sides: encrypted hello fixture, auth fixture, and G1's sealed realtime fixture; known-answer test `credentialStretchContract` / `credentialStretchIsAPbkdf2WireContract` pins the constants, the raw PBKDF2 output, and the final key; `authenticationProofs` now also asserts `derive("23456-789 ab").key == fixtureCredential().key` (normalization before stretch).
+- Both `ChannelService`s derive off the main thread (iOS `@concurrent` static `stretchCredential`, Android `withContext(Dispatchers.Default)`) inside new `startGuideSession` / `startGuestSession` helpers, guarded by the monotonic `sessionAttempt` (DSCN-20). The iOS `audioHostIP` guard and the Android `participantID` guard run before the hop.
+- App-level measurements: `TourSessionCoreIntegrationTests.stretchedCredentialBudget` (simulator) and instrumented `SessionCredentialStretchTest` (emulator), both with the DSCN-8 5 s sanity ceiling only.
+
+Vectors: computed independently before either core changed by `scratchpad/g2_vectors.py` (Python `hashlib.pbkdf2_hmac` + `cryptography` AES-GCM), which first reproduced the major-3 encrypted hello and auth goldens byte-for-byte and then produced the major-4 values pasted into both test files. Fixture salt `00112233445566778899aabbccddeeff4765744f766572486572652f474f48342f63726564656e7469616c2d73616c742f7631`, raw PBKDF2 `92ed1ff17b00d8ed95c29c42930eea012bf535f0375174f8c01b0caa46bef215`, credential key `21ad5672cb5998d6c28ca6573e170ca605c0d71d22ae25ede7444c124ef4b1cf`.
+
+Commands and results:
+
+1. Fail-before (compile form): `git stash push -- <the four core source files>`, then `DEVELOPER_DIR=... swift build --build-tests --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG2/failbefore-swift` and `cd Android && JAVA_HOME=... ./gradlew :tour-session-core:compileTestKotlin -q`, then `git stash pop`
+   - Result: Swift `SessionProtocolTests.swift:531-535: error: type 'SessionCredential' has no member 'stretchIterations' / 'stretchSaltLabel' / 'stretchedKeySize' / 'stretch'`; Kotlin `SessionProtocolTest.kt:547-553: Unresolved reference 'STRETCH_ITERATIONS' / 'STRETCH_SALT_LABEL' / 'STRETCHED_KEY_SIZE' / 'stretch'`. The regenerated goldens and the `[2, 3]` legacy loop live in the same files, so they cannot run against the old cores; the Python model above is the independent proof that the old goldens were the single-HMAC values and the new ones are the PBKDF2 values.
+2. `DEVELOPER_DIR=... swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereTourSessionSwift --filter SessionProtocolTests`
+   - Result: 33 tests in 2 suites passed (`Encrypted protocol rejects legacy majors explicitly` with 2 test cases, `Credential stretch is a PBKDF2 wire contract`, `Authentication proofs are stable and reject another tour code` 0.562 s). Wall 8.4 s including build.
+3. `cd Android && JAVA_HOME=... ./gradlew :tour-session-core:test --tests 'com.aessam.toursession.SessionProtocolTest'`
+   - Result: BUILD SUCCESSFUL, `SessionProtocolTest` 21 tests, 0 failures.
+4. `swift build ... --product tour-session-swift`, `./gradlew :tour-session-cli:installDist`, then `diff` of Swift vs Kotlin output for `fixture encrypted-fixture audio-fixture handshake realtime-fixture state auth`
+   - Result: all seven identical (236, 300, 84, 458, 256, 2598, 129 hex chars). `realtime-fixture`, `encrypted-fixture`, and `auth` equal the literals in both test files. Cross `decode-encrypted` of the other side's `encrypted-fixture` and `realtime-fixture` identical in both directions and print `version=4.0|...`.
+5. `cd Android && JAVA_HOME=... ./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.TourSessionCoreIntegrationTest' --tests 'com.aessam.comeoverhere.LocalSessionTransportTest' --tests 'com.aessam.comeoverhere.PresentationServiceTest' --tests 'com.aessam.comeoverhere.TourAssetTransferServiceTest'`
+   - Result: BUILD SUCCESSFUL; 1 + 8 + 6 + 1 tests, 0 failures.
+6. `DEVELOPER_DIR=... xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath /tmp/GetOverHereFixG2/ios -parallel-testing-enabled NO test -only-testing:GetOverHereTests/TourSessionCoreIntegrationTests -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/PresentationServiceTests -only-testing:GetOverHereTests/TourAssetTransferServiceTests`
+   - Result: `** TEST SUCCEEDED **`, 20 tests in 4 suites passed; `grep 'PBKDF2 derive'` → `PBKDF2 derive (simulator): 0.150139667 seconds`. Wall 52 s.
+7. `adb logcat -c; cd Android && JAVA_HOME=... ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.SessionCredentialStretchTest; adb logcat -d -s SessionCredentialStretchTest`
+   - Result: `Finished 1 tests on GetOverHere_API_36(AVD) - 16`, BUILD SUCCESSFUL, testcase time 1.533 s; logcat `PBKDF2 derive (emulator): 1545 ms`. Under the DSCN-8 3 s threshold, so 600,000 iterations hold; the auth-hex assertion proves the device BouncyCastle provider equals SunJCE and CommonCrypto.
+8. Wall-time delta (critique minor): `git stash push -u`, `swift test --skip-build ...` and `./gradlew :tour-session-core:cleanTest :tour-session-core:test -q` on the pre-G2 tree, `git stash pop`, same commands after
+   - Result: Swift core suite 32 tests in 0.006 s (1.03 s wall) → 33 tests in 0.582 s (1.58 s wall); Kotlin core 1.32 s wall → 2.75 s wall. About one stretch per `derive` call site.
+9. `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG2/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG2/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG2/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG2/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: all nine stages passed in 1:49 wall. Stage 1: 33 Swift tests. Stage 2: Kotlin core tests and CLI install. Stages 3/4: exact bytes and cross-decodes for hello, encrypted hello (`version=4.0`), audio, handshake, sealed realtime, state, auth, plus the per-element ordering invariant. Stage 8: `:app:testDebugUnitTest` 13 classes, 35 tests, 0 failures, `assembleDebug` built. Stage 9: `Test-GetOverHere-2026.09.03_20-07-15--0700.xcresult` totalTestCount 44, passedTests 44, failedTests 0. The log also carries one xcodebuild line `error: the following command failed with exit code 0 but produced no further output` for the warning-only compile of `TourAssetCacheTests.swift` (main-actor initializer warnings at :27, :52); that warning is present in G1's verifier log too, the file is untouched by G2, and xcodebuild exited 0. Final output: `Tour session verification passed`.
+
+## 2026-09-02 — G3 realtime: audio-lane reconnect, off-main Android encode, TCP_NODELAY, clocked playout
+
+Environment (run on 2026-09-03): Apple M4 Max, macOS 27.0, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), Apple Swift 6.4 (swiftlang-6.4.0.25.4), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` (openjdk 21.0.8), simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG3/ios`, gate derived data `/tmp/GetOverHereFixG3/verifier-ios`, Swift scratch `/tmp/GetOverHereFixG3/swift` (focused) and `/tmp/GetOverHereFixG3/verifier-swift` (gate). Android emulator `GetOverHere_API_36` (AVD, `emulator-5554`, Android 16, API 36, arm64-v8a), already booted. No physical device.
+
+Implementation:
+
+- Both cores: `EncodedAudioJitterBuffer.popForPlayout(nowNanoseconds:)` returning `EncodedAudioPlayoutDecision` (`frame` / `conceal(missingSequence)` / `wait`) replaces `popReady`; `TourSessionFixtures.simulatePlayout()` and the `playout` CLI subcommand pin `w,w,f1,f2,w,c3,f4,f10,f11,w`; no wire bytes changed (ADR-045).
+- `UDPAudioPlane.swift` / `UDPAudioPlane.kt`: `TCP_NODELAY` / `tcpNoDelay = true` on accepted and connecting sockets (ADR-043); internal `PlayoutClock` (`audio.tcp.playout` queue / `goh2-audio-playout` thread, injectable clock, manual `tick()`, one 640-byte silence frame per concealed sequence, decoder confined to the playout thread, decode failure reported once); Android `BroadcastProcessor` on `audio-encode-seal` and `sendAudio` no longer `@Synchronized`; guest read-loop exit emits one `.failed`/`Failed` per run with `lostRemotely` captured before `close()` (iOS) and `isRunActive(epoch)` + `emitFailedOnce` (Android); pre-authentication credential rejection stays log-only (ADR-044, RSK-3); test accessors `connectedClientDescriptors`/`guestSocketDescriptor`/`acceptedClientSockets()`.
+- Both `ChannelService`s: guest audio-lane events routed through `handleGuestAudioSessionEvent` into the control-lane handler; iOS `pendingAudioLaneFailure` for the CONNECTING race; `consecutiveAudioLaneFailures` with `failGuestSession("Audio connection lost repeatedly")` at 5 (DSCN-19), reset on the first PCM buffer of a run; Android `audioEngine.playbackFailureHandler` → `tourFeatureError`.
+- `AudioEngine.kt`: `PcmPlaybackSink`/`PlaybackWriter`/`PlaybackWriteOutcome`, short-write and error counters, `playbackFailureHandler`; `AudioEngine.swift`: tap-floor comment only (DSCN-5).
+- `scripts/verify_tour_session.sh`: `EXPECTED_PLAYOUT` parity gate after `EXPECTED_FAULTS`; NODELAY, encode-worker, `@Synchronized sendAudio`, and playout-label audits (one `rg -q` per file) after the cooperative-pool audit.
+
+Commands and results:
+
+1. Fail-before (cores, compile form): `DEVELOPER_DIR=... swift build --build-tests --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG3/swift` and `cd Android && JAVA_HOME=... ./gradlew :tour-session-core:compileTestKotlin -q` with the updated core tests against the unchanged cores
+   - Result: Swift `SessionProtocolTests.swift:425:24: error: value of type 'EncodedAudioJitterBuffer' has no member 'popForPlayout'` (ten sites through :461); Kotlin `SessionProtocolTest.kt:415:22 Unresolved reference 'EncodedAudioPlayoutDecision'`, `:415:63 Unresolved reference 'popForPlayout'` (twenty sites through :486). `popReady` returned nil/null on a below-target gap, so the `.conceal(missingSequence: 3)` / `Conceal(3)` assertions had no equivalent before the change.
+2. After the core change: `swift test ... --filter 'clockedPlayout|realtimeAudioBuffers'` → 2 tests passed; `swift build ... --product tour-session-swift` then `tour-session-swift playout` → `w,w,f1,f2,w,c3,f4,f10,f11,w`. `./gradlew :tour-session-core:test --tests 'com.aessam.toursession.SessionProtocolTest' :tour-session-cli:installDist` → `SessionProtocolTest` 22 tests, 0 failures; `tour-session-cli playout` → identical string.
+3. Fail-before (transports, runtime form): the core, fixture, and CLI edits were stashed (`git stash push -- Packages/TourSessionCore Android/tour-session-core Android/tour-session-cli`) so the unchanged transports compiled; only the behavior-free test accessors were added to `UDPAudioPlane.swift`/`.kt`. `DEVELOPER_DIR=... xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG3/ios test -only-testing:GetOverHereTests/LocalSessionTransportTests`
+   - Result: exit 65, 14 tests, 2 failed. `helloAndAudioRoundtrip`: `Expectation failed: tcpNoDelay(fd: try #require(guest.guestSocketDescriptor)) != 0`, `Expectation failed: tcpNoDelay(fd: try #require(guide.connectedClientDescriptors.first)) != 0`, `Expectation failed: deliveryQueueLabel == "audio.tcp.playout"` (delivered from `audio.tcp.guest`). `guestAudioLaneReportsGuideClose`: `Caught error: .expired` after 3 s (no event on read-loop exit). `guestAudioLaneStaysSilentOnLocalStop` and `audioLaneWrongCodeStaysSilent` passed on the old tree, as predicted (regression guards). This run took over ten minutes of wall time on a fresh derived-data path (simulator boot and test-host launch); later runs on the same path took about a minute.
+   - `cd Android && JAVA_HOME=... ./gradlew :app:testDebugUnitTest --tests com.aessam.comeoverhere.LocalSessionTransportTest --continue -q` → 11 tests, 2 failed: `guestAudioLaneReportsGuideClose` (`Guest audio lane did not report the guide close`), `goh2HelloRegistersGuestAndRealtimePayloadArrives` (`guest socket keeps Nagle`; the encode-thread and playout-thread assertions sit behind it). Stash popped afterwards.
+4. Fail-before (new test files, compile form): `git stash push -- Android/app/src/main/java/com/aessam/comeoverhere/service/AudioEngine.kt` then `./gradlew :app:compileDebugUnitTestKotlin -q` → the main source set fails first on `ChannelService.kt:184:21 Unresolved reference 'playbackFailureHandler'`, so the compiler never reached `PlaybackWriterTest.kt`; stash popped. `PlaybackWriterTest.kt`, `PlayoutClockTests.swift`, and `PlayoutClockTest.kt` reference types (`PcmPlaybackSink`, `PlaybackWriter`, `PlaybackWriteOutcome`, `PlayoutClock`) that did not exist at HEAD, and every attempt to compile them against the pre-change sources fails earlier in the main target (this item and the removed `popReady` in item 1), so their fail-before is by construction rather than a captured test-target diagnostic.
+5. After the transport, engine, and service changes: `DEVELOPER_DIR=... xcodebuild ... -derivedDataPath /tmp/GetOverHereFixG3/ios test -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/PlayoutClockTests -only-testing:GetOverHereTests/SocketFrameIOTests -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/NativeRealtimeAudioCodecTests`
+   - Result: exit 0, `Test-GetOverHere-2026.09.03_20-55-32--0700.xcresult` totalTestCount 20, passedTests 20, failedTests 0 (the log carries the known warning-only line `error: the following command failed with exit code 0 but produced no further output` from `TourAssetCacheTests.swift`, unchanged by G3).
+   - `./gradlew :app:testDebugUnitTest --tests com.aessam.comeoverhere.LocalSessionTransportTest --tests com.aessam.comeoverhere.PlaybackWriterTest --tests com.aessam.comeoverhere.PlayoutClockTest --tests com.aessam.comeoverhere.BoundedSocketFrameWriterTest --continue -q` → `LocalSessionTransportTest` 11, `PlaybackWriterTest` 4, `PlayoutClockTest` 2, `BoundedSocketFrameWriterTest` 1; 0 failures.
+6. Emulator (DSCN-9): `adb logcat -c; cd Android && JAVA_HOME=... ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.AudioLaneReconnectTest,com.aessam.comeoverhere.NativeRealtimeAudioCodecTest; adb logcat -d -s AudioLaneReconnectTest ChannelService UDPAudioPlane LocalControlPlane`
+   - Result: `Starting 4 tests on GetOverHere_API_36(AVD) - 16`, `Finished 4 tests`, BUILD SUCCESSFUL in 21s; `audioLaneLossSchedulesReconnect` 6.394 s pass, `nativeCodecCrossesEncryptedRealtimeTransport` 2.5 s pass, `opusAndAacLcEncodeAndDecodeNativePcm16Frames` 0.252 s pass, `nativeCapabilitiesMapToSessionNegotiationBits` 0.002 s pass. Logcat: `Published local channel` → `Found local service` → `Resolved local channel` → `Discovered megaphone` → `Discovered in-process guide channel; hostIP present=true` → `Joined megaphone` → `validated guest session` / `authenticated GOH2 session joined` → `Guest connected on control and audio lanes; closing only the audio lane` → `TCP receive failed (IllegalStateException)` → `Session reconnect attempt 1` → `Guest scheduled reconnect after audio-lane loss: reconnectAttempt=1` → `Left channel`. The in-process guide channel was discovered through real NSD (a second `LocalControlPlane` publishing from the test), which is why this proof exists only on the emulator: `LocalControlPlane` needs `NsdManager`, and `ChannelService.channels` is filled only by discovery.
+7. `scripts/verify_no_plaintext_session_paths.sh` → `Encrypted session-path audit passed`.
+8. `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG3/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG3/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG3/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG3/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stage 2: Kotlin core tests and CLI install. Stages 3/4: exact bytes and cross-decodes unchanged. Stage 5: `faults`, `playout` (`w,w,f1,f2,w,c3,f4,f10,f11,w` on both sides), `focus`, `auth`, `recovery`, and the new NODELAY / encode-worker / playout-label audits. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 15 classes, 44 tests, 0 failures, `assembleDebug` built. Stage 9: `Test-GetOverHere-2026.09.03_20-58-26--0700.xcresult` totalTestCount 49, passedTests 49, failedTests 0. Final output: `Tour session verification passed`.
+
+9. Review fix: `handleGuestAudioSessionEvent` on iOS initially stored a pending audio-lane failure only while `.connecting`, so a refused audio connect during a reconnect cycle (state `.reconnecting`, guide audio port still down) would have been discarded and the following control `.connected` would have produced a mute CONNECTED guest again. Changed to `case .connecting, .reconnecting: pendingAudioLaneFailure = message`; re-ran the same `scripts/verify_tour_session.sh` invocation as item 8
+   - Result: all nine stages passed. Stage 1: 34 Swift tests. Stages 2, 7, and 8 were Gradle up-to-date (no Android input changed since item 8; `:app:testDebugUnitTest` results on disk: 15 classes, 44 tests, 0 failures). Stage 9: `Test-GetOverHere-2026.09.03_21-06-05--0700.xcresult` totalTestCount 49, passedTests 49, failedTests 0. Final output: `Tour session verification passed`.
+
+Not run this round: the iOS `ChannelService`-level `audioLaneLossSchedulesReconnect` from the plan. `ChannelService.scheduleReconnect` requires `activeChannel`, `channels` is `private(set)` and filled only by Bonjour discovery, and the DSCN-23 `NetworkCoordinator` injection seam is G4's; a real-Bonjour simulator test would resolve the Mac's LAN address rather than loopback and make the gate depend on Wi-Fi state. Handed to G4 with `LifecycleControlPlane.emit(.channelAnnounce)`; the transport-level tests plus the Android emulator proof are the G3 evidence.
+
+## 2026-09-02 — G4 lifecycle: startup ordering, discovery-driven reconfiguration, terminal paths, counts and audio focus, handshake bound
+
+Environment (run on 2026-09-04): Apple M4 Max, macOS 27.0, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), Apple Swift 6.4 (swiftlang-6.4.0.25.4), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`, simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG4/ios`, gate derived data `/tmp/GetOverHereFixG4/verifier-ios`, gate Swift scratch `/tmp/GetOverHereFixG4/verifier-swift`. Android emulator `GetOverHere_API_36` (AVD, `emulator-5554`, Android 16, API 36, arm64-v8a), already booted. No physical device. Every xcodebuild invocation ran alone; gradle runs overlapped only with xcodebuild, never with another gradle run.
+
+Implementation:
+
+- FND-2 (ADR-046): synchronous throwing lane start on both platforms (`SessionControlTransport.startGuide() throws`, `SessionAssetTransport.startGuide() throws`, `AudioPlane.startBroadcasting throws` + `AudioPlaneStartError`; Kotlin `IllegalStateException`, synchronous `AudioEngine.startCapture()` preflight); `startGuideSession` orders control → asset → audio → capture → commit → publish; `rollbackFailedGuideSession` clears every lane and broadcasts `channelEnded` on both platforms; Android `BroadcastProcessor` constructed after the bind (DSCN-28).
+- FND-6 (DSCN-11): `restartGuestTransports(channel:)` on both platforms replaces the discovery-driven `joinChannel` and the reconnect body; never `clearSession`, never a second stretch.
+- FND-8 (ADR-048): `credentialRejected` events sourced only from the AEAD failure or the proof mismatch (Kotlin `SessionFrameAuthenticationException` subtype, DSCN-26); `failGuestSession` at control version mismatch, credential rejection, and reconnect exhaustion; `sendLeave() async` / `suspend fun sendLeave()` with the deferred `stopCurrentActivity()` under the `sessionAttempt` guard (DSCN-20, DSCN-27); iOS `terminate()`, `AppCoordinator.stop()`, `willTerminateNotification`; DSCN-13 informational guide branch; stale-attempt discard log lines in both ChannelServices (DSCN-28).
+- FND-13: `TourControlService.connectedGuestCount` (set semantics) and `ChannelService.connectedGuestCount`/`speakerFeedbackWarning` on both platforms with the UI label `"<n> connected · <m> audio"` and the guest warning; iOS `installCaptureTap`, converter rebuild on route/config change, interruption observer with the pure `interruptionAction(for:)` / `needsConverterRebuild(current:converterInput:)`, capture-end `"Microphone capture stopped"` (DSCN-12); Android `AudioFocusRequest`, `ACTION_AUDIO_BECOMING_NOISY` receiver, `onOutputForcedPrivate` / `onAudioFocusLost` wiring.
+- RSK-1 (ADR-047): `HandshakeSlots` (iOS) / `Semaphore` (Android) on all four accept loops, released when the handshake returns or throws; bound calibrated to 32 (see item 6).
+- Test seams (DSCN-23): iOS `AudioEngineInterface`, `NetworkCoordinator.init(displayName:controlPlane:audioPlane:)`, `ChannelService(..., reconnectBaseDelay:)`; Android `AudioEngineInterface`, `LocalGuidanceInterface`, `NetworkCoordinator(controlPlane, udpAudio, scope)`, `ChannelService(..., reconnectBaseDelayMillis)`. Shared doubles in `ChannelServiceTestDoubles.swift` / `.kt` (`Lifecycle*`, `FakeAudioEngine`, `FakeLocalGuidance`).
+- Reconciled ADR-044 and LessonsLearned 54 with the committed `pendingAudioLaneFailure` behavior (`.connecting` or `.reconnecting`, DSCN-28).
+
+Commands and results:
+
+1. Runtime fail-before (RSK-1), the only new tests that compile against the untouched transports: `iOS/GetOverHereTests/HandshakeBoundTests.swift` and `Android/app/src/test/.../HandshakeBoundTest.kt` written first (8 silent sockets plus a ninth at that time).
+   - `cd Android && JAVA_HOME=... ./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.HandshakeBoundTest' --continue -q` → `2 tests completed, 2 failed`, both `ninth pending handshake must be closed without a challenge expected:<-1> but was:<0>` (the ninth socket read the challenge's first length byte). Exit 1.
+   - `DEVELOPER_DIR=... xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG4/ios test -only-testing:GetOverHereTests/HandshakeBoundTests` → exit 65; both lanes `Expectation failed: rawReceiveByte(fd: ninth, timeoutSeconds: 1) == 0` at `HandshakeBoundTests.swift:65`.
+2. Compile-form fail-before, Kotlin: `git stash push -- Android/tour-session-core/src/main Android/app/src/main`, then `./gradlew :tour-session-core:compileTestKotlin :app:compileDebugUnitTestKotlin --continue -q`, then `git stash pop`
+   - Result: exit 1 with 58 diagnostics, among them `SessionProtocolTest.kt:84 Unresolved reference 'SessionFrameAuthenticationException'`, `ChannelServiceLifecycleTest.kt:64 Argument type mismatch: actual type is 'LifecycleControlPlane', but 'Context' was expected`, `:67 actual type is 'FakeAudioEngine', but 'AudioEngine' was expected`, `:72 actual type is 'FakeLocalGuidance', but 'LocalGuidanceService' was expected`, `:234 Unresolved reference 'CredentialRejected'`, `:293 Unresolved reference 'connectedGuestCount'`, `:317 Unresolved reference 'speakerFeedbackWarning'`, `ChannelServiceTestDoubles.kt:15 Unresolved reference 'AudioEngineInterface'`, `:17 Unresolved reference 'LocalGuidanceInterface'`, `:173 'sendLeave' overrides nothing`.
+3. Compile-form fail-before, iOS: `git stash push -- iOS/GetOverHere`, then `DEVELOPER_DIR=... xcodebuild ... -derivedDataPath /tmp/GetOverHereFixG4/ios build-for-testing`, then `git stash pop`
+   - Result: exit 65 (`3 failures`; the compiler stops at the first failing file): `ChannelServiceTestDoubles.swift:63 type 'LifecycleAudioPlane' does not conform to protocol 'AudioPlane'` (throwing `startBroadcasting`), `:120 type 'LifecycleControlTransport' does not conform to protocol 'SessionControlTransport'` (throwing `startGuide`, `sendLeave`), `:204 type 'LifecycleAssetTransport' does not conform to protocol 'SessionAssetTransport'`, `:267 cannot find type 'AudioEngineInterface' in scope`. The remaining seam-dependent tests (`credentialRejected`, `connectedGuestCount`, `speakerFeedbackWarning`, `terminate()`, `reconnectBaseDelay:`) sit behind those files and fail by construction on the old tree.
+4. Kotlin focused after the change: `./gradlew :tour-session-core:test --tests 'com.aessam.toursession.SessionProtocolTest' :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.ChannelServiceLifecycleTest' --tests 'com.aessam.comeoverhere.HandshakeBoundTest' --tests 'com.aessam.comeoverhere.GuestHandshakeOutcomeTest' --tests 'com.aessam.comeoverhere.PresentationServiceTest' --tests 'com.aessam.comeoverhere.LocalSessionTransportTest' --continue -q`
+   - Result (after two compile fixes in the new test files: JUnit 4 `assertNotNull` returns Unit; a `var listenerOutput` in `FakeAudioEngine` clashed with `setListenerOutput` on the JVM): `SessionProtocolTest` 23 tests (incl. `anotherTourCredentialFailsAsTheAuthenticationSubtype`), `ChannelServiceLifecycleTest` 11, `HandshakeBoundTest` 2, `GuestHandshakeOutcomeTest` 1, `PresentationServiceTest` 7, `LocalSessionTransportTest` 11; 0 failures.
+   - First full `:app:testDebugUnitTest` afterwards showed one flake: `captureStreamEndSurfacesError` `expected:<1> but was:<0>` at the `audioPlane.sent.size` assertion. Root cause: the capture collector is a `launch` nested inside the credential-hop coroutine, and `UnconfinedTestDispatcher` runs a nested launch only after the outer body completes, so the test thread could observe `BROADCASTING` before the first frame was forwarded. The test now polls for the frame and the error text. Stability: `./gradlew :app:cleanTestDebugUnitTest :app:testDebugUnitTest --tests ChannelServiceLifecycleTest --tests HandshakeBoundTest --tests GuestHandshakeOutcomeTest` three times → 11/11, 11/11, 11/11.
+5. Android full: `./gradlew :app:cleanTestDebugUnitTest :app:lintDebug :app:testDebugUnitTest :tour-session-core:test --continue -q`
+   - Result: `lintDebug` 0 errors, 167 warnings (`ContextCompat.registerReceiver` with `RECEIVER_NOT_EXPORTED` and `AudioFocusRequest` pass the API-26 floor lint); `:app:testDebugUnitTest` 18 classes, 59 tests, 0 failures; `SessionProtocolTest` 23 tests, 0 failures.
+6. iOS focused: `DEVELOPER_DIR=... xcodebuild ... -derivedDataPath /tmp/GetOverHereFixG4/ios test -only-testing:GetOverHereTests/ChannelServiceLifecycleTests -only-testing:GetOverHereTests/HandshakeBoundTests -only-testing:GetOverHereTests/GuestHandshakeOutcomeTests -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/PresentationServiceTests -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/HybridSessionTransportsTests`
+   - Run 1: `Test run with 42 tests in 7 suites failed after 22.547 seconds with 2 issues`. (a) `audioLaneLossSchedulesReconnect` reached `.reconnecting(attempt: 1)` but my extra expectation on `tourFeatureError` was wrong: iOS `scheduleReconnect` logs the reason and Android stores it; the assertion now checks that the lane restart waits for the backoff. (b) The pre-existing `controlLaneScalesBeyondProcessorCount` (24 simultaneous control guests) timed out (`Caught error: .expired` after 8 s) with the handshake bound at 8: the accept loop dequeues a burst faster than the handshakes complete, so 16 legitimate guests were closed. The bound is calibrated to 32 on all four lanes (ADR-047); `HandshakeBoundTests`/`HandshakeBoundTest` open 32 silent sockets and assert the 33rd is closed and the next is admitted after one release.
+   - Run 2 (same command): `Test run with 42 tests in 7 suites passed after 14.621 seconds`, `Test-GetOverHere-2026.09.04_08-21-57--0700.xcresult`. Suites: ChannelService lifecycle 13, HandshakeBoundTests 2, GuestHandshakeOutcomeTests 1, Audio engine 3, Presentation service 7, LocalSessionTransportTests 14 (incl. the 24-guest burst and the rewritten wrong-code and unconfigured-start tests), Hybrid session transports 2.
+7. Emulator (FND-13, RSK-17): `adb logcat -c; cd Android && JAVA_HOME=... ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.AudioEngineFocusTest; adb logcat -d -s AudioEngine AudioEngineFocusTest TestRunner` (adb from `$HOME/Library/Android/sdk/platform-tools`)
+   - Run 1 (two tests): `losingAudioFocusInvokesCallback` passed (logcat `E AudioEngine: Audio focus lost` 1 ms after the competing `AUDIOFOCUS_GAIN` request); `audioBecomingNoisyForcesPrivateOutput` fired its callback (logcat `Output route=SPEAKER, applied=true` → `Audio output became noisy; forcing private output`) but was reported SKIPPED because the earpiece `assumeTrue` followed the callback assertion in the same method. Split into two tests.
+   - Run 2: `Starting 3 tests on GetOverHere_API_36(AVD) - 16`, BUILD SUCCESSFUL in 9s: `losingAudioFocusInvokesCallback` pass, `audioBecomingNoisyForcesPrivateOutput` pass (callback fired and `appliedListenerOutput == PRIVATE_AUDIO`), `audioBecomingNoisyRoutesToEarpiece` SKIPPED by assumption (`no built-in earpiece on this device; route assertion needs hardware`; logcat `E AudioEngine: No communication device for PRIVATE_AUDIO`). BLOCKED per DSCN-14: the earpiece route assertion needs a physical device; the exact command above reruns it.
+
+8. Gate, run 1: `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG4/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG4/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG4/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG4/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stage 2: Kotlin core tests and CLI install. Stages 3/4/5: exact bytes, cross-decodes, `faults`, `playout`, `focus`, `auth`, `recovery`, and every source audit unchanged (G4 changes no wire bytes). Stage 6: `Encrypted session-path audit passed`. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 18 classes, 59 tests, 0 failures, `app-debug.apk` built. Stage 9: `Test-GetOverHere-2026.09.04_08-23-50--0700.xcresult` totalTestCount 68, passedTests 68, failedTests 0. Final output: `Tour session verification passed`. The log carried three warning-only `error: the following command failed with exit code 0 but produced no further output` lines (G2/G3 saw one from `TourAssetCacheTests.swift`); two were new: `ChannelServiceTestDoubles.swift` evaluated `PeerInfo(...)` default arguments outside the main actor, `AudioEngineTests` compared the main-actor-isolated `Equatable` conformance of `CaptureInterruptionAction` from a nonisolated test, and the moved tap line discarded the `withLock` result. Fixed (nullable defaults built inside the actor, `nonisolated enum CaptureInterruptionAction: Equatable, Sendable`, `_ = $0?.yield(data)`).
+9. Gate, run 2 on the final tree (same command)
+   - Result: all nine stages passed; stage 1 34 Swift tests; stage 8 18 classes, 59 tests, 0 failures; stage 9 `Test-GetOverHere-2026.09.04_08-25-55--0700.xcresult` totalTestCount 68, passedTests 68, failedTests 0; no `error:` line in the log. Final output: `Tour session verification passed`.
+
+10. Emulator regression for the rewritten paths (after gate run 2): `adb logcat -c; cd Android && JAVA_HOME=... ./gradlew :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.AudioLaneReconnectTest,com.aessam.comeoverhere.AudioEngineRoutingTest#voiceCommunicationCaptureProducesAFrame'; adb logcat -d -s AudioLaneReconnectTest ChannelService AudioEngine TestRunner`
+   - Result: `Starting 2 tests on GetOverHere_API_36(AVD) - 16`, `Finished 2 tests`, BUILD SUCCESSFUL in 11s. `audioLaneLossSchedulesReconnect` (G3's real-NSD ChannelService proof, now through `scheduleReconnect` → `restartGuestTransports`): logcat `Discovered in-process guide channel; hostIP present=true` → `Joined megaphone` → `Guest connected on control and audio lanes; closing only the audio lane` → `Session reconnect attempt 1` → `Guest scheduled reconnect after audio-lane loss: reconnectAttempt=1` → `Left channel`. `voiceCommunicationCaptureProducesAFrame` (the synchronous `startCapture()` preflight against a real `AudioRecord`): `Capture started: 16000Hz mono PCM16` → `First capture packet emitted: 320 bytes`. The sibling earpiece test in `AudioEngineRoutingTest` was excluded by the method filter; it belongs to G6 (DSCN-14).
+
+Not automated, with justification: the iOS `willTerminateNotification` modifier (three lines in `GetOverHereApp`) cannot be raised from a unit test; `ChannelService.terminate()` behind it is unit-tested (`terminateClearsAllLanesForGuideAndGuest`), and the device check is "end the app while broadcasting, confirm the guest receives the authenticated leave" on the P3 physical checklist. The iOS route-change and interruption observers need real audio hardware (simulator capture is unsupported by design); their decisions are the pure `interruptionAction(for:)` / `needsConverterRebuild(current:converterInput:)` pinned in `AudioEngineTests`, and headset plug/unplug plus an incoming call are P3 physical checklist items. The Android `ACTION_AUDIO_BECOMING_NOISY` receiver delivery itself is not exercised (`AudioEngineFocusTest` calls `handleAudioBecomingNoisy()` directly); unplugging wired headphones during a tour is the physical check. RSK-1 release on the 5 s receive-timeout path shares the `Result`/`finally` release with the EOF path that `HandshakeBoundTests` exercises and is not timed separately because it would add more than 5 s per lane per platform to the gate.
+
+### 2026-09-04 — G4 repair: dedicated lane-ownership generation, Kotlin permit release, DSCN-27 catch
+
+Environment: same machine and toolchain as the G4 section above (Xcode 27.0 beta via `DEVELOPER_DIR`, Android Studio JBR `JAVA_HOME`, `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG4/ios`, gate `GOH_*` paths under `/tmp/GetOverHereFixG4/verifier-*`). No physical device; no emulator run needed (no instrumented test touched). One xcodebuild at a time; gradle overlapped only with xcodebuild.
+
+Defects (verification of commit 70affec): (1) major, FND-8: the deferred End Tour teardown compared the DSCN-20 `sessionAttempt`, which every no-op `leaveChannel()`/`terminate()` and every invalid `joinChannel` also bumps, so a second End Tour tap inside the 2 s flush window logged `Skipping the deferred lane teardown` and never called `clearSession()` on control/asset/audio. (2) minor, RSK-1 Kotlin: `socket.soTimeout = 5_000` (and `getInputStream()` on the realtime lane) ran between the accept loop's `tryAcquire` and the `finally` that releases the permit. (3) minor, DSCN-27: Kotlin `leaveChannel()` used `runCatching` around the suspend `endGuideSession()`, swallowing `CancellationException`.
+
+Implementation: `private var sessionGeneration: UInt64` / `Long` on both `ChannelService`s, bumped in `startGuideSession`/`startGuestSession` immediately before the lanes are configured, in `stopCurrentActivity()`, and in `leaveChannel()`/`terminate()` after the `activeChannel` guard; `leaveChannel()` captures it and the deferred task compares it. `sessionAttempt` is unchanged. Kotlin `handleGuest`/`authenticateAndMonitor`: `socket.soTimeout = 5_000` moved inside the released `try`; the realtime lane takes its post-hello `InputStream` after the handshake (`authenticateGuest` opens its own). Kotlin `leaveChannel()`: `try { endGuideSession() } catch (CancellationException) { throw } catch (Exception) { Log.e(type name) }`. ADR-047, ADR-048, and LessonsLearned 61 corrected.
+
+Commands and results:
+
+1. Fail-before, Kotlin (new `endTourTeardownSurvivesANoOpLeave` on the unrepaired tree): `cd Android && JAVA_HOME=... ./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.ChannelServiceLifecycleTest' --continue -q`
+   - Result: exit 1, `12 tests completed, 1 failed`; `endTourTeardownSurvivesANoOpLeave`: `java.lang.AssertionError: lanes cleared after delivery despite the no-op leave expected:<1> but was:<0>`.
+2. Fail-before, iOS (new `endTourTeardownSurvivesANoOpLeave`): `DEVELOPER_DIR=... xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG4/ios test -only-testing:GetOverHereTests/ChannelServiceLifecycleTests`
+   - Result: exit 65, `Test run with 14 tests in 1 suite failed after 7.366 seconds with 1 issue`; `ChannelServiceLifecycleTests.swift:171: Caught error: .expired("lanes cleared after delivery despite the no-op leave")` after the 5 s wait.
+3. Kotlin focused after the repair: `./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.ChannelServiceLifecycleTest' --tests 'com.aessam.comeoverhere.HandshakeBoundTest' --tests 'com.aessam.comeoverhere.LocalSessionTransportTest' --tests 'com.aessam.comeoverhere.GuestHandshakeOutcomeTest' --continue -q`
+   - Result: exit 0; `ChannelServiceLifecycleTest` 12/12, `HandshakeBoundTest` 2/2, `LocalSessionTransportTest` 11/11, `GuestHandshakeOutcomeTest` 1/1, 0 failures.
+4. iOS focused after the repair (same command as item 2)
+   - Result: exit 0, `Test run with 14 tests in 1 suite passed after 2.240 seconds` (`endTourTeardownSurvivesANoOpLeave` 0.132 s), `Test-GetOverHere-2026.09.04_12-44-42--0700.xcresult`.
+5. Gate: `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG4/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG4/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG4/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG4/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Result: exit 0, all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stage 6: `Encrypted session-path audit passed`. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 18 classes, 60 tests, 0 failures, `app-debug.apk` built. Stage 9: `Test-GetOverHere-2026.09.04_12-54-24--0700.xcresult` totalTestCount 69, passedTests 69, failedTests 0. No `error:` line in the log. Final output: `Tour session verification passed`.
+
+Not automated, with justification: the RSK-1 Kotlin permit leak needs a `SocketException` from `setSoTimeout` on a socket closed between `accept()` and the worker's first statement, a sub-millisecond race that cannot be induced deterministically from a test; the repair is by construction (the `finally` now starts at the worker's first statement) and `HandshakeBoundTest` still proves release on the return/EOF path. The DSCN-27 `CancellationException` rethrow is verified by inspection; the existing `endTourFlushesLeaveOffMainAndClearsAfterDelivery` covers the non-cancelled flush.
+
+Follow-up in the same repair (reviewer finding on the first cut): the deferred teardown's `stopCurrentActivity()` bumped `sessionAttempt`, so a Create/Join whose PBKDF2 stretch was still in flight when the flush completed was discarded as stale (`Discarding a stale guide credential`, info log only). On 70affec that ordering worked because the attempt mismatch skipped the teardown. Repair: `stopCurrentActivity(discardingPendingStretch: Bool = true)` / `(discardingPendingStretch: Boolean = true)` guards the `sessionAttempt` bump; only the deferred End Tour teardown passes `false`. ADR-048 item (3) records it.
+
+6. Fail-before, Kotlin (new `endTourTeardownDoesNotDiscardAFollowingCreate` on the first-cut tree): same command as item 1
+   - Result: exit 1, `13 tests completed, 1 failed`; `java.lang.AssertionError: Timed out waiting for second tour broadcasting after the deferred teardown` (5 s).
+7. Fail-before, iOS (same test): same command as item 2
+   - Result: exit 65, `Test run with 15 tests in 1 suite failed after 7.825 seconds with 1 issue`; `ChannelServiceLifecycleTests.swift:201: Caught error: .expired("second tour broadcasting after the deferred teardown")`.
+8. Kotlin focused after the follow-up: `./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.ChannelServiceLifecycleTest' --continue -q`
+   - Result: exit 0, `ChannelServiceLifecycleTest` 13/13 (`endTourTeardownDoesNotDiscardAFollowingCreate` 0.125 s, `endTourTeardownSurvivesANoOpLeave` 0.069 s).
+9. iOS focused after the follow-up (same command as item 2)
+   - Result: exit 0, `Test run with 15 tests in 1 suite passed after 3.130 seconds` (`endTourTeardownDoesNotDiscardAFollowingCreate` 0.307 s), `Test-GetOverHere-2026.09.04_13-11-33--0700.xcresult`.
+10. Gate, run 2 on the final tree (same command as item 5)
+   - Result: exit 0, all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stage 6: `Encrypted session-path audit passed`. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 18 classes, 61 tests, 0 failures, `app-debug.apk` built. Stage 9: `Test-GetOverHere-2026.09.04_13-12-35--0700.xcresult` totalTestCount 70, passedTests 70, failedTests 0. No `error:` line in the log. Final output: `Tour session verification passed`. The verifier reads no markdown file, so the ExperimentLog append after this run does not change its outcome.
+
+## 2026-09-02 — G5 assets: cache repair, per-asset isolation, in-flight cap, bounded re-request, inactivity deadline, guest error surfacing
+
+Environment (run on 2026-09-04): Apple M4 Max, macOS 27.0, Xcode 27.0 (27A5218g) at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`, simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG5/ios`, gate derived data `/tmp/GetOverHereFixG5/verifier-ios`, gate Swift scratch `/tmp/GetOverHereFixG5/verifier-swift`. JVM unit tests only on Android (no instrumented test in this group; no emulator or device needed). Every xcodebuild invocation ran alone; gradle runs overlapped only with xcodebuild.
+
+Implementation (ADR-049, FND-9, DSCN-16, DSCN-17):
+
+- Cache repair on both platforms: `readyURL`/`readyFile` deletes a length-mismatched `complete/` entry, prints one stderr line, and returns `nil`/`null`; `resumeOffset` deletes an oversized partial, prints one line, and returns 0. `AssetCacheError.lengthMismatch` kept with a deprecation comment (DSCN-17). Kotlin `AssetCacheException` is `open`; new `AssetChecksumMismatchException` subtype thrown only when the partial was deleted.
+- Guest scheduler in `TourAssetTransferService` (both): `pendingHashes`/`inFlightHashes`/`transferAttempts`/`inFlightDeadlines`, `pumpRequests` (slot reserved before the cache call, stderr line on a dropped hash), `finishTransfer`, `resetGuestTransferQueue` on `.disconnected`/`Disconnected` and `stop()` (Android routes the `stop()` reset through the worker for FIFO ordering), per-asset isolation in `handleGuestManifest`, one checksum re-request from offset 0 then FAILED, late-chunk drop for a hash no longer in flight, and the DSCN-16 deadline armed in `sendRequest` (iOS main-actor `Task`; Android `worker` is now `newSingleThreadScheduledExecutor` with the same `tour-asset-transfer` thread name). Constants `maxInFlightRequests = 2`, `maxTransferAttempts = 2`, `inFlightDeadline = 15 s` / `MAX_IN_FLIGHT_REQUESTS`, `MAX_TRANSFER_ATTEMPTS`, `IN_FLIGHT_DEADLINE_MILLIS = 15_000`; deadline detail `no chunk received within 15 s`. Test seam: `init(transport:cache:inFlightDeadline:)` / constructor `inFlightDeadlineMillis` defaulting to the contract constant; production call sites unchanged.
+- iOS `ChannelService` stores the asset `.failed` message in `tourFeatureError`; guest label (`connectionState != .failed`) below the speaker warning in `ChannelDetailView.guestView`; the same `Text` below G4's warning in `ChannelScreen.ListenerView` using G1's `tourFeatureError` parameter (no new parameter).
+
+Commands and results:
+
+1. Fail-before, Android (new tests written first; the deadline test excluded because it needs the new constructor parameter): `cd Android && JAVA_HOME=... ./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.TourAssetCacheTest' --tests 'com.aessam.comeoverhere.TourAssetTransferServiceTest' --tests 'com.aessam.comeoverhere.ChannelServiceLifecycleTest' --continue -q`
+   - Result: exit 1, `22 tests completed, 6 failed`. `TourAssetCacheTest` 3 tests, 2 failed: `lengthMismatchedCompleteEntryIsDeletedAndReportedMissing` (`AssetCacheException: Asset length mismatch: expected 18, got 10`), `oversizedPartialIsDeletedAndResumeRestartsAtZero` (`... expected 18, got 30`). `TourAssetTransferServiceTest` 5 tests, 4 failed: `interruptedTransferResumesAndReportsVerifiedParticipantReadiness` (`Guest assets were not all ready: []`, the corrupt map entry aborted the manifest loop), `manifestRequestsAreCappedAtTwoInFlight` (`Timed out waiting for 2 asset requests`), `checksumMismatchIsReRequestedOnceAndRecovers` (`Timed out waiting for 2 asset requests`, no retry), `secondChecksumMismatchSendsFailedStatusAndReleasesSlot` (`request burst exceeded the expected count expected:<2> but was:<3>`, no cap). `disconnectResetsInFlightRequests` passed by construction (no queue existed). `ChannelServiceLifecycleTest` 14/14 including `assetTransferFailureSurfacesInTourFeatureError`, which passes before on Android (ChannelService.kt already stored `event.message`) and is kept as a parity guard.
+2. Fail-before, iOS (same test set): `DEVELOPER_DIR=... xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG5/ios -only-testing:GetOverHereTests/TourAssetCacheTests -only-testing:GetOverHereTests/TourAssetTransferServiceTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests test`
+   - Result: exit 65, `Test run with 24 tests in 3 suites failed after 30.962 seconds with 9 issues`. `assetTransferFailureSurfacesInTourFeatureError`: `Caught error: .expired("asset failure surfaced")` after 2 s (tourFeatureError stayed nil). Cache tests: `Caught error: .lengthMismatch(expected: 18, actual: 10)` and `.lengthMismatch(expected: 18, actual: 30)`. Loopback: `.expired("assets ready: [...]")` after 10 s. Cap test and retry test: `.expired("2 asset requests")`. Second-mismatch test: `requests.count == count` failed (3 immediate requests), `f.requests[2].sha256 == f.hash("a")` failed, `.expired("4 asset requests")`. `disconnectResetsInFlightRequests` passed by construction.
+3. Compile-form fail-before for the deadline seam, Kotlin: `git stash push -- Android/app/src/main/java/com/aessam/comeoverhere/service/TourAssetTransferService.kt Android/app/src/main/java/com/aessam/comeoverhere/service/TourAssetCache.kt`, then `./gradlew :app:compileDebugUnitTestKotlin --continue -q`, then `git stash pop`
+   - Result: exit 1, `TourAssetTransferServiceTest.kt:414:60 Too many arguments for 'constructor(transport: SessionAssetTransport, cache: TourAssetCache): TourAssetTransferService'`. The iOS `unansweredRequestReleasesSlotAfterDeadline` uses the mirror `inFlightDeadline:` argument and fails the same way by construction (not run separately: one more full test-target compile for a diagnostic already shown on the Kotlin twin).
+4. Android focused after the change (same command as item 1): run 1 exit 0, `TourAssetCacheTest` 3/3, `TourAssetTransferServiceTest` 6/6 (`manifestRequestsAreCappedAtTwoInFlight` 0.488 s, `unansweredRequestReleasesSlotAfterDeadline` 0.374 s, `secondChecksumMismatchSendsFailedStatusAndReleasesSlot` 0.300 s, loopback 0.126 s, `checksumMismatchIsReRequestedOnceAndRecovers` 0.097 s, `disconnectResetsInFlightRequests` 0.076 s), `ChannelServiceLifecycleTest` 14/14. Run 2 after the assertion change in item 5: exit 0, 3/3, 6/6, 14/14.
+5. iOS focused after the change (same command as item 2)
+   - Run 1: `Test run with 25 tests in 3 suites failed after 4.046 seconds with 2 issues`; every test passed except `unansweredRequestReleasesSlotAfterDeadline`, whose two ordered assertions (`failedStatuses` as `[a, b]`, first `.failed` event `Asset a: ...`) saw `[b, a]`: the two deadlines expire in the same instant and Swift does not order sibling task resumptions. The behavior was correct (C then D requested in queue order, both FAILED statuses and events present); the assertions on both platforms are now set comparisons.
+   - Run 2: exit 0, `Test run with 25 tests in 3 suites passed after 3.917 seconds`, `Test-GetOverHere-2026.09.04_13-34-53--0700.xcresult`. `ChannelService lifecycle` 15 (incl. `assetTransferFailureSurfacesInTourFeatureError` 0.013 s), `Content-addressed tour asset cache` 3, `Tour asset transfer service` 7 (loopback 0.115 s, cap 0.461 s, retry 0.146 s, second mismatch 0.353 s, disconnect reset 0.144 s, deadline 0.414 s).
+6. Gate: `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG5/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG5/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG5/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG5/verifier-ios-modules scripts/verify_tour_session.sh`
+   - Run 1: exit 0, all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stages 3/4/5: every byte compare, cross-decode, `faults`, `playout`, `focus`, `auth`, `recovery`, and source audit unchanged (G5 changes no core code and no wire bytes). Stage 6: `Encrypted session-path audit passed`. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 18 classes, 69 tests, 0 failures, `app-debug.apk` built. Stage 9: `Test-GetOverHere-2026.09.04_13-36-03--0700.xcresult` totalTestCount 78, passedTests 78, failedTests 0. Final output: `Tour session verification passed`. The log carried one warning-only `error: the following command failed with exit code 0 but produced no further output` line on the `TourAssetCacheTests.swift` compile, caused by two new Swift 6 isolation warnings: the `inFlightDeadline` default argument read a main-actor static from a nonisolated context (`TourAssetTransferService.swift:91`), and the two new cache tests called the main-actor `FileTourAssetCache` init from nonisolated tests. Fixed: the three new constants are `nonisolated static let`; the two tests are `@MainActor`.
+   - Run 2 on the final tree (same command): exit 0, all nine stages passed. Stage 1: 34 Swift tests in 2 suites. Stage 6: `Encrypted session-path audit passed`. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: 18 classes, 69 tests, 0 failures, `app-debug.apk` built. Stage 9: `Test-GetOverHere-2026.09.04_13-37-48--0700.xcresult` totalTestCount 78, passedTests 78, failedTests 0. No `error:` line in the log. Final output: `Tour session verification passed`. The verifier reads no markdown file, so the ExperimentLog append after this run does not change its outcome.
+
+Not automated, with justification: the two guest error labels are SwiftUI/Compose view code with no snapshot harness in either test target; the state they render (`tourFeatureError`) is pinned by `assetTransferFailureSurfacesInTourFeatureError` on both platforms and the FAILED gate reuses G1's `guestStatusText`/`guestConnectionStatusText` path. The late-chunk drop (a chunk arriving after the deadline already reported FAILED) is by construction: every chunk follows a request and every request reserves a slot; producing it in a test would need a guide that answers after 15 s or a second seam, and the guard is one `contains` check with a stderr line.
+
+## 2026-09-02 — G6 tests and hygiene: transport-level fan-out, sender binding, reconnect loop, retired-code deletion, portable verifier, core-parity CI
+
+Environment (run on 2026-09-04): Apple M4 Max, macOS 27.0, Xcode 27.0 beta at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` (`DEVELOPER_DIR`; `xcode-select -p` resolves to the same path), `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` (OpenJDK 21.0.8), simulator `platform=iOS Simulator,name=iPhone 17 Pro`, `-parallel-testing-enabled NO`, focused derived data `/tmp/GetOverHereFixG6/ios`, gate derived data `/tmp/GetOverHereFixG6/verifier-ios`, gate Swift scratch `/tmp/GetOverHereFixG6/verifier-swift`, core-parity Swift scratch `/tmp/GetOverHereCoreParitySwift`. Emulator `emulator-5554` = AVD `GetOverHere_API_36` (SDK 36, `Android SDK built for arm64`), already booted. Every xcodebuild invocation ran alone. The full JVM transport suite never overlapped an xcodebuild test run; the only JVM transport test that did was the Kotlin reconnect mutation (item 5, port 50_040) together with the `BoundedSocketFrameWriterTest` probes (item 8, ephemeral ports) during the first iOS focused run, all disjoint from the iOS ports (50000-50002, 50_031-50_039); every other overlap was a Gradle build, lint, or core-test run or the emulator run, none of which binds those ports.
+
+Implementation (ADR-050, ADR-051, FND-12, FND-14, DSCN-2, DSCN-3, DSCN-14, DSCN-15, DSCN-24, DSCN-25):
+
+- `RawGuestClient` on both platforms (`iOS/GetOverHereTests/RawGuestClient.swift`, `Android/app/src/test/.../RawGuestClient.kt`): an authenticated GOH2 guest that never reads unless asked and stamps any sender ID (port of `authenticateGuide`).
+- Transport tests: the 24-guest test now asserts that every guest receives a guide heartbeat (iOS extended, Android new); stalled-peer fan-out (one authenticated raw peer with a 4 KiB / 2 KiB receive window that never reads, eight 512 KiB heartbeats, both healthy guests receive all within 1 s, the stalled peer is evicted within 6 s, a post-eviction heartbeat still arrives, no healthy disconnect); forged guide sender ID (authenticated raw guest seals a heartbeat with `senderID == guideID`: `guestDisconnected`, no `envelopeReceived`, socket closed; Kotlin additionally the exact `Failed("Session: guest connection failed: control envelope is not from the authenticated guest")`); guest reconnect after three guide restarts (fresh `.connected`/`GuestJoined` and a heartbeat per cycle, no `.failed` on either iOS side; Kotlin exactly one guest `Failed` with prefix `Session: guide connection failed:` before each `Disconnected`, none after `Connected`, no guide `Failed`). Ports 50_037-50_039 (iOS), 50_037-50_040 (Android).
+- `BoundedSocketFrameWriterTest.kt`: assertions moved off the writer's daemon thread (`stalledGeneration`, `healthyFailure` recorded, asserted on the JUnit thread). `AudioEngineRoutingTest.kt`: the Float32-alignment assertion replaced by the PCM16 10 ms contract (`SAMPLE_RATE / 100 * Short.SIZE_BYTES` = 320 bytes). `AudioEngine.DEFAULT_LISTENER_OUTPUT` (companion, `PRIVATE_AUDIO`) read by `ListenerOutputTest.audioEngineDefaultsToPrivateAudio`; iOS `ListenerOutputTests.engineDefaultRoute` reads `AudioEngine().listenerOutput`.
+- Deletion (DSCN-2): 9 iOS files (`BLETransport`, `CompositeTransport`, `L2CAPAudioStream`, `MultipeerTransport`, `MultipeerAudioPlane`, `WiFiHotspotJoiner`, `LeaderElection`, `TransportMessage` in `Core/`, `Models/ChannelMessage`), 17 Android files (`core/BLETransport`, `L2CAPAudioStream`, `NearbyTransport`, `PeerInfo`, `DataTag`, `ChannelMessage`, `LeaderElection`, `WiFiHotspotManager`; `service/ChatService`, `FileShareService`, `WalkieTalkieService`; `ui/AppNavigation`, `ui/chat/*`, `ui/files/*`, `ui/nearby/*`, `ui/walkietalkie/*`) with the four emptied `ui/` directories, and the `HotspotConfiguration` entitlement. Kept: `TransportMessage.kt`, `BLEControlPlane`/`BLEConstants`, Wi-Fi Aware transports, `HybridSessionTransports`, `Logging.swift` categories, `CHANGE_WIFI_STATE`/`CHANGE_NETWORK_STATE`. `verify_no_plaintext_session_paths.sh`: the two Multipeer audits replaced by the retired-path existence audit and the entitlement audit. CLAUDE.md line 16 and AGENTS.md line 17 sentence-only edits.
+- Scripts: `verify_tour_session.sh` and the four helper scripts resolve Java as `GOH_ANDROID_JAVA_HOME` → `JAVA_HOME` → JBR and Xcode as `GOH_XCODE_DEVELOPER_DIR` → (`DEVELOPER_DIR`) → `xcode-select -p` → the previous literal; both verifiers print the resolved values. New `scripts/verify_core_parity.sh` (four stages, eleven-subcommand byte compare) and `.github/workflows/core-parity.yml` (`push` to `main`, `pull_request`, `workflow_dispatch`).
+
+Commands and results:
+
+1. Compile-form fail-before, Kotlin (new tests written first, before `DEFAULT_LISTENER_OUTPUT` existed): `cd Android && JAVA_HOME=... ./gradlew :app:compileDebugUnitTestKotlin --continue -q`
+   - Result: `BUILD FAILED`; exactly two errors, `ListenerOutputTest.kt:20:64 Unresolved reference 'DEFAULT_LISTENER_OUTPUT'` and `:21:58`; every other new test (`RawGuestClient.kt`, the four transport tests, the `BoundedSocketFrameWriterTest` edit) compiled.
+2. Android focused after the constant: `./gradlew :app:testDebugUnitTest --tests com.aessam.comeoverhere.BoundedSocketFrameWriterTest --tests com.aessam.comeoverhere.LocalSessionTransportTest --tests com.aessam.comeoverhere.ListenerOutputTest --continue -q`
+   - Result: exit 0. `LocalSessionTransportTest` 15/15 (`twentyFourGuestsAuthenticateAndEachReceivesAControlFrame` 0.062 s, `stalledGuestDoesNotDelayHealthyGuests` 2.069 s, `guideDisconnectsGuestThatForgesGuideSenderId` 0.048 s, `guestReconnectsAfterGuideRestartThreeTimes` 0.884 s), `BoundedSocketFrameWriterTest` 1/1 (0.126 s), `ListenerOutputTest` 2/2.
+3. iOS focused, run 1: `DEVELOPER_DIR=... xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG6/ios test -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/ListenerOutputTests`
+   - Result: exit 65, `Test-GetOverHere-2026.09.04_14-19-46--0700.xcresult`, 19 tests, 18 passed, 1 failed: `guestReconnectsAfterGuideRestartThreeTimes` `Caught error: .streamEnded` at 0.35 s. Cause: the 250 ms negative wait after `guest.stop()` used the task-group timeout as its success path; cancelling a timed-out `AsyncStream` consumer finishes the stream, so the next wait read nil. Fix: the negative wait polls the recorded event log (as the Kotlin twin does) and never consumes the stream. `stalledGuestDoesNotDelayHealthyGuests` passed in 4 s (eviction after two SO_SNDTIMEO periods), `guideDisconnectsGuestThatForgesGuideSenderID` 0.11 s, the extended 24-guest test 0.099 s.
+4. iOS focused, run 2 (same command, after the fix and after the DSCN-2 deletions and the entitlement edit, so it also proves the iOS tree compiles without the retired files)
+   - Result: exit 0, `Test-GetOverHere-2026.09.04_14-25-06--0700.xcresult`, 19/19 passed (`guestReconnectsAfterGuideRestartThreeTimes` 0.91 s, stalled peer 4 s, forged sender 0.12 s, 24-guest 0.2 s, `engineDefaultRoute` 0.061 ms).
+5. Mutation, Kotlin reconnect test, critique-proposed `reuseAddress = true` removed (`LocalSessionControlTransport.kt:108`): `./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.LocalSessionTransportTest.guestReconnectsAfterGuideRestartThreeTimes' --continue -q`
+   - Result: test still passes. `java.net.ServerSocket` enables `SO_REUSEADDR` by default on macOS/Linux, so the explicit line is documentation and this mutation cannot flip anything on the JVM. Reverted.
+6. Mutation, Kotlin reconnect test, `stop()` no longer closes the listening socket (`serverSocket?.closeQuietly()` removed from `closeSockets()`): same command
+   - Result: FAIL, `java.lang.IllegalStateException: Session: bind/listen failed: Address already in use` on the first `guide.startGuide()` after `guide.stop()`. Reverted; unmutated rerun 1/1.
+7. Mutation, iOS reconnect test, `SO_REUSEADDR` removed from the guide listener (`LocalSessionControlTransport.swift:82-83`): the focused command of item 3 restricted to `-only-testing:GetOverHereTests/LocalSessionTransportTests` (a function-level `-only-testing` id matched no Swift Testing test and ran 0 tests, `Test-GetOverHere-2026.09.04_14-26-52--0700.xcresult`)
+   - Result (staged session log of `Test-GetOverHere-2026.09.04_14-29-19--0700.xcresult`): `Test run with 17 tests in 1 suite failed after 14.515 seconds with 2 issues`; `guestReconnectsAfterGuideRestartThreeTimes` failed after 0.099 s with `LocalSessionTransportTests.swift:790: Caught error: .bindFailed("Session: bind/listen failed: Address already in use")` (the first `startGuide()` after `stop()`), and `terminalLeaveArrivesBeforeShutdown` failed the same way at `:846` because it reuses port 50_036 after the 24-guest test; the other 15 tests passed. xcodebuild then wedged in teardown with the simulator shut down (no test host process, `simctl list devices booted` empty) and was killed after five minutes (exit 143); the background wrapper's `git checkout` reverted the mutation (0 dirty lines). So the critique's mutation discriminates on iOS, where the transport sets the option itself, and does not on the JVM, where the runtime sets it.
+8. Probe, `BoundedSocketFrameWriterTest` (healthy writer `sendTimeoutMillis = 50`, `healthySocket.sendBufferSize = 2_048`, a second 4 MiB frame enqueued after the tracked delivery, 300 ms sleep): `./gradlew :app:testDebugUnitTest --tests 'com.aessam.comeoverhere.BoundedSocketFrameWriterTest' --continue -q`
+   - Old test (HEAD version) + probe: PASS; `Healthy writer failed` appears only in the captured stderr (the `AssertionError` died on the writer's daemon thread). New test + probe: FAIL `java.lang.AssertionError: expected null, but was:<healthy writer failed (generation=12)>`. Probe reverted; unmutated rerun 1/1.
+9. Instrumented, emulator (DSCN-14), single method: `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.AudioEngineRoutingTest#voiceCommunicationCaptureProducesAFrame -q`
+   - Result: exit 0 on `GetOverHere_API_36(AVD) - 16`, `voiceCommunicationCaptureProducesAFrame` ok 0.232 s (320-byte PCM16 frame).
+10. Instrumented, emulator, whole class: `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.AudioEngineRoutingTest -q`
+   - Result: exit 1; `voiceCommunicationCaptureProducesAFrame` ok 0.34 s; `listenerOutputSwitchesPhysicalCommunicationDevice` FAIL `expected:<1> but was:<2>` at `AudioEngineRoutingTest.kt:46` (the emulator exposes no `TYPE_BUILTIN_EARPIECE`, so `communicationDevice` stays the speaker). Emulator limitation per DSCN-14, not a product defect; that test is untouched by G6 and stays a physical-device check. No physical Android device was attached.
+11. Deletion proofs: `rg -n 'MultipeerAudioPlane|WiFiHotspotJoiner|WiFiHotspotManager|LeaderElection|\bDataTag\b|ChannelMessage\b|NEHotspot|startLocalOnlyHotspot|HotspotConfiguration' iOS Android/app/src scripts CLAUDE.md AGENTS.md`
+   - Result: only the six `RETIRED_FILES` lines and the entitlement audit line inside `scripts/verify_no_plaintext_session_paths.sh`. `touch iOS/GetOverHere/Core/MultipeerAudioPlane.swift && scripts/verify_no_plaintext_session_paths.sh` → `error: retired transport returned: .../MultipeerAudioPlane.swift`, exit 1; after removing it → `Encrypted session-path audit passed`, exit 0. `cd Android && ./gradlew assembleDebug lintDebug -q` → exit 0, `app-debug.apk` 68,257,511 bytes, lint report written.
+12. Script proofs: `bash -n` over all six scripts → ok; `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/core-parity.yml"))'` → triggers `push`, `pull_request`, `workflow_dispatch`. `env -u GOH_ANDROID_JAVA_HOME JAVA_HOME=/nonexistent scripts/verify_tour_session.sh` → prints `ANDROID_JAVA_HOME=/nonexistent`, `XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer`, then `error: Java not found under /nonexistent`, exit 1. `JAVA_HOME=/nonexistent GOH_ANDROID_JAVA_HOME= scripts/verify_core_parity.sh` → `error: Java not found under /nonexistent`, exit 1.
+13. Core parity, positive: `env -u GOH_XCODE_DEVELOPER_DIR -u GOH_ANDROID_JAVA_HOME JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" scripts/verify_core_parity.sh`
+   - Result: exit 0. `ANDROID_JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`; stage 1 `Test run with 34 tests in 2 suites passed`; stage 2 `BUILD SUCCESSFUL`; stage 4 `ok fixture bytes=236`, `ok encrypted-fixture bytes=300`, `ok audio-fixture bytes=84`, `ok handshake bytes=458`, `ok realtime-fixture bytes=256`, `ok state bytes=2598`, `ok auth bytes=129`, `ok faults bytes=43`, `ok playout bytes=27`, `ok recovery bytes=110`, `ok focus bytes=85`; `Core parity passed`.
+14. CI (DSCN-24): BLOCKED. The orchestration rules for this round forbid pushing, so the branch was not pushed and the workflow could not be dispatched. Exact commands to run once a push is approved: `git push -u origin fix/deep-dive-2026-09-02 && gh workflow run core-parity.yml --ref fix/deep-dive-2026-09-02 && gh run watch "$(gh run list --workflow=core-parity.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`. `gh auth status` reports the `aessam` account logged in, so authentication is not the blocker. The first run must confirm that the `macos-latest` image ships an `Xcode_26*.app` and an `ANDROID_HOME`.
+15. Gate: `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_tour_session.sh` (no `GOH_XCODE_DEVELOPER_DIR`/`GOH_ANDROID_JAVA_HOME`, so the new `xcode-select -p` / `JAVA_HOME` defaults are exercised)
+   - Result: exit 0, all nine stages passed, run on the final tree (both `git rm` deletions and the entitlement edit in place, the mutations reverted). The preflight printed `ANDROID_JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home` and `XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer` from the new defaults. Stage 1: `Test run with 34 tests in 2 suites passed`. Stages 3/4/5: every byte compare, cross-decode, `faults`, `playout`, `focus`, `auth`, `recovery`, and source audit unchanged (G6 changes no core code and no wire bytes). Stage 6: `Encrypted session-path audit passed` with the new retired-file and entitlement audits. Stage 7: `lintDebug` BUILD SUCCESSFUL. Stage 8: `:app:testDebugUnitTest` 18 classes, 74 tests, 0 failures (69 before G6 plus the four new transport tests and `audioEngineDefaultsToPrivateAudio`), `app-debug.apk` 68,257,511 bytes. Stage 9: `Test-GetOverHere-2026.09.04_14-35-23--0700.xcresult` totalTestCount 82, passedTests 82, failedTests 0 (78 before G6 plus `stalledGuestDoesNotDelayHealthyGuests`, `guideDisconnectsGuestThatForgesGuideSenderID`, `guestReconnectsAfterGuideRestartThreeTimes`, `engineDefaultRoute`). The log carries one warning-only `error: the following command failed with exit code 0 but produced no further output` line on the `TourAssetCacheTests.swift` compile (the G5 main-actor initializer warnings at `:27`, `:30`, `:52`, present in the pre-G6 focused log too; not touched by G6). Final output: `Tour session verification passed`. The verifier reads no markdown file, so this ExperimentLog append after the run does not change its outcome..
+
+Not automated, with justification: the fan-out, stalled-peer, forged-sender, and reconnect tests pass on the pre-G6 tree by construction (ADR-038/ADR-039 already hold); their value is the recorded mutations above, which show each can fail for its own claim. The `AudioEngineRoutingTest` earpiece assertion needs a physical Android device (DSCN-14). The CI workflow is unverified until the first run (item 14). The chat/file/walkie-talkie `Logger` categories in `Logging.swift` are not on the DSCN-2 list and stay.
+
+## 2026-09-04 — Startup failure visibility (review F1) and handoff corrections (F2)
+
+Changed only the channel-list error rendering on both platforms, added UI regressions, and corrected CLAUDE.md / NextSession.md to describe encoded PCM16-boundary audio, encrypted GOH2 v4, completed P0, and the pending P3 physical gate. No transport, credential, or lifecycle implementation changes.
+
+Environment: macOS 27.0, selected Xcode beta, iPhone 17 Pro simulator on iOS 27.0; Android Studio JBR; attached `emulator-5554`, `GetOverHere_API_36` (Android 16).
+
+- `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG6/verifier-ios test -only-testing:GetOverHereUITests/GetOverHereUITests/testFailedStartupShowsReasonOnChannelList`
+  - Exit 0. `xcresulttool get test-results summary` for `Test-GetOverHere-2026.09.04_16-31-19--0700.xcresult`: 1 passed, 0 failed, 0 skipped. Real simulator startup failure renders a nonempty error, no live-tour picker, and an available Create action.
+- From `Android/`: `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:assembleDebug :app:testDebugUnitTest --tests com.aessam.comeoverhere.ChannelServiceLifecycleTest`
+  - Exit 0, BUILD SUCCESSFUL. Lifecycle XML: 14 tests, 0 failures, 0 errors, 0 skipped. APK assembled. Existing deprecated icon warnings remain.
+- From `Android/`: `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aessam.comeoverhere.TourNavigationTest#failedStartupShowsReasonOnChannelList`
+  - Exit 0, BUILD SUCCESSFUL. 1 emulator UI test passed. A test-owned socket occupies port 50001; production startup fails to bind, rolls back, and displays the exact failure reason on the channel list. The socket closes at test exit.
+- `git diff --check`: exit 0.
+
+These tests verify failure visibility, not physical audio or RF acceptance. No hosted CI run or physical-device gate was performed. An untracked `Android/.kotlin/` directory contains an older August 21 compiler error log and was preserved.
+
+## 2026-09-04 — Full virtual-device verification and hosted CI closeout
+
+User authorized committing, simulator/emulator testing, and finishing pending work. Startup visibility committed as `d6f0a5a`; branch CI trigger as `38fa919`; verified wrapper as `9b02452`. Branch pushed to `origin/fix/deep-dive-2026-09-02`; main was not changed.
+
+Environment: macOS 27.0, selected Xcode beta, iPhone 17 Pro simulator (iOS 27.0), Android Studio JBR 21, `emulator-5554` / `GetOverHere_API_36` on Android 16. Hosted runner: arm64 macOS 26, Swift 6.3.3, Temurin 21.0.12.
+
+Failures found by the broader gates:
+
+- Full Android `connectedDebugAndroidTest` initially failed the physical earpiece assertion (expected type 1, actual speaker type 2) and guide navigation. The emulator exposes no earpiece; the test now uses the same availability assumption as the existing focus test. Navigation asserted before asynchronous credential stretching completed; it now waits for CONNECTED. Capture teardown also stops capture explicitly.
+- Full iOS `-only-testing:GetOverHereUITests` initially failed `testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration`. Its recorded accessibility tree showed the exact expected production error, `Microphone capture is unavailable in the iOS Simulator`. The live-guide test now explicitly skips Simulator and remains enabled on physical devices. The simulator startup rollback test now asserts that exact error string.
+- Hosted [run 33930362544](https://github.com/aessam/GetOverHere/actions/runs/33930362544) passed 34 Swift core tests but failed because `Android/gradle/wrapper/gradle-wrapper.jar` was absent from git. `git check-ignore -v` identified the global `*.jar` rule. Regenerated with `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew wrapper --gradle-version 8.13 --distribution-type bin` from Android; the JAR SHA-256 is `81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f`, matching `https://services.gradle.org/distributions/gradle-8.13-wrapper.jar.sha256`. Added a repository ignore exception and committed the generated wrapper. [Run 33930529033](https://github.com/aessam/GetOverHere/actions/runs/33930529033) on `9b02452` passed. Its deprecated-action warnings prompted selecting official `actions/checkout@v7.0.1` and `actions/setup-java@v6.0.0`; both declare Node 24, verified from their tagged `action.yml` files.
+
+Final local command (exit 0):
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+```
+
+Results, captured in `/tmp/GetOverHere-final-virtual-gate.log`:
+
+- Host gate: `Tour session verification passed`; 34 Swift core tests, Swift/Kotlin byte comparisons and cross-decodes, churn/fault/recovery/privacy audits, Android lint/APK, 74 Android JVM tests, 82 iOS unit/integration tests. Gradle reused unchanged successful JVM outputs on the final combined run; the earlier full gate executed the suite.
+- iOS UI: `Test-GetOverHere-2026.09.04_16-45-14--0700.xcresult`, summary `Passed`, 3 test methods passed (6 runs across configurations), 1 physical-guide method skipped, 0 failed.
+- Android instrumentation: XML contains 16 test cases, 14 passed, 2 earpiece checks skipped, 0 failures/errors. Includes native Opus/AAC encode/decode, encrypted realtime transport, audio-lane reconnect, audio focus, local PMTiles rendering, startup-error UI, Slides/Map/Pointer navigation, and Activity recreation. Gradle's console says `Finished 18 tests`; totals above come from the testcase XML, not that console counter.
+- Final output: `Virtual-device verification passed; physical audio and radio gates remain separate`.
+- `bash -n scripts/verify_virtual_devices.sh` and `git diff --check` passed. Negative preflight with `ANDROID_SERIAL=physical-device` reports `select an emulator with ANDROID_SERIAL; physical gates run separately` before starting any tests.
+
+Remaining: physical guide capture/UI, earpiece routing, both cross-platform guide directions, sustained LAN audio/latency/background/thermal/battery acceptance, followed by the physical Aware gate and its dependent production/BLE work. Virtual-device results do not satisfy those gates.
+
+## 2026-09-04 — Physical-device readiness and native checks; LAN session paused for admission redesign
+
+Source: `5420da7`. Devices: Dark knight / iPhone 17 Pro Max, iOS 27.0 build 24A5430a, UDID `00008150-001208901AC0401C`; Pixel 11 Pro, Android API 37, serial `66180DLKX006ND`. The Pixel had a LAN address on wlan0. Both devices were unlocked and available.
+
+- `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates build`: exit 0. Signed build installed with `xcrun devicectl device install app --device F043EBB9-780F-5483-B0D1-BC0BD9955D9C /tmp/GetOverHerePhysicalBaseline/Build/Products/Debug-iphoneos/GetOverHere.app`.
+- `ANDROID_SERIAL=66180DLKX006ND JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew connectedDebugAndroidTest` from Android: exit 0; XML `TEST-Pixel 11 Pro - 17-_app-.xml` has 16 tests, 0 failures/errors/skips. Physical earpiece switching and focus routing passed, as did native codecs, encrypted realtime loopback, map rendering, navigation, startup rollback, and lifecycle. This is single-device test evidence, not cross-platform audio evidence.
+- `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates test -only-testing:GetOverHereTests/NativeRealtimeAudioCodecTests -only-testing:GetOverHereTests/NativeAudioCodecCapabilitiesTests -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration`: exit 0. `Test-GetOverHere-2026.09.04_17-21-28--0700.xcresult`: 4 test methods passed (5 parameterized runs), 0 failures/skips. Native Opus and AAC-LC and the actual guide UI passed. Runtime warning: synchronous AVAudioSession activation/deactivation on the main thread can cause UI unresponsiveness. Xcode's auxiliary devicectl diagnostics collection was partial; the test result itself passed.
+- Android instrumented cleanup left the app absent (`am start` returned Activity error type 3); reinstalled the verified APK with `adb -s 66180DLKX006ND install -r Android/app/build/outputs/apk/debug/app-debug.apk`, then launched `com.aessam.comeoverhere/.MainActivity`, both successfully.
+- `scripts/capture_physical_test.sh start --ios-device F043EBB9-780F-5483-B0D1-BC0BD9955D9C --android-serial 66180DLKX006ND`: first run `/tmp/GetOverHerePhysicalRuns/20260905T002239Z-39529` collectors exited after launcher return. Repeated under a persistent supervisor (`&& tail -f /dev/null`), run `/tmp/GetOverHerePhysicalRuns/20260905T002342Z-39748`. User requested open-by-default rooms with optional code locking before a cross-platform listening result was received. Marked that run `Physical LAN baseline paused for open-room admission change`, stopped capture through the script, and terminated the idle supervisor.
+
+No claim of two-phone audio, 30-minute endurance, or physical Aware success. Those gates remain pending. The next product change is open admission by default with the guide's explicit `Lock Room with Code` action; behavior for already-admitted guests is being clarified before changing the credential contract.
+
+## 2026-09-04 — Open rooms with editable code locking (ADR-052)
+
+Implemented on branch `fix/deep-dive-2026-09-02`: open-by-default rooms, guide toggle and code editor, discovery lock status, separate authenticated admission on TCP 50003, unchanged GOH4 media credentials for existing guests. Codes are case-sensitive, 4–64 printable ASCII characters without spaces. CLI parity exercises real ephemeral P-256 exchanges rather than deterministic test keys.
+
+- `GOH_SWIFT_SCRATCH=/tmp/GetOverHereRoomAdmission scripts/verify_core_parity.sh`: passed core tests, existing eleven byte-exact fixtures, and eight real Swift/Kotlin admission exchanges (both directions; open, four-character, mixed-character, and maximum-length codes). Logs: `/tmp/GetOverHere-room-parity.log`, final rerun `/tmp/GetOverHere-room-final-parity.log`.
+- `GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh`: final complete pass, `/tmp/GetOverHere-room-final-virtual.log`. Includes source/privacy audit, JVM tests (77, zero failures from JUnit XML), lint, APK, iOS unit/integration and UI suites, emulator instrumentation. Emulator XML remains 16 cases: 14 pass and two hardware-earpiece skips; Gradle prints 18 because it counts skipped callbacks twice.
+- `xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates test -only-testing:GetOverHereTests/RoomAdmissionTransportTests -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration`: iPhone 17 Pro Max / iOS 27, two tests passed, zero failures/skips. Result `Test-GetOverHere-2026.09.04_17-51-04--0700.xcresult`; log `/tmp/GetOverHere-room-physical-ios.log`. Actual loopback tests lock/edit/unlock and preserve the session secret; UI tests edit the field and toggle the switch. Retained screenshot exported to `/tmp/GetOverHere-room-ios-passed/A026D00F-5E75-466F-ACC0-8F020DD414B9.png`, visually inspected.
+- `ANDROID_SERIAL=66180DLKX006ND JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android connectedDebugAndroidTest`: Pixel 11 Pro / API 37, final 16 tests passed without skips; `/tmp/GetOverHere-room-physical-android.log`.
+- Initial failures corrected: misplaced Kotlin import and explicit Swift closure capture syntax; privacy audit rejected raw exceptions in new Android logs; iPhone XCTest tapped the outer SwiftUI toggle container instead of its inner switch; Pixel UI test assumed an empty nearby-room list after ending the local tour. The latter now asserts local session termination and Create availability, which remains valid around other guides. No product behavior was weakened to pass these checks.
+
+Live follow-up: reinstalled and launched the verified Pixel app after instrumentation. Pixel discovered an open room. At 17:58:34 and 17:58:38 its production log reports `TCP: authenticated GOH2 session joined` then `TCP: received first GOH2 audio frame`, followed by `native audio decode failed (IllegalStateException)`. AndroidRuntime shows an uncaught `MediaCodec.stop()` failure during receive-thread cleanup. Thus physical admission/first-frame reception is observed, but sustained two-phone audio is NOT passing. This pre-existing codec interoperability/cleanup defect is the next separate fix; no 30-minute audio or Aware acceptance is claimed. Stopped UI automation on physical phones when their state changed during manual testing.
+
+## 2026-09-04 — Fix Apple→Android codec initialization, PCM rate, and cleanup crash (ADR-053)
+
+Environment: same M4 Max/Xcode beta toolchain, Android Studio JBR, API 36 emulator `emulator-5554`, and physical Pixel 11 Pro/API 37 `66180DLKX006ND`. No production Swift or wire-format changes.
+
+Reproduction and correction:
+
+- New `PlayoutClockTest.decoderCleanupFailureDoesNotEscapeReceiveThread` failed before the fix with `IllegalStateException` from decoder close (`/tmp/GetOverHere-codec-cleanup-repro.log`). After idempotent, contained cleanup it passes and asserts one failure notification and one decoder close across two close calls.
+- Production Apple-encoded tone packets reproduced Android native failure (`/tmp/GetOverHere-codec-interop-repro.log`). Removing `stop()` exposed the underlying `dequeueOutputBuffer` error without the masking cleanup exception (`/tmp/GetOverHere-codec-interop-cleanup-fixed.log`). Documented Android codec initialization resolved it.
+- The physical duration assertion then failed: Opus returned 61,440 PCM bytes for approximately 20,480 expected (`/tmp/GetOverHere-codec-pixel.log`). Actual 48 kHz output now passes through a streaming anti-aliased 48→16 kHz converter. The converter's initial frequency test counted startup transients; measurement now excludes the first 64 output samples and still checks frequency, amplitude, alias rejection, and exact chunked/whole-output equality.
+- `GOH_SWIFT_SCRATCH=/tmp/GetOverHereRoomAdmission scripts/generate_native_codec_fixture.sh > /tmp/GetOverHere-apple-codec-regenerated.hex 2>/tmp/GetOverHere-codec-generate.log`: generated 63 real encoded packets. Retained asset uses 32 Opus and 31 AAC-LC packets from the production Apple encoder, with generated 440 Hz input. A comparison against a later regeneration differed in AAC output; byte-identical native encoding across runs is not a gate. Tests use the fixed retained capture.
+
+Final verification:
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+ANDROID_SERIAL=66180DLKX006ND scripts/verify_native_codec_interop.sh
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android testDebugUnitTest
+```
+
+- Complete virtual-device gate passed (`/tmp/GetOverHere-codec-final-virtual.log`): host core/wire/privacy checks, lint/APK, iOS unit/integration and UI suites, and Android emulator instrumentation. Hardware-earpiece checks explicitly skip; no emulator failure.
+- Focused physical gate passed, five native-codec instrumented tests (`/tmp/GetOverHere-codec-final-pixel.log`). Includes actual Apple Opus/AAC decoding with duration, non-silence, and tone-frequency assertions, plus Apple-packet replay through encrypted realtime transport. Cleanup/converter JVM regressions pass through the same reusable script.
+- Complete JVM suite: 81 tests, zero failures/errors from `Android/app/build/test-results/testDebugUnitTest/TEST-*.xml`; `/tmp/GetOverHere-codec-final-unit.log` ends `BUILD SUCCESSFUL`.
+- Full physical-suite follow-up (`ANDROID_SERIAL=66180DLKX006ND JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android connectedDebugAndroidTest`) was interrupted after ten completed tests, not counted as a passing full suite. Gradle reported process crash during the eleventh test. Its captured log shows `adbd service requested 'shell:am force-stop com.aessam.comeoverhere'` at 20:11:52.445; this session issued no force-stop. No new application exception appears in the crash buffer. Artifact: `/tmp/GetOverHere-codec-final-pixel-full.log` and the instrumented Apple-transport testcase log under `Android/app/build/outputs/androidTest-results/connected/debug/Pixel 11 Pro - 17/`.
+- Read-only follow-up found the production app in the live Bolbol room, LISTENING, displaying a guide-selected pointer. PID 25858 logged 16 kHz playback at 20:12:16, authenticated audio at 20:12:17.231, first frame at 20:12:17.263, and remained alive through 20:13:36 without the prior decode/cleanup exception in the inspected interval. One startup short write (64/640 bytes, count 1) was logged; do not infer loss-free playback. Later rolling-log excerpt saved to `/tmp/GetOverHere-codec-live-pixel.log`. The app was already running the fixed build; no reinstall or UI automation interrupted that live session.
+- `bash -n scripts/generate_native_codec_fixture.sh scripts/verify_native_codec_interop.sh` and `git diff --check` passed.
+
+The reproduced initialization/cleanup crash is fixed. These results do not establish audible quality, sustained two-phone endurance, reverse-direction acceptance, or Aware/BLE readiness. No raw microphone recording or physical-device log is committed.
+
+## 2026-09-04 — Stable LAN tag and Bluetooth discovery slice (ADR-054)
+
+The user approved the first discovery slice and requested a stable checkpoint. The tree was clean at `59b0402c91cfabb3eb839800b2b8521be90854e0`; no empty commit was created. `git tag -a stable-local-network 59b0402c91cfabb3eb839800b2b8521be90854e0 -m 'Stable Local Network'` created the requested annotated local tag. It remains on the LAN/audio-fix baseline and was not pushed or moved to the Bluetooth work.
+
+Affected ownership: new `BluetoothRoomRecord` in each shared core; new `BluetoothRoomDiscovery` and `RoomDiscoveryIndex` in each app's Core; `LocalControlPlane` owns both discovery sources; `ChannelService` protects existing sessions against address-less observations; both room-list UIs distinguish discovery-only rooms; platform permission declarations and Android's permission prompt enable the radio. `NetworkCoordinator` still constructs `LocalControlPlane`; no other discovery call site selects the legacy BLE command channel. No admission/audio transport contract changed.
+
+Software commands:
+
+```bash
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios scripts/verify_bluetooth_discovery.sh
+GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift GOH_SWIFT_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-swift-modules GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_IOS_MODULE_CACHE=/tmp/GetOverHereFixG6/verifier-ios-modules scripts/verify_virtual_devices.sh
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'generic/platform=iOS' -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates build
+```
+
+- Focused discovery gate passed (`/tmp/GetOverHere-bluetooth-gate.log`). Early compilation failures corrected: Kotlin `isEmpty` needed a call; Swift Testing's `#require` cannot capture a mutating struct receiver, so mutations are evaluated before assertions. These were compile failures, not physical-radio failures.
+- Full virtual gate passed twice (`/tmp/GetOverHere-bluetooth-full-virtual.log`, `/tmp/GetOverHere-bluetooth-final-virtual.log`), including host core/wire/source/privacy checks, Android lint/APK, full iOS unit/integration and UI suites, and emulator instrumentation.
+- Final full-run counts: 39 Swift core tests; 85 Android app JVM tests, zero failures/errors from JUnit XML; iOS unit/integration result `Test-GetOverHere-2026.09.04_20-49-28--0700.xcresult` reports 90 passing methods (92 parameterized runs), zero failures/skips. UI result `Test-GetOverHere-2026.09.04_20-50-36--0700.xcresult` reports three passing methods (six runs), one physical-guide skip, zero failures. Android emulator XML has 20 cases, 18 pass, two hardware-earpiece skips, zero failures/errors; Gradle's console double-counts skipped callbacks and prints 22.
+- New coverage: identical Swift/Kotlin GOR1 hex fixture, 100 Unicode roundtrips per platform and maximum-length input, malformed/truncated records, LAN preference, source-loss fallback/deduplication, unresolved-LAN filtering, production Bluetooth observation forwarding, active-session preservation, and an actual Compose UI assertion that a Bluetooth-only room is visible but cannot invoke Join until a LAN address resolves.
+- Signed iPhone build passed (`/tmp/GetOverHere-bluetooth-physical-build.log`, later `/tmp/GetOverHere-bluetooth-final-signed-build.log`). Xcode printed existing dependency-scan/actor warnings despite exit 0; no physical installation or radio success is inferred from the build.
+- Final review added explicit removal of cached advertised metadata in both radios' `stop()`, preventing an ended room from reappearing on a later start. The focused software gate passed again after this two-line lifecycle correction; artifact `/tmp/GetOverHere-bluetooth-final-focused.log`.
+- `bash -n scripts/verify_bluetooth_discovery.sh` and `git diff --check` passed.
+- Installed the final APK on `emulator-5554`, observed and accepted the actual Nearby devices permission prompt, and visually inspected the room-list screenshot `/tmp/GetOverHere-bluetooth-emulator-ready.png`. The Bluetooth/access explanation wraps without clipping; the Create action remains visible. Logcat reports `Bluetooth room discovery scanning`. This is emulator startup/UI evidence, not radio interoperability.
+
+Physical attempt and blockers:
+
+```bash
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'id=00008150-001208901AC0401C' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHerePhysicalBaseline -allowProvisioningUpdates test -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration
+xcrun devicectl --timeout 10 device info lockState --device F043EBB9-780F-5483-B0D1-BC0BD9955D9C
+/Users/aessam/Library/Android/sdk/platform-tools/adb devices -l
+```
+
+The Pixel is absent from adb; only `emulator-5554` remains. Xcode reports `Unlock Dark knight to Continue`; the documented lock-state command confirms `passcodeRequired: true`. The waiting device test (`/tmp/GetOverHere-bluetooth-iphone-ui.log`, this session's PID 89881) was cancelled with SIGTERM after confirming its exact command, so it cannot unexpectedly take over the phone later. The user was asked to reconnect the Pixel and unlock the iPhone. No lock bypass or radio-setting change was attempted.
+
+Physical gate still required: with Wi-Fi off and Bluetooth on, create a real guide room and verify the other phone displays its name/lock status as discovery-only; change lock status, end/recreate the room, test expiration and Bluetooth off/on, and reverse guide/guest roles. Then restore LAN and verify one merged room with joining enabled. Foreground discovery is the current slice; Bluetooth admission, control, voice, background endurance, and group scale are not delivered by this checkpoint.
+
+## 2026-09-05 — A1 review remediation and A2 physical preflight
+
+Starting commit: `7a41610`. The user approved A1–A5 continuous execution with physical/security gates. Changes: explicit opt-in foreground Bluetooth discovery, browser/guide role separation, scan duty reduction, nonblocking admission completion, reverse native-codec fixtures, deterministic leading-zero ECDH coverage, admission in the main gate, and current onboarding/security documentation (ADR-055). No production reverse-codec change was needed. No BLE admission/control/voice or Aware production capability is claimed.
+
+Environment: selected Xcode beta / iOS 27 SDK; simulator iPhone 17 Pro `A7202CAB-B085-4F1A-A7B5-8AE00A839E76`, runtime 26.4.1 (23E254a); Android `emulator-5554`, API 36 / Android 16; Android Studio JBR; macOS 27. Physical Pixel remained absent and Dark knight required its passcode.
+
+Executed gates:
+
+```bash
+# Initial Android compilation, JVM tests and lint: PASS.
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :tour-session-core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+
+# Deterministic shared-secret edge: PASS; same derived key in Swift/Kotlin for scalars 1 and 379.
+swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHereFixG6/verifier-swift --filter RoomAdmissionTests
+
+# Focused iOS lifecycle / full-socket / lock-edit-unlock: PASS, 23 test methods.
+xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereFixG6/verifier-ios test -only-testing:GetOverHereTests/RoomAdmissionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+
+# Complete final virtual gate: PASS.
+GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios GOH_SWIFT_SCRATCH=/tmp/GetOverHereFixG6/verifier-swift bash scripts/verify_virtual_devices.sh
+
+# Fresh Android production encoder -> production iOS decoder: PASS.
+GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereFixG6/verifier-ios bash scripts/verify_reverse_codec_interop.sh
+
+git diff --check
+bash -n scripts/verify_reverse_codec_interop.sh scripts/verify_tour_session.sh scripts/verify_virtual_devices.sh scripts/verify_bluetooth_discovery.sh
+```
+
+Final full-gate log: `/tmp/GetOverHere-A1-final-virtual.log`, ending `Virtual-device verification passed; physical audio and radio gates remain separate`. Swift core: 40 methods; real admission parity: 8/8 exchanges; Android JVM XML: 88 tests. Xcode summary for `Test-GetOverHere-2026.09.05_19-59-10--0700.xcresult`: 94 iOS unit methods / 97 parameterized runs, zero failures. UI bundle `Test-GetOverHere-2026.09.05_20-00-04--0700.xcresult`: four passing methods / seven runs plus one physical-guide skip. Android instrumentation XML contains 24 test cases, zero failures/errors and two earpiece skips; its progress console also printed 26 completions, so the XML is used for the case count. `RoomAdmissionBoundaryTest` passed the Android-provider leading-zero and actual NIO lock/edit/unlock cases.
+
+Reverse-codec log: `/tmp/GetOverHere-A1-final-reverse.log`, ending `Android-to-iOS native codec gate passed`. Retained input: `iOS/GetOverHereTests/android-native-codec.hex`, 128 generated-tone packets from production Android encoders. Tests assert approximately one negotiated frame duration per packet (two-frame priming allowance), RMS above 1,000 and 440 Hz within 10 Hz. The fresh gate injects its exported file path via a generated `.xctestrun` environment; normal unit tests use the bundled fixture. No recorded speech or microphone data is retained.
+
+Failed attempts and corrections:
+
+- The first reverse harness used Gradle connected tests followed by `run-as`; Gradle had uninstalled the package and the captured text was `run-as: unknown package`. Changed to explicit install/instrument/read and strict hex validation. An initial iOS 27 simulator startup did not reach tests and was cancelled; the recorded passing run uses 26.4.1 with parallel cloning disabled.
+- The first Android guide lifecycle assertion checked before its asynchronous collector applied the mode. The test now drives its scheduler and waits for the observable state. Production lifecycle behavior was not weakened to satisfy the test.
+- `/tmp/GetOverHere-A1-full-virtual.log` was cancelled during the new iOS full-socket regression. `sample 77734 1 -file /tmp/GetOverHere-A1-ios-sample.txt` placed the blocked thread inside the fixture's `send(..., MSG_DONTWAIT)`. Replaced per-send assumptions with verified `O_NONBLOCK` preparation before the policy lock. The focused full-socket regression then passed in 0.006 s; full verification subsequently passed. Android similarly prepares a nonblocking channel before its locked send. No blocking reply retries remain under either policy lock.
+- Added unique UI identifiers for room locking and discovery; the old Android `isToggleable()` selector became ambiguous with two switches.
+
+Visual verification: exported and inspected the iOS launch attachment at `/tmp/GetOverHere-A1-ui-attachments/5EE445B1-478B-4F23-8787-967C84C1F9FF.png`; inspected `/tmp/GetOverHere-A1-android-ui.png`. Both display discovery off and the foreground-preview/LAN-audio limitation without clipping. Android package inspection showed SCAN, CONNECT and ADVERTISE all `granted=false` at launch with no permission dialog. Tapping the explicit switch produced the system Nearby devices prompt (`/tmp/GetOverHere-A1-permission.xml`). These are emulator/UI observations, not physical BLE evidence.
+
+Physical preflight:
+
+```bash
+/Users/aessam/Library/Android/sdk/platform-tools/adb devices -l
+xcrun devicectl device info lockState --device F043EBB9-780F-5483-B0D1-BC0BD9955D9C
+bash scripts/capture_physical_test.sh start --ios-device F043EBB9-780F-5483-B0D1-BC0BD9955D9C --android-serial 66180DLKX006ND --run-dir /tmp/GetOverHerePhysicalRuns/A2-2026-09-05
+```
+
+Result: only `emulator-5554` in adb; iPhone `passcodeRequired: true`; capture harness exits 1 with `error: Android device 66180DLKX006ND is unavailable` (`/tmp/GetOverHere-A2-preflight.log`). A2 is blocked, not passed. The user was asked to reconnect/authorize Pixel and unlock iPhone. A3–A5 remain pending behind the physical gates and guide-key bootstrap decision. The `stable-local-network` tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`; no tag promotion or push was performed.
+
+Final permission-denial UI check: after installation completed, launched `com.aessam.comeoverhere/.MainActivity`, tapped the discovery switch at emulator coordinates `(970,294)`, inspected the permission dialog with `adb shell uiautomator dump`, then tapped its deny button at `(540,1480)`. `/tmp/GetOverHere-A1-denied-final.xml` contains the app UI, `checked="false"`, and `Bluetooth permission denied. Enable it in Settings to try again.` An earlier probe overlapped APK reinstallation and was discarded; it is not used as denial or crash evidence. No physical phone settings were changed.
+
+## 2026-09-06 — Direct nearby implementation and physical fault isolation (ADR-056)
+
+Environment: branch `fix/deep-dive-2026-09-02`, baseline `492572e`; Xcode beta at `/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer`, iPhone 17 Pro simulator `A7202CAB-B085-4F1A-A7B5-8AE00A839E76`; Android Studio JBR; Pixel 11 Pro `66180DLKX006ND`, Pixel 7 `2A111FDH2007A1`, both reporting API 37. Physical evidence files remain under `/tmp`, outside the repository, because logcat can contain unrelated private data.
+
+Commands (roles reversed by swapping the two serial variables):
+
+```bash
+GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+GOH_NEARBY_WIFI_OFF=1 GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh
+```
+
+Each fixture uses real native radio connections, production locked admission (`2468`, test-only), hidden test media credential, native encoded audio, authenticated control and assets. Guide generates a 440 Hz PCM16 tone at 16 kHz and sends pointer/512-byte deterministic asset state every second. Guest must receive exact asset bytes and at least 100 non-silent native decoded callbacks. This is not microphone/playback, acoustic, locked-screen, endurance, or group testing.
+
+| Attempt | Evidence directory/log | Observed result |
+|---|---|---|
+| BLE initial | `/tmp/GetOverHereNearbyPhysical.5INHpI` | Admission/audio authentication and first frame, but pointer timeout. One of three concurrent L2CAP opens failed. |
+| BLE serialized opens | `/tmp/GetOverHereNearbyPhysical.nKu234` | Control and assets arrived; non-silent audio threshold failed. Retained as a real failure. |
+| BLE forward | `/tmp/GetOverHereNearbyPhysical.VwpZoD` | Both roles passed; guest 13.582 s. |
+| BLE reverse | `/tmp/GetOverHereNearbyPhysical.xK86PG` | Both roles passed; guest 17.413 s. |
+| Aware initial | `/tmp/GetOverHereNearbyPhysical.oddqdI` | Pixel 7 explicitly reported no native pairing support. No data-path pass. |
+| Aware secure legacy NAN | `/tmp/GetOverHereNearbyPhysical.Jctcxq` | Data-path timeout, not a pass. |
+| Aware advertised security/responder-first | `/tmp/GetOverHereNearbyPhysical.OmzMYO` | Both roles passed; guest 15.016 s. |
+| Aware reverse | `/tmp/GetOverHereNearbyPhysical.qgrHEB` | Both roles passed; guest 16.306 s. |
+| BLE repeated forward/reverse | `/tmp/GetOverHere-nearby-ble-repeat.log`, `/tmp/GetOverHereNearbyPhysical.dS6iUw` | Both directions passed; reverse guest 13.661 s. |
+| Wi-Fi disabled, before hop ACKs | `/tmp/GetOverHereNearbyPhysical.lAN8Wh` | Control/assets arrived; only 25/100 non-silent audio callbacks. Receiver logged frame 300 as EXPIRED. Wi-Fi restored to enabled on both phones. |
+| Wi-Fi disabled, four-frame ACK window | `/tmp/GetOverHereNearbyPhysical.go3KXD` | Both roles passed; guest 13.473 s. Both phones were verified disabled before instrumentation and restoration requested afterward. |
+
+The Wi-Fi-off failure isolated an unbounded native in-flight backlog beyond the application queue. `NearbyRealtimeConnection` now permits four unacknowledged framed records per native direction, strips zero-length hop ACKs before the application stream, serializes ACK/data writes, and closes a peer after one second without ACK. Swift and JVM tests check a blocked fifth frame, 500 exact bidirectional roundtrips, and missing-ACK closure. The first Kotlin timeout regression caught an accidental call to `OutputStream.close()` rather than the owning connection; explicit owner qualification fixed it, and all three focused JVM tests then passed (`/tmp/GetOverHere-nearby-ack-tests-2.log`). iOS focused ACK suite also passed (`/tmp/GetOverHere-nearby-ack-ios-tests.log`).
+
+The broad gate initially rejected new raw exception logging, then a missing API-29 guard inside the deferred Bluetooth connector. Both were corrected instead of suppressing the gates. Focused iOS integration runs passed, including failed-nearby-admission cleanup and three-source fallback. The real-device iOS target, including the opt-in mixed-platform physical fixture, compiled with signing disabled (`/tmp/GetOverHere-nearby-device-build-3.log`, exit 0); that is compiler evidence, not an installed iPhone result. `devicectl device info lockState` failed with CoreDevice 4000/control-channel reset on the iPhone, so no iPhone RF pass is claimed.
+
+Mixed-platform Aware remains incomplete: Android uses PIN-secured NDP, whereas Apple owns system-paired link security. The production UI and current docs state this. The direct implementation does not contain signed relaying or guide-key pinning. `stable-local-network` remains at `59b0402`.
+
+Wi-Fi-off reverse follow-up: `/tmp/GetOverHereNearbyPhysical.AKejZL` passed both roles, guest 13.660 s. The preceding reverse command stopped at an optional Aware display-name nullability compile error before changing any radio state; the nullable field was handled and the run repeated. `/tmp/GetOverHere-nearby-wifi-off-ack-reverse-2.log` contains the disabled-state checks, results and restore requests. Final `adb -s <serial> shell settings get global wifi_on` returned `1` on both phones. No Wi-Fi setting was left changed.
+
+Virtual-device follow-up: `verify_virtual_devices.sh` initially passed all nine host gates and iOS UI tests, then found a clipped pointer privacy label in Android's guide screen. Its failed navigation test left an application-owned tour running, causing the next deliberate bind-failure fixture to collide with that listener. Collapse nearby settings during an active tour, make pointer content scrollable, and release the tour in test teardown even after an assertion. The focused `TourNavigationTest` rerun passed 3/3 (`/tmp/GetOverHere-nearby-navigation-retest.log`). This preserves the intended application-owned runtime across Activity recreation instead of stopping production tours when a screen closes.
+
+Subsequent complete virtual run passed (`/tmp/GetOverHere-nearby-virtual-final-2.log`): all nine host gates; iOS unit/integration 102 passed, one physical-only skip; iOS UI suite passed; Android emulator XML reports 25 tests, zero failures/errors, three hardware-only skips. Fresh Android-encoded packets decoded by production iOS simulator code passed (`/tmp/GetOverHere-nearby-reverse-codec-final.log`). These results precede the availability tracker and diagnostic-message follow-ups below.
+
+Late Aware discovery attempts `/tmp/GetOverHereNearbyPhysical.W26iaa` and `.k1nYkz` failed before admission. Sleeping displays were observed; no single root cause was isolated. Duplicate availability broadcasts now leave ownership unchanged, real availability transitions retain the pairing PIN, the physical fixture owns a foreground Activity, and the script wakes displays without bypassing a keyguard. Optional display-name service data was removed. The next run `/tmp/GetOverHereNearbyPhysical.dZ91ed` passed both roles (guest 14.359 s). Because multiple changes preceded that pass, it does not isolate which change restored discovery; no current reverse rerun occurred before phones became unavailable.
+
+The signed iOS build passed (`/tmp/GetOverHere-nearby-signed-build.log`) and installation succeeded (`/tmp/GetOverHere-nearby-ios-install.log`), superseding the earlier CoreDevice connection failure. No physical iOS radio fixture completed. User then reported `Network.NWError -11992 WiFi Aware` and requested simulator/emulator work only while travelling. No further phone operations are authorized for this interval. `codesign -d --entitlements - /tmp/GetOverHereNearbySigned/Build/Products/Debug-iphoneos/GetOverHere.app` confirms Publish and Subscribe in the signed app. Apple public documentation does not establish a cause for this numeric error; do not label it a permissions, pairing, or OS defect without device evidence. Added operation/code-preserving error messages and mixed-platform limitations beside Apple's pairing controls. This is diagnostic/UX remediation, not a claimed native radio fix.
+
+Final virtual-only command:
+
+```bash
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereNearbyIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh
+```
+
+The first attempt caught missing iOS-26 availability annotations in the new native-error regression; fixed with an availability check and test annotation. Rerun `/tmp/GetOverHere-nearby-virtual-no-phones-2.log` exited 0: all nine host gates, 44 Swift core tests, eight real cross-language admission exchanges, Android lint, 98 JVM tests with zero failures/skips, iOS unit/integration 104 passed and one physical-only skip, iOS UI four distinct tests passed and one physical-only skip (seven parameterized executions passed), Android emulator XML 25 tests with zero failures/errors and three hardware-only skips. `xcresulttool get test-results summary` read the 20-33-45 and 20-34-25 simulator bundles; Ruby/REXML summed the JVM and connected-debug XML attributes. Existing Swift concurrency warnings remain in older asset-cache tests; the gate is not warning-free. No physical phones were contacted. Both new physical scripts pass `bash -n`; the Android script now captures only this app's PID, never unrelated apps' logcat. `git diff --cached --check` passed.
+
+## 2026-09-06 — Aware owner recovery after the native failure report
+
+Baseline `8c73fa9`. Read-only review found that iOS owner failure left mode, probes and cached endpoints alive, and same-mode restart was ignored. Fatal Android attach/configuration/startup errors similarly did not release their owner. Added teardown before reporting fatal errors, while retaining per-peer error handling and ignoring cancellation from replaced iOS operations. Native operation/capability injection in iOS tests is a boundary double; it does not simulate RF or claim native interoperability.
+
+Focused command: `DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' -derivedDataPath /tmp/GetOverHereNearbyIOS -parallel-testing-enabled NO test -only-testing:GetOverHereTests/WiFiAwareLifecycleTests`. First compile rejected a suite-level minor-version availability annotation (`/tmp/GetOverHere-aware-lifecycle.log`); replaced it with enabled traits and runtime availability guards. Three initial focused cases passed (`/tmp/GetOverHere-aware-lifecycle-2.log`), then added unexpected-native-cancellation and capability-recheck cases.
+
+Repeated the full virtual-only command above, output `/tmp/GetOverHere-aware-recovery-virtual.log`, exit 0. All nine host gates, iOS UI and Android emulator instrumentation passed. The 21-02-32 simulator result summary reports 109 passed, zero failed, one hardware-only skip, including all five lifecycle cases. Android instrumentation finished with zero failures and three hardware-only skips. Final line: `Virtual-device verification passed; physical audio and radio gates remain separate`. Native `-11992`, mixed-platform Aware security and signed relay remain unresolved; no phone operations occurred.
+
+Public-contract investigation: [Apple service naming](https://developer.apple.com/documentation/wifiaware/waservice/name) confirms the full over-air service name, so no speculative bundle-ID prefix was added. [Android link security](https://developer.android.com/reference/android/net/wifi/aware/WifiAwareDataPathSecurityConfig.Builder) requires concrete key material for its configured cipher; no Apple-paired key derivation was invented. [Apple DTS interoperability guidance](https://developer.apple.com/forums/thread/790195) points to accessory compatibility requirements and vendor investigation; it does not establish a fix for this app or the reported error. No private APIs, rooted-device workarounds, SDK-floor changes or downgrade of application authentication were introduced.
+
+## 2026-09-07 — Signed-guide core prerequisite (ADR-057)
+
+Baseline `9f47662`; same Xcode beta/JBR, Android API-36 emulator only. No physical phone operations. New ownership: Swift/Kotlin session cores implement immutable GOS1 signing/verification; both CLIs expose test signing/verification; scripts run real cross-language exchanges; an Android instrumentation test exercises the native security provider. No app admission or transport call site uses the wrapper yet, and no relay capability is enabled.
+
+`bash scripts/verify_core_parity.sh` initially found a Kotlin ByteArray `ifEmpty` API mismatch (`/tmp/GetOverHere-guide-signature-core.log`); explicit empty-array handling fixed it. The corrected core gate passed, then canonical low-S enforcement and clean CLI rejection were added. Final core gate `/tmp/GetOverHere-guide-signature-canonical.log` passed: 46 Swift tests, 48 Kotlin tests, existing wire fixtures, eight real admission exchanges, and eight fresh signatures in each language direction. DER/raw tests include 1,000 fixed-seed leading-zero samples and high-bit/zero boundaries. Each signed fixture rejects every single-byte mutation, every truncation, trailing data, wrong keys/identities, and equivalent high-S encoding.
+
+Extended command: `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' python3 scripts/verify_guide_signatures.py /tmp/GetOverHereCoreParitySwift/out/Products/Debug/tour-session-swift Android/tour-session-cli/build/install/tour-session-cli/bin/tour-session-cli 100`. `/tmp/GetOverHere-guide-signature-100-2.log` passed 100/100 Swift→Kotlin and 100/100 Kotlin→Swift with exact retained ciphertext and changed/truncated rejection. A preceding invocation used a nonexistent guessed Swift output path and failed before testing; the corrected path came from the actual build output.
+
+Full software gate attempts used `GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereNearbyIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=A7202CAB-B085-4F1A-A7B5-8AE00A839E76' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh`. The first pass reached Android instrumentation but its added native-cross check could not find the test runner after Gradle cleanup (`/tmp/GetOverHere-guide-signature-virtual.log`); the harness now explicitly reinstalls the built APK/test APK. That initial run also preceded the final source freeze and is not the final canonical-signature qualification.
+
+The frozen-source rerun hit SpringBoard `FBSOpenApplicationErrorDomain Code=6 Busy` before simulator test launch (`/tmp/GetOverHere-guide-signature-virtual-final.log`). Stopped only that task's xcodebuild. Created isolated simulator `B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98` (`GOH-Signature-20260907`, iPhone 17 Pro, iOS 26.4.1), then repeated with `GOH_IOS_DERIVED_DATA=/tmp/GetOverHereSignatureIOS` and that destination (`/tmp/GetOverHere-guide-signature-isolated.log`). All nine host gates and iOS unit/integration passed: 109 tests, zero failures, one hardware-only skip per the 13-04-44 xcresult summary. The UI runner encountered the same Busy preflight denial; stopped only its xcodebuild. The full virtual gate is therefore **not green**. Permission to restart shared CoreSimulator services was requested, not assumed; the isolated simulator is retained for that retry.
+
+Independent native check after reinstalling the current emulator APK/test APK: `python3 scripts/verify_guide_signatures_android.py /tmp/GetOverHereCoreParitySwift/out/Products/Debug/tour-session-swift /Users/aessam/Library/Android/sdk/platform-tools/adb emulator-5554`. `/tmp/GetOverHere-guide-signature-native.log` passed CryptoKit→Android and Android→CryptoKit verification plus 100 native key/signature/tamper checks. No private signing keys are exported. This proves the primitive/provider contract, not app pinning, live radio, replay/expiry policy, or relay delivery. Stable LAN tag remains untouched.
+
+## 2026-09-07 — Resumed physical testing: dropped native admission reply
+
+Baseline `477f244`. User explicitly approved the CoreSimulator restart and both unlocked physical Android phones, later confirming neither has a device passcode. iPhone remains unavailable. Identified CoreSimulatorService PID 1434, ran `kill -TERM 1434`, then `xcrun simctl list devices available`. No other service restarted. Repeated iOS UI command with Xcode beta, `-destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -derivedDataPath /tmp/GetOverHereSignatureIOS -parallel-testing-enabled NO test -only-testing:GetOverHereUITests`; `/tmp/GetOverHere-477-ios-ui-restart.log` exited zero. The 14-14-58 xcresult summary reports four distinct tests passed, one skipped, zero failures (seven parameterized runs passed).
+
+Command `GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh` failed admission at HEAD; artifacts `/tmp/GetOverHereNearbyPhysical.5MbFXU`, output `/tmp/GetOverHere-477-BLE-forward.log`. The dependent reverse/Aware commands did not execute. Radio settings were left unchanged. Instrumentation had exited before PID-based log collection; resolved each exact app UID via `pm list packages -U com.aessam.comeoverhere` and recovered only that app's logs with `logcat -d --uid`. The harness now uses this exact-package UID collection.
+
+Added payload-free byte-count diagnostics and reran the same command: `/tmp/GetOverHere-BLE-admission-diagnostic.log`, artifacts `/tmp/GetOverHereNearbyPhysical.WOVARb`. Failed again. Guide `NearbyLane` recorded local EOF after forwarding 141 bytes; guest recorded native EOF after forwarding only 103 bytes. Admission challenge is 103 bytes and reply 38. The guide closed the native socket immediately on local EOF, before its queued final reply arrived at the guest.
+
+Regression command `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :app:testDebugUnitTest --tests com.aessam.comeoverhere.NearbySocketBridgeTest.admissionReplyRemainsAvailableUntilNativePeerCloses` failed before the fix with `Local EOF discarded the pending native reply` (`/tmp/GetOverHere-admission-close-red.log`). Guide-side bounded drain implemented in Kotlin and Swift; no wire change. The full Kotlin bridge class passed afterward (`/tmp/GetOverHere-admission-close-green.log`). Added abandoned-peer deadline coverage on both platforms before final verification.
+
+The simulator-recovery full gate (`GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereSignatureIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh`) completed in `/tmp/GetOverHere-virtual-recovered.log`, including native cross-provider checks. This run overlapped development of the drain fix, so it establishes simulator recovery but is not the final frozen-source qualification. A fresh complete gate is required below.
+
+Frozen-source Kotlin bridge class, including abandoned-peer timeout: `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :app:testDebugUnitTest --tests com.aessam.comeoverhere.NearbySocketBridgeTest`, `/tmp/GetOverHere-admission-drain-bounded.log`, passed six tests. Repeated the complete virtual command above: `/tmp/GetOverHere-admission-drain-virtual-final.log`. All host gates and iOS unit/integration passed; the 14-26-48 xcresult reports 110 distinct tests passed, one skipped, zero failures (114 parameterized runs passed). UI runner preflight then failed with SpringBoard Busy again. A scoped `simctl spawn ... log show` failed because the dedicated device was not booted; `simctl list devices available` confirmed shutdown. No second shared-service restart was performed. Read `simctl help bootstatus`, then ran `DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcrun simctl bootstatus B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98 -b` (`/tmp/GetOverHere-drain-sim-boot.log`) before another frozen-source full gate (`/tmp/GetOverHere-admission-drain-virtual-booted.log`).
+
+Patched physical sequence uses the same script with explicit guide/guest serials, first Pixel 11 Pro→Pixel 7 BLE, then reversed BLE, then `GOH_NEARBY_TRANSPORT=aware` in both directions. No `GOH_NEARBY_WIFI_OFF` was set; both `settings get global wifi_on` values read `1` during this sequence. Forward BLE passed both instrumentation roles: artifacts `/tmp/GetOverHereNearbyPhysical.GAdhUQ`, `/tmp/GetOverHere-drain-BLE-forward.log`, guest 17.135 seconds. Reverse guest passed in 17.897 seconds (`/tmp/GetOverHereNearbyPhysical.X5vpWs/guest.txt`); full role completion is recorded below when the guide ends. Every passing guest asserts locked admission, authoritative pointer, byte-exact 512-byte asset, and 100 non-silent native-decoded frames; not microphone playback, background, endurance, scale, signed relay, or mixed-platform Aware proof.
+
+Final frozen-source virtual gate after explicit boot passed completely: `/tmp/GetOverHere-admission-drain-virtual-booted.log`. UI xcresult `Test-GetOverHere-2026.09.07_14-31-24--0700.xcresult` reports four distinct tests passed, one hardware skip, zero failures (seven parameterized runs passed). Android instrumentation completed with zero failures and three explicit hardware/physical-fixture skips; the final CryptoKit↔Android native-provider check passed with 100 native key/signature/tamper checks. No production source changed after this qualification; the later APK-reuse option affects only the physical harness.
+
+Reverse BLE completed both roles successfully (`/tmp/GetOverHere-drain-BLE-reverse.log`, `.X5vpWs`). Forward Aware passed (`/tmp/GetOverHere-drain-Aware-forward.log`, `.fxaitr`, guest 15.343 seconds). Both reverse Aware roles passed (`/tmp/GetOverHere-drain-Aware-reverse.log`, `.5Q5G7Y`, guest 17.439 seconds), but the script then failed parsing because I edited it while it was executing. That command is not a passing harness gate. The frozen retry with `GOH_NEARBY_REUSE_INSTALLED=1 GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_GUIDE=2A111FDH2007A1 GOH_NEARBY_GUEST=66180DLKX006ND` failed before discovering an endpoint (`/tmp/GetOverHere-drain-Aware-reverse-final.log`, `.UBwZFO`). Preserve this intermittent failure rather than calling Aware stable. The fixture's generic error says Bluetooth even when its selected transport is Aware.
+
+The new `GOH_NEARBY_REUSE_INSTALLED=1` path ran successfully against both devices. It verifies installed app SHA-256 `36676836177cd834a8ddba3c5a839b69508fde889fccfe3e528e3c1412093e7c` and test APK SHA-256 `af98e414aa0e1ac603b1f110f2712ee2a0242f280c0f11f5709c6e2d2eb17ebd` against the built artifacts before skipping reinstall. `bash -n scripts/verify_nearby_physical_android.sh` and `git diff --check` passed. Exact-package UID log collection also succeeded after instrumentation process exit.
+
+Independent disabled-radio sequence: `GOH_NEARBY_REUSE_INSTALLED=1 GOH_NEARBY_WIFI_OFF=1 GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh`, then the same command with serials reversed. Both full harnesses passed: `/tmp/GetOverHere-drain-off-forward.log`, `.fHr7gL`, guest 13.772 seconds; `/tmp/GetOverHere-drain-off-reverse.log`, `.Bb0Yqa`, guest 15.648 seconds. Both original Wi-Fi states were `1`, disabled before joining, restored by each EXIT trap, and independently read back as `1` afterward. During the first guide window, scoped `dumpsys window` showed the guide asleep behind keyguard despite the fixture's activity flags. This does not qualify deliberate background/lock transitions, but invalidates an assumption that these runs were necessarily foreground throughout.
+
+After the disabled-radio jobs exited, ran public `input keyevent KEYCODE_WAKEUP` and `wm dismiss-keyguard` on both user-confirmed passcode-free phones. Immediate snapshots showed awake displays but keyguard still present during dismissal. Read the public command help and [Android KeyguardManager contract](https://developer.android.com/reference/android/app/KeyguardManager): absence of a secure lock and whether keyguard is showing are separate states. No credentials, device policy, or secure lock configuration were changed. Repeated reverse Aware with verified installed APKs: `/tmp/GetOverHere-drain-Aware-awake.log`, `.Mv55is`, both roles passed, guest 13.752 seconds. A follow-up read-only foreground snapshot was not executed because automatic permission review timed out; the successful rerun therefore does not isolate keyguard as the cause. All test jobs ended. Stable LAN tag remains at `59b0402`.
+
+## 2026-09-07 — Two-phone Android Aware throughput benchmark
+
+Baseline `c1c18d0`, Pixel 11 Pro `66180DLKX006ND` and Pixel 7 `2A111FDH2007A1`, both API 37; emulator `emulator-5554` API 36. User requested throughput measurements in both directions and continued implementation of the remaining work. Native app owns the Aware connection/bridge; test-only `AwareBenchmarkProtocol` and `AwarePhysicalBenchmarkTest` own traffic/measurement; the bash/Python runner owns explicit device selection, deployment, timeouts, artifacts and summaries. Neither platform-neutral core nor production tour wire bytes are changed by the benchmark. No Internet test server, LAN fallback or raw-PHY claim. Native connection setup follows the [Android Aware network contract](https://developer.android.com/develop/connectivity/wifi/wifi-aware).
+
+Runner: `bash scripts/benchmark_android_aware.sh --guide 66180DLKX006ND --guest 2A111FDH2007A1`. Default is three 10-second trials each of guide→guest, guest→guide and simultaneous traffic, then swapped guide roles. Four sockets traverse the production Aware owner and GOD1 asset adapter: protocol control, two bulk directions, and independent RTT probes. Synthetic 65,536-byte blocks carry exact sequences; every received byte is compared and both endpoints' byte counts must agree. Mbps is `received_bytes * 8000 / receive_nanoseconds`, including receive/drain time. Warm-up is separate. Foreground setup refuses secure-lock dismissal, requests dismissal only for a non-secure keyguard, then checks interactive screen, keyguard state and actual activity focus throughout. Results include model, API and native thermal status; this is not a battery/endurance experiment.
+
+Initial emulator-only command added `--smoke-only`: `/tmp/GetOverHere-aware-benchmark-smoke.log`, artifacts `/private/var/folders/ll/cs92d_x12t77646gcv3n5t9h0000gn/T/GetOverHereAwareBenchmark.9n0o3u3s` (initial runner used the system temporary directory). Socket loopback, full-duplex byte checking, corruption rejection and percentile arithmetic passed. First physical pilot added `--millis 1000 --rounds 1`: `/tmp/GetOverHere-aware-benchmark-pilot.log`, `/tmp/GetOverHereAwareBenchmark.xlfku8gz`. Failed before data transfer. Both devices reported foreground ready; guide log recorded `Aware startup failed (BindException)`. Scoped `adb -s 66180DLKX006ND shell ss -tan` output for the relevant ports showed local port 50004 occupied by an unrelated established outgoing connection. No unrelated process or connection was changed.
+
+Extracted the existing listener construction without changing its fixed-port behavior, then ran `AwareListenerPortTest.existingConnectionOnOldPortCannotBlockAwareListener` on the emulator. `/tmp/GetOverHere-aware-port-red.log` reproduced `EADDRINUSE`. Changed the active Android owner to allocate and advertise its assigned port; `/tmp/GetOverHere-aware-port-green.log` passed, and `/tmp/GetOverHere-aware-port-green-build.log` passed Android unit tests and both APK builds. Added native attach, publish/subscribe, peer-discovery and data-path-ready logs without PINs, keys, peer addresses or payloads. The runner now executes the occupied-port regression before every physical benchmark.
+
+Corrected short pilot: `/tmp/GetOverHere-aware-benchmark-pilot-fixed.log`, `/tmp/GetOverHereAwareBenchmark.61f0s1ge`. Both guide orientations passed. One-second receiver goodput samples were 357.85/216.44 Mbps (Pixel 11 Pro guide down/up), 297.47/273.56 Mbps (Pixel 7 guide down/up); duplex was 196.12/151.34 and 135.65/193.28 Mbps respectively. These are preliminary single short samples, not final sustained measurements. Initial idle RTT sampling was only one second and is superseded by 100-sample idle measurement.
+
+First extended run used `--reuse-installed --millis 10000 --rounds 3`: `/tmp/GetOverHere-aware-benchmark-measured.log`, `/tmp/GetOverHereAwareBenchmark.vk9vmv9e`. All nine forward transfer trials verified their blocks and counterpart byte totals, but the guest failed waiting for the final marker after the guide released its owner; the whole benchmark is failed, not accepted. A deterministic completion regression failed with `expected TimeoutException ... nothing was thrown` (`/tmp/GetOverHere-aware-bench-end-red.log`). The benchmark guide now waits for peer closure after writing completion; the guest closes after receiving it. Also increased idle sampling to 100 echoes. The earlier full software run `/tmp/GetOverHere-aware-benchmark-virtual.log` picked up the deliberately red completion test and failed that one test; it is not final qualification.
+
+Final frozen benchmark command (fresh install, no reuse because test APK changed): `bash scripts/benchmark_android_aware.sh --guide 66180DLKX006ND --guest 2A111FDH2007A1 --millis 10000 --rounds 3`, `/tmp/GetOverHere-aware-benchmark-final.log`, `/tmp/GetOverHereAwareBenchmark.po2lx70k`. Its occupied-port, completion-lifetime and emulator protocol smoke gates passed before physical traffic. A separate frozen software gate uses the established simulator bootstatus/verify_virtual_devices commands and logs to `/tmp/GetOverHere-aware-benchmark-virtual-final.log`.
+
+Final outcome: all 18 measured physical trials and both orientation completion checks passed. `manifest.json` records baseline `c1c18d013f47fb52f21694592622f6f98a4d984a` plus these uncommitted changes; app APK SHA-256 `783139bc2b5231b1a4d310e4619070eec6a86cc328d31b92b22a6e8a772bfe0a`, test APK SHA-256 `cc34a08e989d75f709f05ef51458abaaab747de60f29a02f8632a311bc744dfd`. Raw per-trial results and endpoint logs are in the artifact directory.
+
+| Guide | Mode | Guide→guest Mbps min/median/max | Guest→guide Mbps min/median/max | Per-trial RTT p95 ms min/median/max |
+| --- | --- | --- | --- | --- |
+| Pixel 11 Pro | One-way down | 297.82 / 300.05 / 314.11 | — | 181.24 / 182.01 / 189.32 |
+| Pixel 11 Pro | One-way up | — | 273.18 / 292.46 / 292.72 | 183.59 / 190.67 / 195.55 |
+| Pixel 11 Pro | Duplex | 162.45 / 180.56 / 192.62 | 168.76 / 181.44 / 185.85 | 228.89 / 230.17 / 234.47 |
+| Pixel 7 | One-way down | 302.59 / 307.41 / 312.48 | — | 185.58 / 189.52 / 197.14 |
+| Pixel 7 | One-way up | — | 291.07 / 299.36 / 326.61 | 182.74 / 187.58 / 192.83 |
+| Pixel 7 | Duplex | 174.96 / 185.69 / 192.39 | 176.71 / 181.37 / 194.80 | 218.67 / 223.68 / 231.36 |
+
+Idle RTT used 100 samples per orientation: forward p50/p95 14.64/155.02 ms, reverse 17.47/171.04 ms. Guest-local all-four-channel setup was 2136.02/3989.98 ms. Native thermal status was 0 at recorded samples, and foreground/keyguard monitoring passed. Phones were USB-connected; distance/RF conditions and battery drain were not measured. Wi-Fi settings were unchanged and infrastructure association was not removed; explicit Aware network sockets, not LAN fallback, carried the payload. These results establish usable socket/bridge goodput, not raw PHY capacity or full-tour acoustic performance. Idle latency already has a tail; do not attribute all delay to concurrent assets.
+
+Final frozen software gate passed all included stages, ending `Virtual-device verification passed; physical audio and radio gates remain separate`, including 100 native cross-provider signature checks. Production tour regression then ran `GOH_NEARBY_REUSE_INSTALLED=1 GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 bash scripts/verify_nearby_physical_android.sh` and repeated with serials reversed. Both full harnesses passed: `/tmp/GetOverHere-aware-dynamic-tour-forward.log` (guest 15.616 seconds) and `/tmp/GetOverHere-aware-dynamic-tour-reverse.log` (17.983 seconds). Each verifies real admission, authoritative control, byte-exact assets and non-silent native-decoded audio. Not microphone/speaker, locked-phone, endurance, group or relay qualification. No production/test sources changed after these frozen runs.
+
+## 2026-09-07 — Research archival and complete next-session handoff
+
+User supplied complete Claude and ChatGPT reports self-dated 8 September 2026, then requested both reports/references and all completed/planned work in NextSession.md. Preserve the author dates as attribution, not new local experiment timestamps. Archived [Claude](Research-Claude-2026-09-08.md) and [ChatGPT](Research-ChatGPT-2026-09-08.md) report bodies and source lists, with provenance warnings. Replaced the active handoff with current C1–C13 completion inventory, verified benchmark/software/physical evidence, F1–F6 corrections, ordered A1–A4 plan, pending scope decisions, device/SDK paths and exact resume commands. Preserved every prior checkpoint and P0–P8 gate in [NextSession-History.md](NextSession-History.md). ADR-058 and lesson 84 record the research adjudication.
+
+## 2026-09-08 — A1/A2 implementation and software gates (ADR-059)
+
+User unavailable for physical testing; no physical phones accessed. Branch `fix/deep-dive-2026-09-02`, starting HEAD `aab2c1060c026fd628f44f12de50097ff50742f3`. Stable tag unchanged. Native sources were frozen during each compiling gate; UI `test-without-building` uses the frozen simulator artifact while later source work continues.
+
+```bash
+# Focused iOS audio/lifecycle: final pass, 37/37. Initial build-driver exit0/no-output diagnostic,
+# then one old Create-Tour Bluetooth opt-in expectation failed; updated to approved intent flow.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+# Logs: /tmp/GetOverHere-ios-audio-journey{,-retry,-final}.log
+
+# Complete iOS unit/native-socket suite: 129 tests /150 parameterized runs passed,1 physical-only skip.
+# Initial missing audioStatus enum case in asset diagnostic was fixed; retry result passed.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests
+# Logs: /tmp/GetOverHere-ios-signed-tour{,-retry}.log
+# Result: /tmp/GetOverHereSignatureIOS/Logs/Test/Test-GetOverHere-2026.09.08_08-59-18--0700.xcresult
+
+# Android from Android/: JVM tests + compile instrumentation APK; no instrumentation/device run yet.
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest
+# /tmp/GetOverHere-android-a2-readiness.log: BUILD SUCCESSFUL28s.
+# Lifecycle26/26, presentation8/8, signed native socket4/4; all suite failures0.
+
+# Final shared core gate (native CryptoKit/JVM, not simulated crypto): PASS.
+bash scripts/verify_core_parity.sh
+# /tmp/GetOverHere-capacity-topology-core-parity-final.log: Swift61/JVM64 tests,
+# GOR2+readiness parity, v1 admissions8, v2 admissions8+explicit rejection8, signatures16.
+
+# Public SDK catalogue check and SDK platform installation, no target/min runtime change:
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' /Users/aessam/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --list --channel=3
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' /Users/aessam/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager 'platforms;android-37.2'
+# /tmp/GetOverHere-android-public-sdk-list.log; /tmp/GetOverHere-android-sdk37-install.log.
+# compileSdk release37/minor2 builds with existing AGP8.13.2; target36/min26 retained.
+```
+
+Compiler findings retained: readiness needed explicit cases in both CLI fixture descriptions and the Swift asset hash diagnostic; a new mutating-policy assertion needed a temporary outside the Swift Testing macro; one Android test used positional envelope parameters incorrectly. Corrected before the passing gates. The pure 30-listener topology tests qualify planning bounds only, not native relay forwarding or radio scale. System pairing, typed route/global-budget integration and full virtual-device acceptance are still in progress.
+
+Read-only evidence checks: `git status --short`, `git log -8 --oneline`, `git rev-parse HEAD 'stable-local-network^{}'`; `tail -n 10 /tmp/GetOverHere-aware-benchmark-final.log`; `tail -n 3 /tmp/GetOverHere-aware-benchmark-virtual-final.log`; source inspection of `NearbyTCPConnection` and `NearbySocketBridge`. Baseline implementation remains `7dca55f`, stable tag `59b0402`. Prior synthesis opened Apple DTS 787570, Android PublishConfig.Builder and Apple WWDC25 session 228, confirming background execution/suspension distinction, documented version-37.2 offloaded pairing, and realtime/voice performance controls. It did not rerun every external report citation or test device availability for the newer pairing API.
+
+No app/test/build-script changes, device/radio operations, new benchmarks, SDK installation, service restart, paid resources or physical qualification were performed for the documentation request. An initial combined move-and-add patch for NextSession.md was rejected because it targeted the same path twice; split into separate successful patches without discarding history. Documentation integrity checks and checkpoint result follow below.
+
+Documentation checks passed: local Markdown targets in the handoff/history/reports resolve; `git show HEAD:NextSession.md | tail -n +3 | diff - <(tail -n +5 NextSession-History.md)` returned no differences (all historical content retained after the replaced title/provenance header). Section checks found C1–C13, F1–F6 and A1–A4 in the active handoff and all report top-level sections. Scoped `awk` checks counted all 24 ChatGPT source entries and 14 Claude source-list entries. Re-read socket source confirms TCP_NODELAY and the 32-connection default. Existing tracked-file `git diff --check` passed. Archive Markdown hard-break whitespace is intentionally retained; the staged Markdown whitespace check ignores end-of-line spaces only. No new app test run is claimed for this documentation-only change.
+
+## 2026-09-08 — A3/A5 integrated routes, assets, linkage and virtual gate
+
+The documentation-only statements immediately above describe the prior archival request, not this implementation run. This run changes both apps and uses only host, iOS Simulator and Android emulator; physical devices are unavailable and were not accessed.
+
+Core asset scheduling gates: `/tmp/GetOverHere-assets-core-swift-all.log` passed 68 Swift tests in 11 suites; `/tmp/GetOverHere-assets-core-jvm.log` passed 71 JVM tests. Native integration adds typed route preflight/reuse/fallback, shared connection budgets, participant caps, asset round-robin/current-slide priority, chunk-boundary yielding, and generation ownership around queued reads, decoders and callbacks.
+
+Failures retained: `/tmp/GetOverHere-ios-a3-capacity-retry.log` and result `Test-GetOverHere-2026.09.08_09-19-35--0700.xcresult` ran 138 tests with two route-fixture port collisions after correcting an initial missing MainActor factory annotation. Fixed isolated fixture ports plus the real listener-cancellation/rebind barrier. Xcode's automatic simulator diagnostic child continued for minutes after tests; only identified collector PID82173 was terminated, not CoreSimulator services. The simulator scripts now use the documented `-collect-test-diagnostics never`; xcresult and normal test logs are retained.
+
+The first A5 compile required the optional MainActor callback property to be explicitly Observation-ignored and the actor-owned default connection budget to be initialized in its actor. `/tmp/GetOverHere-ios-a5-integrated-retry.log`, result `Test-GetOverHere-2026.09.08_10-11-29--0700.xcresult`, then passed150 of155 tests with four failures and one skip (181 passing/7 failing parameterized runs). Three failure categories were duplicate hosted-test core type identity; the remaining asset-failure fixture needed an active session because stale unconfigured failures are intentionally ignored. These are not physical radio results.
+
+```bash
+# Symbol diagnosis: both app and test originally defined the core error metadata/conformance.
+nm /tmp/GetOverHereSignatureIOS/Build/Products/Debug-iphonesimulator/GetOverHere.app/GetOverHere.debug.dylib | rg 'RoomAdmissionV2ErrorON|RoomAdmissionV2ErrorOs0G0AAMc'
+nm /tmp/GetOverHereSignatureIOS/Build/Products/Debug-iphonesimulator/GetOverHere.app/PlugIns/GetOverHereTests.xctest/GetOverHereTests | rg 'RoomAdmissionV2ErrorON|RoomAdmissionV2ErrorOs0G0AAMc'
+# After removing test-only package linkage, test symbols are undefined imports (U), resolved by the host.
+plutil -lint iOS/GetOverHere.xcodeproj/project.pbxproj
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -collect-test-diagnostics never -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/ChannelServiceLifecycleTests -only-testing:GetOverHereTests/NearbySocketBridgeTests -only-testing:GetOverHereTests/TourAssetTransferServiceTests
+# /tmp/GetOverHere-ios-single-core-linkage.log: 55 tests/64 runs passed, no failure or skip.
+# Result: Test-GetOverHere-2026.09.08_10-16-53--0700.xcresult.
+
+# Full frozen host/core/native/UI gate, simulator/emulator only.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer GOH_IOS_DERIVED_DATA=/tmp/GetOverHereSignatureIOS GOH_IOS_DESTINATION='platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' ANDROID_SERIAL=emulator-5554 bash scripts/verify_virtual_devices.sh
+# Attempts: /tmp/GetOverHere-final-virtual-20260908.log,
+# /tmp/GetOverHere-final-virtual-20260908-retry.log,
+# /tmp/GetOverHere-final-virtual-20260908-final.log.
+```
+
+The first two full attempts stopped at the unchanged static privacy gate: two iOS raw error descriptions, then three Android raw Throwable log arguments. Replaced them with type-only logs; actionable details remain in the UI. The third full gate passed all9 host stages, iOS UI, Android emulator and100 native CryptoKit↔Android signature/key/tamper checks. Swift core68/JVM core71; Android app JVM144 before later focused red tests replaced its XML; emulator35 cases =30 passes/5 capability or physical skips. iOS unit/native result `Test-GetOverHere-2026.09.08_10-56-10--0700.xcresult`:155 passes/1 physical skip,189 passing parameterized runs. UI result `Test-GetOverHere-2026.09.08_10-57-03--0700.xcresult`:4 passes/1 physical skip,7 passing runs. Final line: `Virtual-device verification passed; physical audio and radio gates remain separate`.
+
+Android A5's earlier integrated JVM/build command (`JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`, from Android/) passed144 tests; `/tmp/GetOverHere-android-a5-integrated.log`. Initial emulator navigation exposed a clipped empty-map import action; the scroll fix passed the three-case focused rerun `/tmp/GetOverHere-android-a5-navigation.log`, then the full gate above. Read-only iOS layout review found the analogous plain-VStack overflow; guide controls now scroll with useful minimum map/media heights and a persistent End Tour footer. The real guide navigation case remains physical-only because simulator capture intentionally fails; no screenshot of a running simulator guide is claimed.
+
+Read-only lint: SwiftFormat0.60.1 `--lint --rules trailingSpace,consecutiveBlankLines --cache ignore` on five edited Swift files reported0 formatting changes (`/tmp/GetOverHere-whitespace-lint.log`). SwiftLint0.63.2 defaults on the same files returned exit2 with existing and new length/complexity/style findings (`/tmp/GetOverHere-swiftlint.json`); no project config exists, no mass formatting/refactor or clean-SwiftLint claim. `git diff --check` and bash syntax checks passed. AGP8.13.2 warns its tested compileSdk maximum is36.1 while this candidate uses public37.2; builds and Android API-floor lint pass. The warning is not suppressed.
+
+Subsequent read-only review found old Android capture cleanup could affect a replacement session and unbounded pre-encode PCM queues existed on both platforms. Those producer/lifecycle refinements started **after** the passing frozen gate and require another gate; the pass above must not be applied to their untested source.
+
+## 2026-09-08 — Producer freshness, capture ownership and tiny-packet preparation
+
+ADR-063 scopes these changes. No phones accessed. Existing500ms wire TTL remains; new150ms monotonic producer-age admission is separate. Core worker independently read the two queue implementations and found no concrete safety violation. That is code review, not physical validation.
+
+Android red reproductions: `/tmp/GetOverHere-android-capture-red.log`, two failures exposing stale capture completion and a socket factory exception outside its try boundary. Per-run capture ownership/newest-one handoff, generation-checked service completion, bounded pre-encode queue and conservative buffered-input timestamps were added. An initial green attempt failed compilation and a subsequent freshness assertion exposed confusion between the old500ms wire lifetime and new150ms producer bound; both failed attempts remain in `/tmp/GetOverHere-android-capture-green.log` and `/tmp/GetOverHere-android-capture-focused.log`. Final focused regressions pass at `/tmp/GetOverHere-android-capture-focused-final.log`.
+
+```bash
+# Android/, full frozen app JVM + both APKs (includes new benchmark instrumentation source).
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+# /tmp/GetOverHere-android-capture-full.log: PASS34s;158 tests/33suites,0failures/errors/skips.
+
+# iOS focused producer/capture/playout/native socket/service lifecycle gate.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=B9C1B1BA-6F9F-4B24-9EC7-095EF543DD98' -parallel-testing-enabled NO -collect-test-diagnostics never -derivedDataPath /tmp/GetOverHereSignatureIOS test -only-testing:GetOverHereTests/AudioEncodeAdmissionTests -only-testing:GetOverHereTests/AudioEngineTests -only-testing:GetOverHereTests/PlayoutClockTests -only-testing:GetOverHereTests/LocalSessionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests
+# /tmp/GetOverHere-ios-preencode-focused.log:75 tests/97runs passed,0failures/skips.
+# Result: Test-GetOverHere-2026.09.08_11-23-17--0700.xcresult.
+# Initial sandboxed simulator launch lacked service/cache access and exited143; elevated rerun passed.
+# Generic iOS compilation also passed with CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO:
+# /tmp/GetOverHere-ios-preencode-device-build.log; no device or provisioning operation.
+
+# Host-only argument/report regression; never invokes adb or contacts a phone.
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_android_aware.py
+#12 tests pass; expected invalid-argument cases print argparse errors then the suite finishes OK.
+```
+
+The benchmark extension keeps bulk as default and adds `--profile tiny`. Its independent writer/echo reader offers50pps; synthetic50-byte codec-sized payloads are wrapped by real GOH2v4 AEAD/GOS1, and serialized byte size is measured. Idle and512KiB/s paced-asset phases retain raw RTT/send-lag, p50/p95/p99/max, offered/sent/received/local scheduling drops and echoes≥150ms. Missing echoes/timeouts fail the run rather than reporting zero loss. This is the guide-side **asset adapter over Aware TCP**, not the production realtime ACK lane, native direct UDP, real codec output or acoustic measurement. New default emulator test `AwarePhysicalBenchmarkTest#tinyPacketLoopbackAndCorruptionSmoke` is included in the final aggregate. `--smoke-only` now preflights only the explicit emulator, even if phone serial arguments are supplied. The12-test Python validation enters host gate stage8.
+
+Final frozen aggregate launched with the established `verify_virtual_devices.sh` environment above, log `/tmp/GetOverHere-integrated-candidate-20260908.log`. Outcome and artifact hashes follow after completion; do not mark it passed from launch alone.
+
+**Final outcome: PASS, exit0.** All9 host stages, iOS UI, Android emulator and100 native signature/key/tamper checks completed. Counts: Swift core68, JVM core71, Android app JVM158/33suites, Python12; Android emulator36 cases =31 passes/5 capability or physical skips,0 failures/errors. Tiny smoke passed in2.965s; complete emulator task56s. iOS unit result `Test-GetOverHere-2026.09.08_11-32-23--0700.xcresult`:166 passes/203 parameterized passing runs,1 physical-only skip. UI `Test-GetOverHere-2026.09.08_11-33-16--0700.xcresult`:4 passes/7 runs,1 physical-only skip. Read via `xcrun xcresulttool get test-results summary --path ...`; tool required elevated access to its report cache, not a new simulator/device operation. Native provider final line and aggregate final line both pass.
+
+Artifact SHA-256 from `shasum -a256`: app APK `9566fb7a8bcbbea4ccfc7c12972f040c32a4aff2a94f021674bff33e4eb75b9e`; instrumentation APK `e8308fdfd67f040d7976182e35d5062203628eae2aa750d47ed1d37b1ae22bb6`; simulator `GetOverHere.app/GetOverHere.debug.dylib` `a12a22b19899f9986fbd559c67a75b46909dd580fe3532a83a9d5e8bfa3f1ee2`. Sources remained frozen from the final gate through this verification; only living documentation was updated afterward. Starting HEAD was `aab2c10`; the following implementation checkpoint commit records the tested changes. Stable tag still resolves to `59b0402c91cfabb3eb839800b2b8521be90854e0`. No push or new tag, paid resources, service restart, physical-device operation or acoustic/group qualification.
+
+**Remaining coding is explicit:** Android system-paired publisher/reverse-dial endpoint integration, native relay member enrollment/grants/possession/freshness/dual-role forwarding, direct UDP/bypass comparison support and radio-pressure scheduling. The current core topology planner, adapter tiny benchmark and asset scheduler do not close those items. FieldAcceptance.md consolidates the later physical round; it is not a request for intermediate user feedback.
+
+## 2026-09-10 — Mixed iPhone/Android route repair and physical investigation
+
+The user reauthorized phone testing. Initial HEAD `b3df039`, clean worktree; stable LAN tag remains `59b0402`. Selected USB iPhone12mini `00008101-000C690C3A30001E`, iOS26.5.2/23F84, Developer Mode enabled and no passcode required; Pixel11Pro `66180DLKX006ND`, SDK37/full37.0. Pixel7 was visible but not used in these initial cases. No Wi-Fi/radio configuration, pairing, passcode or router setting changed. The paired iPhone17ProMax and watch were not tested.
+
+Current selected toolchain is `/Users/aessam/Downloads/Xcode.app/Contents/Developer`, Xcode27.0/27A266a. The old Xcode-beta path no longer exists; its initial devicectl preflight failed before any device action. Sandboxed keychain inventory returned zero identities; read-only elevated inventory found one valid signing identity. No certificate/profile creation or provisioning update was requested.
+
+```bash
+# Baseline signed build, then exactly one physical guide UI test. No Bluetooth authorization reset.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS,id=00008101-000C690C3A30001E' -derivedDataPath /tmp/GetOverHereMixed20260910 -parallel-testing-enabled NO build-for-testing
+# /tmp/GetOverHere-mixed-ios-build-20260910.log: exit0.
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcodebuild -quiet -xctestrun /tmp/GetOverHereMixed20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun -destination 'platform=iOS,id=00008101-000C690C3A30001E' -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath /tmp/GetOverHereMixed-guide-ui-20260910.xcresult test-without-building -only-testing:GetOverHereUITests/GetOverHereUITests/testGuideCanReachSlidesMapAndPointerWithoutLegacyConfiguration
+# /tmp/GetOverHere-mixed-guide-ui-20260910.log; xcresult summary1pass,0fail/skip.
+```
+
+The UI test created a real-microphone guide, exercised open/lock1234/edit12345/unlock, Slides/Map/Pointer and End Tour. Exported and visually inspected attachment `/tmp/GetOverHereMixedGuideUIAttachments/F7F20B89-01F1-4F48-8A4A-74D11C29E310.png`. This proves startup/navigation, not peer transport or acoustic quality. Xcode27 emitted legacy concurrency warnings and spurious “command failed with exit code0” diagnostics in otherwise exit0 builds; actual test counts were verified from xcresult rather than inferred from quiet output.
+
+Route bug red/green: Android initial lifecycle35tests/2fail (`/tmp/GetOverHere-android-lan-fallback-red-20260910.log`); iOS three lifecycle methods failed (`/tmp/GetOverHere-ios-route-red-20260910.log`). Final Android app JVM169tests/33suites,0fail/errors/skips,34s (`/tmp/GetOverHere-android-lan-fallback-verified-20260910.log`). iOS scoped38methods/49runs,0fail/skip (`/tmp/GetOverHere-ios-route-final-20260910.log`, result `Test-GetOverHere-2026.09.10_17-07-43--0700.xcresult` under `/tmp/GetOverHereRouteFallback20260910/Logs/Test/`), iPhone17Pro Simulator/iOS27. These counts precede later native probes/playback-progress additions and are not a final aggregate gate.
+
+```bash
+# Frozen baseline protocol artifacts, not rebuilt while service workers edited sources.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_IOS_NEARBY_DERIVED=/tmp/GetOverHereMixed20260910 GOH_IOS_DEVICE=00008101-000C690C3A30001E GOH_NEARBY_ANDROID=66180DLKX006ND GOH_NEARBY_USE_BUILT=1 bash scripts/verify_nearby_cross_platform.sh
+# /tmp/GetOverHere-mixed-protocol-baseline-20260910.log; artifacts /tmp/GetOverHereNearbyCross.YCvd2d/.
+```
+
+**Result: partial, exit1.** iPhone-guide→Android-guest passed1test per endpoint: v2 locked admission, pointer, exact512byte asset,100nonzero native-decoded audio frames. Guest transport is native BLE with loopback adapters; no LAN connector. Android-guide→iPhone-guest authenticated admission and realtime; iOS received its first decoded audio frame but CoreBluetooth rejected control/asset channel opens. iOS timed out; no reverse/full-pair pass. Android listener retained its PSM and rearmed accept after admission and realtime. Failed iOS diagnostics were exported from the existing xcresult, not obtained by requesting sysdiagnose. `get log --type console` reported no console; exported `StandardOutputAndStandardError.txt` contains the actual app log. Original failure retained.
+
+```bash
+# Isolate native same-PSM channels, without admission or media.
+GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_IOS_NEARBY_DERIVED=/tmp/GetOverHereMixedFixed20260910 GOH_IOS_DEVICE=00008101-000C690C3A30001E GOH_NEARBY_ANDROID=66180DLKX006ND GOH_NEARBY_USE_BUILT=1 GOH_NEARBY_PROFILE=channel-probe GOH_NEARBY_IOS_ROLES=guest GOH_BLE_PROBE_STYLE=sequential bash scripts/verify_nearby_cross_platform.sh
+# /tmp/GetOverHere-ble-open-sequential-20260910.log; /tmp/GetOverHereNearbyCross.hv3uFM/.
+```
+
+**Result: exit1,1of3 opens.** First native open completed in75.6ms; second and third returned `CBInternalErrorDomain` code24 while the first stayed open. Sequential calls returned from the delegate before the next request, so the failure is not explained solely by our queued callback reentrancy. No meaning is assigned to private error24 or the earlier unknown436. Close/reopen and distinct-PSM probes follow; this observation is device-specific, not a universal Apple API-capacity statement.
+
+## 2026-09-10 — Visible-app debug control bridge (ADR-066)
+
+Environment: Xcode27 at `/Users/aessam/Downloads/Xcode.app/Contents/Developer`,
+iPhone12mini `00008101-000C690C3A30001E`/iOS26.5.2; simulator17Pro/iOS27
+`5CCA0393-1F29-47F3-AC23-CBE1C99533F4`. No trust-store, passcode, radio or router changes.
+Prior mixed-device changes preserved in WIP commit `7c3829b`, not a completion claim.
+
+```sh
+export DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer
+swift test --package-path Packages/AppDebugControl --scratch-path /tmp/GetOverHereDebugControl20260910
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS,id=00008101-000C690C3A30001E' -derivedDataPath /tmp/GetOverHereDebugApp20260910 build-for-testing
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -destination 'platform=iOS Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4' -derivedDataPath /tmp/GetOverHereDebugSimulator20260910 -parallel-testing-enabled NO '-only-testing:GetOverHereTests/DebugAppControlTests' test
+xcodebuild -quiet -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -configuration Release -destination 'generic/platform=iOS' -derivedDataPath /tmp/GetOverHereDebugRelease20260910 CODE_SIGNING_ALLOWED=NO build
+python3 scripts/verify_debug_control_release.py /tmp/GetOverHereDebugRelease20260910/Build/Products/Release-iphoneos/GetOverHere.app
+```
+
+Results: package2/2 pass, actual repeated TLS and wrong-key/wrong-pin/replay checks;
+simulator3/3 adapter tests pass, no skipped tests; signed device build exit0; unsigned
+Release exit0 and exclusion check PASS for plist/resources/symbols/strings. Logs:
+`/tmp/GetOverHere-debug-control-repeated-20260910.log`,
+`/tmp/GetOverHere-debug-build-tests-20260910.log`,
+`/tmp/GetOverHere-debug-adapter-tests-20260910.log`,
+`/tmp/GetOverHere-debug-release-exclusion-20260910.log`.
+Simulator result: `/tmp/GetOverHereDebugSimulator20260910/Logs/Test/Test-GetOverHere-2026.09.10_18-12-30--0700.xcresult`.
+Existing actor-isolation/style warnings remain; no warning-free claim.
+
+Retained failures: PSK-only TLS handshake failed with error-9858 in the local fixture;
+empty-password PKCS#12 import returned-25293; named-curve omission caused
+SecKeyCopyExternalRepresentation NULL-key exception. Named P-256 plus random nonempty
+password fixed the actual certificate fixture. No numeric meaning was inferred for
+the physical Wi-Fi Aware/Bluetooth errors. Failed TLS logs retain `smoke`, `psk`,
+`identity-diagnostic`, `identity-password` suffixes under `/tmp/GetOverHere-debug-control-*20260910.log`.
+
+Physical initial build installed/launched using `scripts/start_iphone_debug_control.py`.
+Credentials were created in an owner-only temporary directory and are not recorded here.
+App-container endpoint file reported `192.168.3.132:50999` and169.254.250.98.
+`scripts/goh_control.py ... status` returned foreground=true, screen=rooms, audio=idle,
+role=none, no active room and both nearby toggles=false. Evidence:
+`/tmp/GetOverHere-debug-phone-status-20260910.json` and install/launch logs with matching
+date. This proves one authenticated local-network exchange with the actual scene.
+
+Next show-debug/status calls timed out after8seconds in NWConnection preparing;
+no room was created. Warm devicectl activation did not restore connectivity. Saved
+endpoint still said listening; public lockState reported passcodeRequired=false and
+unlockedSinceBoot=true, not current foreground status. Root cause remains unproven.
+Latest keep-awake update is not installed. Approval to relaunch was requested; complete
+real-network room/UI smoke is pending. Do not claim it passed.
+
+Simulator `simctl openurl ... goh-debug://panel` resolved the Debug URL to GetOverHere
+and displayed the system Open confirmation. Screenshot
+`/tmp/GetOverHere-debug-deeplink-ready-20260910.png` was inspected. This is registration
+evidence only, not panel presentation. Initial screenshot captured boot; retained as
+`/tmp/GetOverHere-debug-deeplink-simulator-20260910.png`. Computer-use surface did not
+offer Simulator, so no unsupported tap injection was used.
+
+Final review removed a redundant direct visual-focus publication from the debug adapter;
+the same SwiftUI selection observer used by the picker publishes it once. Final signed
+`build-for-testing` rerun exited0: `/tmp/GetOverHere-debug-final-build-20260910.log`.
+`git diff --check`, plist validation and Python helper CLI preflights pass.
+
+## 2026-09-10 18:31–18:40 — approved debug relaunch and actual mixed live sessions
+
+User approved relaunch (`Go`), then explicitly prioritized iPhone/Android testing over
+more debugger work. Same selected iPhone12mini and Pixel11Pro; Pixel7 was visible to
+adb but not operated. Fresh private debug credentials; updated app installed using
+devicectl, then `scripts/start_iphone_debug_control.py ... --relaunch`. No secrets logged.
+
+`scripts/verify_iphone_debug_control.py 192.168.3.132 PRIVATE_CREDENTIAL_DIR --cli /tmp/GetOverHereDebugControl20260910/out/Products/Debug/goh-control --create-room`
+passed actual create, microphone running, Map/Pointer/Slides, lock/unlock and leave/idle.
+Log `/tmp/GetOverHere-debug-approved-smoke-20260910.log`. Physical observer command:
+`scripts/observe_iphone_debug_control.py 00008101-000C690C3A30001E /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --screen debug --result /tmp/GetOverHere-debug-approved-panel-20260910.xcresult`.
+Result1passed/0failed/0skipped. Complete smoke helper now optionally integrates visual
+checks and restores initial discovery preferences after its own room cleanup.
+
+Second network/UI smoke `/tmp/GetOverHere-debug-complete-smoke-20260910.log` failed at
+new guide startup: `Cannot open room admission port 50003.` Added
+`RoomAdmissionTransportTests/stoppedIdleListenerCanImmediatelyHostAnotherRoom` before
+changing production code. Same scoped `xcodebuild test`, serial, on simulator17Pro and
+physical iPhone12mini both exited0. Logs `/tmp/GetOverHere-admission-restart-red-20260910.log`
+and `/tmp/GetOverHere-admission-restart-device-red-20260910.log` retain historical red
+candidate names but are PASSES. No production socket fix applied; full-app failure's
+cause remains unresolved. Added deep-link UI test compiled in the device test build,
+not executed because user redirected to mixed phones.
+
+Actual mixed test used the visible iPhone coordinator through debug commands and the
+existing Android production-service fixture (singleton service used by MainActivity):
+
+```sh
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 66180DLKX006ND shell am instrument -w -r -e class com.aessam.comeoverhere.NearbyLiveSessionTest -e nearbyRole guide -e nearbyRoomName Live-Android-iPhone-1838 com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner
+# iPhone debug: discovery bluetooth=true aware=false; dismiss; join discovered UUID
+# 0A1AD3DC-8E99-4AC6-A3DF-F9E6CF2BA0DF; watch real status.
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 66180DLKX006ND shell am instrument -w -r -e class com.aessam.comeoverhere.NearbyLiveSessionTest -e nearbyRole guest -e nearbyRoomName Live-iPhone-Android-1840 com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner
+# iPhone debug: create name=Live-iPhone-Android-1840; wait audio=running;
+# feature name=pointer; watch audioReadyGuests. End own room after the guest finishes.
+```
+
+Android-guide result FAIL1/1: iPhone found the room over Bluetooth but reported connection
+closed before admission; guide timed out waiting for audio-ready. Logs
+`/tmp/GetOverHere-visible-android-guide-20260910.log` and
+`/tmp/GetOverHere-visible-iphone-guest-20260910.jsonl`.
+
+iPhone-guide result PASS1/1 in11.881s. Android asserted Bluetooth route with no LAN address,
+authenticated live playback, received Pointer state, then five one-second positive
+renderer deltas totaling160,048 PCM bytes in5,008ms (threshold128,000). iPhone status
+recorded audioReadyGuests=1. Logs `/tmp/GetOverHere-visible-android-guest-20260910.log`,
+`/tmp/GetOverHere-visible-android-cadence-20260910.log`,
+`/tmp/GetOverHere-visible-iphone-guide-20260910.jsonl`.
+This is production microphone/decoder/renderer cadence, not acoustic proof or group scale.
+Aware -11992 is still reported independently; mixed Aware is not claimed.
+
+Cleanup verified: iPhone activeRoom empty, audio idle, original discovery false/false;
+Android fixtures completed their finally teardown. No force-stops outside the explicitly
+approved iPhone relaunch, no radio/credential/router changes. Next: separate Android's
+metadata endpoint from admission and retest Android-guide first, preserving the passing
+iPhone-guide baseline. Do not expand debugger scope.
+
+## 2026-09-10 19:41 — normal router-free UI and three-phone transport benchmark
+
+Devices: iPhone12mini `00008101-000C690C3A30001E`, iOS26.5.2; Pixel11Pro
+`66180DLKX006ND` and Pixel7 `2A111FDH2007A1`, both Android17/API37. Xcode27.
+User forgot the iPhone Wi-Fi network. USB access persisted; agent did not modify radios.
+
+Superseding earlier failures: GOL2 separates metadata/admission endpoints; iPhone
+repeated Create/End reproduced bind errno48 and passed five UI cycles after synchronous
+listener retirement. Artifacts `/tmp/GetOverHere-repeat-guide-errno.log` (failed),
+`/tmp/GetOverHere-repeat-guide-fixed.log` (passed). Normal mixed UI passed both guide
+roles, then the final Android-guide rerun joined but stalled at Waiting for Audio.
+Android logs showed repeated native Opus encoder recreation; not fixed or diagnosed
+from those logs alone. After forgetting Wi-Fi, both normal UI roles passed again:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/verify_mixed_normal_ui.py 00008101-000C690C3A30001E 66180DLKX006ND /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --ios-role guest
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/verify_mixed_normal_ui.py 00008101-000C690C3A30001E 66180DLKX006ND /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun --ios-role guide
+```
+
+Logs `/tmp/GetOverHere-no-ap-guest.log` and `/tmp/GetOverHere-no-ap-guide.log`, both PASS.
+Their actual normal-UI xcresults and Android logs are in system-temp directories
+`GetOverHereNormalUI-7qjtk44m` and `GetOverHereNormalUI-_h_rr_y3`.
+
+Speed request: added test-only GBB1 to both test targets, through native Bluetooth and
+guide loopback adapters. First iOS selector ran zero tests; rejected. Corrected `()`
+selectors passed actual protocol smoke1/1 and all physical tests. Android loopback
+smoke1/1 passed before radio tests. Mixed16KiB pilot passed, followed by seven64KiB
+Bluetooth configurations: four mixed role orientations, both Android role orientations,
+and one iPhone serving two Androids with independent trial advancement.
+
+Exact commands, OS/build hashes, limitations, per-transfer measurements, and raw RTT
+samples are committed under `benchmarks/2026-09-10/`. Main commands:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer python3 scripts/benchmark_three_phones.py --ios 00008101-000C690C3A30001E --android 66180DLKX006ND 2A111FDH2007A1 --manifest /tmp/GetOverHereDebugApp20260910/Build/Products/GetOverHere_GetOverHere_iphoneos27.0-arm64.xctestrun
+python3 scripts/benchmark_android_bluetooth.py --guide 66180DLKX006ND --guest 2A111FDH2007A1
+python3 scripts/benchmark_android_aware.py --guide 66180DLKX006ND --guest 2A111FDH2007A1 --profile tiny --millis 3000 --rounds 3 --reuse-installed
+python3 scripts/benchmark_android_aware.py --guide 66180DLKX006ND --guest 2A111FDH2007A1 --millis 5000 --rounds 3 --reuse-installed
+```
+
+All completed. Matrix `/tmp/GetOverHereThreePhones.t3nde1f7`, Android BLE
+`/tmp/GetOverHereAndroidBluetoothSpeed.1c0rrfh2`, Aware tiny
+`/tmp/GetOverHereAwareBenchmark.zicic5jv`, repeated bulk
+`/tmp/GetOverHereAwareBenchmark.fg9h6qy1`. Existing emulator protocol gates passed before
+each Aware profile. Initial one-round Aware pilot retained separately; its test-APK
+manifest predates a concurrent local test build, so repeated runs explicitly verified
+installed hashes. Final benchmarks did not overlap radio experiments on a device.
+
+Final regression command: `xcodebuild ... -destination platform=iOS\ Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4 -parallel-testing-enabled NO -resultBundlePath /tmp/GetOverHere-benchmark-final-regression.xcresult -only-testing:GetOverHereTests/RoomAdmissionTransportTests -only-testing:GetOverHereTests/ChannelServiceLifecycleTests '-only-testing:GetOverHereTests/BluetoothSpeedTests/protocolSmoke()' test`.
+Actual xcresult:45passed/0failed/0skipped. Android `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' Android/gradlew -p Android :tour-session-core:test :app:testDebugUnitTest`
+returned BUILD SUCCESSFUL with unchanged tasks UP-TO-DATE; verified XML reports76core
+and171app tests, zero failures/errors/skips. These are regression gates, not acoustic,
+locked-phone or group audio qualification. Each radio fixture closes its owned streams
+and stops its radio owner in teardown; the user network was not restored or changed.
+
+## 2026-09-11 — direct iPhone/Pixel USB NCM connectivity
+
+User enabled wireless debugging on both Pixels, then directly cabled Pixel11Pro to
+an iPhone. Wireless ADB verified at192.168.1.17:33101 and192.168.1.165:42369.
+USB descriptors identified the attached iPhone serial as00008150001208901AC0401C,
+not the12mini used in the previous day's benchmarks.
+
+Initial state: Pixel data_role=host, detected Apple device1452:4776, configurations
+including PTP and Apple USB Ethernet, but no USB network interface. Descriptor presence
+was not treated as connectivity. Sysfs configuration reads returned Permission denied;
+no root, private protocol implementation or forced driver binding was attempted.
+
+User then selected the connected device as USB controller and enabled Pixel USB
+tethering. Read-only observations: data_role=device, current_mode=ufp, connected=true,
+configured=true, current_functions=0x400, ncm0 UP at10.255.230.95/24, peer10.255.230.7.
+The older sys.usb.config property still reported none and sys.usb.state was empty;
+these properties were not authoritative for the active HAL-managed configuration.
+
+Exact packet check via existing wireless ADB:
+
+```sh
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 192.168.1.17:33101 shell ping -I ncm0 -c 5 -W 2 10.255.230.7
+/Users/aessam/Library/Android/sdk/platform-tools/adb -s 192.168.1.17:33101 shell ip neigh show dev ncm0
+```
+
+Result:5 transmitted,5 received,0% loss; RTT min/avg/max/mdev
+2.257/2.650/3.423/0.409ms. IPv4 neighbor REACHABLE on ncm0.
+Explicit interface selection prevents Wi-Fi from supplying this pass. This verifies
+a direct USB IP path on this pair, not TCP/UDP application throughput, tour audio,
+Wi-Fi Aware concurrency, offline tethering prerequisites or locked endurance.
+Tethering remains in the state enabled by the user; agent changed no USB/radio settings.
+
+## 2026-09-11 — two-hub implementation preflight and shared contracts
+
+Approved detailed plan committed with USB evidence as18d0c46. User chose either
+guide orientation, companion screen-awake acceptable, no audience relays, and a
+physical qualified capacity even if below30. ADR-069/GatewayImplementationPlan.md.
+
+Read-only preflight: `adb devices -l` listed only192.168.1.165:42369 offline;
+`adb mdns services` found none. Explicit `adb connect` to the two previously
+authorized endpoints192.168.1.17:33101 and192.168.1.165:42369 both timed out.
+`xcrun devicectl list devices` reported iPhone17ProMax paired/available,12mini
+unavailable and iPhone17Pro simulator connected. No phone/router/radio settings
+changed. Physical USB+radio coexistence is NOT RUN; user notification sent.
+
+Shared contracts: `swift test --package-path Packages/TourSessionCore --filter
+Gateway` first failed one expected-size assertion (expected171, encoded172 for
+the12-byte test address). Corrected the fixture arithmetic, not the wire format;
+rerun passed10 tests including five parameterized lane cases, truncation, QR,
+expiry,100 deterministic descriptor roundtrips and local dwell tests. The earlier
+compile-only invocation before the new test file existed selected zero tests and
+is NOT counted as verification. Full-suite first invocation hit compiler-cache
+sandbox permissions; rerun uses approved standard SwiftPM cache access with log
+`/tmp/GetOverHereGatewayCore.log`. Integration and physical gates remain pending.
+
+Full shared-core reruns: `swift test --package-path Packages/TourSessionCore`
+passed81 tests in13 suites, including the new gateway contracts. Final invocation
+after the descriptor-acknowledgement constant used
+`/tmp/GetOverHereGatewayCore-final.log` and passed again. Actual built Swift/Kotlin
+CLIs passed `scripts/verify_gateway_protocol.py`:262/262 roundtrip/rejection cases,
+ten exact fixture lines,zero skipped. Raw cases are retained in
+`benchmarks/2026-09-11-gateway-software/protocol.json`.
+
+Baseline CLI security regressions run against those same binaries:
+`verify_room_admission.py`:8/8 real exchanges;
+`verify_room_admission_v2.py`:8 exchanges+8 explicit rejections;
+`verify_guide_signatures.py`:8/8 signatures each direction with changed/truncated
+packets rejected. All exited0. These are core compatibility gates, not native
+transport or physical audience evidence.
+
+New test-only `Packages/GatewayTLSFixture` build initially failed explicit-self
+closure capture requirements. Fixed the fixture captures; rerun passed. Its
+executable uses production LocalLinkSecurity identity/TLS options, with an
+independent Android instrumentation fixture using production HubIdentity. The
+planned ADB tunnels are explicitly not USB Ethernet evidence.
+
+Read-only device recheck during implementation still found no physical Android
+device; only emulator-5554. iPhone17ProMax remained paired/available. No physical
+radio or network settings changed.
+
+Cross-runtime TLS: `python3 scripts/verify_gateway_tls_interop.py --serial
+emulator-5554 --adb /Users/aessam/Library/Android/sdk/platform-tools/adb --binary
+Packages/GatewayTLSFixture/.build/out/Products/Debug/gateway-tls-fixture --output
+/tmp/GetOverHereGatewayTLSInterop-1` exited0. Apple-server/Android-client and
+Android-server/Apple-client both passed exactly one exchange test,65,536 bytes
+round-tripped and verified by each endpoint. No skipped cases. Fixture identities
+and only the created ADB tunnels were removed. Retained results/logs:
+`benchmarks/2026-09-11-gateway-software/tls-interop/`. This uses production
+LocalLinkSecurity/HubIdentity but a test-only payload protocol over ADB; physical
+USB Ethernet, radios and tour audio are NOT RUN by this fixture.
+
+Full shared regression completed with exit0:
+
+```sh
+GOH_ANDROID_JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' GOH_SWIFT_SCRATCH='/tmp/GetOverHereGatewayParitySwift' bash scripts/verify_core_parity.sh
+```
+
+Log `/tmp/GetOverHereGatewayFullParity.log` ends `Core parity passed`, including
+the eight v1 exchanges, eight v2 exchanges/eight rejections, both signature
+directions and262 gateway cases. This uses real compiled Swift/Kotlin programs.
+
+Physical iPhone preflight attempted the public read-only process query:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer xcrun devicectl device info processes --device 00008150-001208901AC0401C --search GetOverHere --timeout 20 --json-output /tmp/GetOverHereGateway-iPhone-processes.json
+```
+
+It failed with CoreDevice4000 / NWError54 connection reset despite the device
+inventory showing paired/available. No install, relaunch or radio change followed.
+Only the owned Android emulator was accessible. Paired inventory is not a working
+device-control connection; the physical gateway matrix stays NOT RUN.
+
+The first integrated gate invoked `scripts/verify_tour_session.sh` with the current
+Xcode, `/tmp/GetOverHereGatewayParitySwift`,
+`/tmp/GetOverHereTourSessionLinkSecurity`, simulator17Pro and
+`/tmp/GetOverHereGatewayIntegratedDerived`. It passed the core/security/parity
+stages but failed phase5's existing privacy audit: three new iOS log statements
+included `error.localizedDescription`. The following Android audit also identifies
+new raw exception logging. Preserve the guard, redact production log text to
+error type/numeric code and retain actionable on-screen errors. The first run's
+log is `/tmp/GetOverHereGatewayIntegratedGate.log`; this is a failed gate, not a
+complete pass. Final rerun is required after those changes.
+
+Native Android final run1: `/tmp/GetOverHereGatewayNativeFinal-1.log` executed8
+cases;7 passed,1 failed. Mutual TLS/security4, independent admission/flood1,
+real-TLS address-family replacement after enrollment expiry1 and stopped-descriptor
+ownership1 passed. The independent JmDNS browser did not resolve the explicit
+emulator eth0 advertiser within8s. Advertisement readiness alone is not discovery
+evidence. Public multicast delivery is being isolated before attributing the
+failure to the emulator or changing production behavior; this failure is retained.
+
+The second integrated run, `/tmp/GetOverHereGatewayIntegratedGate-2.log`, passed
+the privacy guards but failed Android lint: six calls in the new Aware branch
+wrapper required its existing API34 factory boundary to be declared on the class,
+and GatewayScreen cast LocalContext to Activity instead of using LocalActivity.
+Both were corrected; the guard and app OS floor were retained. The Android owner's
+subsequent lint/unit/debug/test/release build passed. A complete nine-stage rerun
+is still required after the final guide-branch ownership correction.
+
+Native discovery isolation, `/tmp/GetOverHereGatewayMulticastIsolation-1.log`:
+an exact randomized multicast payload looped back on emulator eth0 successfully.
+JmDNS contained the expected PTR/SRV/TXT/A records and public collector data, but
+the fixture's synchronous getServiceInfo call returned null. The fixture now
+uses the same public ServiceListener.serviceResolved callback as production,
+with the unchanged eight-second bound and exact instance/type/address/port
+assertions. `/tmp/GetOverHereGatewayNativeFinal-2.log` passed9/9, zero skipped:
+TLS identity4, independent forwarded admission/flood1, recovery/discovery4.
+No production fallback, custom DNS parser or increased timeout was introduced.
+Actual USB multicast discovery remains NOT RUN.
+
+Final coordinator review found Android guide pairing did not enable the original
+guide's local Aware branch when its preference started false. Separate companion
+discovery suppression also failed to restore previous preferences. The new
+coordinator regressions ran11 cases with2 failures before the correction, then
+11/11 passed. Guide pairing now owns the original service's Aware preference;
+removing the companion keeps that local branch until the tour ends. Companion
+stop restores only its owned discovery preferences. Diagnostics must observe the
+guide's original branch, not the companion proxy branch. This is software proof;
+native radio coexistence remains a physical gate.
+
+## 2026-09-11 — final coordinated gateway software candidate
+
+Source frozen after original Android guide-Aware ownership/diagnostics fixes.
+The final Android coordinator suite contains13 tests; all app JVM suites total
+198 tests across37 suites, zero failures/skips. Native candidate rerun passed9/9
+in12.774s. Retained current and earlier failed evidence is under
+`benchmarks/2026-09-11-gateway-software/android/`; earlier193-test candidates are
+explicitly historical.
+
+Final full-gate command, exit0:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_XCODE_DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer GOH_ANDROID_JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' GOH_SWIFT_SCRATCH=/tmp/GetOverHereGatewayParitySwift GOH_LINK_SECURITY_SCRATCH=/tmp/GetOverHereTourSessionLinkSecurity GOH_IOS_DESTINATION='platform=iOS Simulator,id=5CCA0393-1F29-47F3-AC23-CBE1C99533F4' GOH_IOS_DERIVED_DATA=/tmp/GetOverHereGatewayIntegratedDerived bash scripts/verify_tour_session.sh
+```
+
+All9 stages passed. Log `/tmp/GetOverHereGatewayIntegratedGate-3.log` is retained
+as `benchmarks/2026-09-11-gateway-software/integrated-final.log`. Swift core81,
+Kotlin core82, LocalLinkSecurity4 definitions/8 cases, gateway parity262 and
+host gateway tools36 pass. Android app198 pass. Xcode printed three unusual
+compiler-driver exit0/no-output diagnostics, but its completed result bundle and
+enclosing command both pass; no speculative code change followed. Public
+xcresult summary reports196 passed definitions/242 actual runs, zero failures,
+four skipped physical Bluetooth fixtures. Simulator device17Pro, iOS27.0/24A434;
+result `/tmp/GetOverHereGatewayIntegratedDerived/Logs/Test/Test-GetOverHere-2026.09.11_20-01-25--0700.xcresult`.
+Exact summary and skipped names are retained in the software report. No skipped
+fixture counts as physical evidence.
+
+On the final installed Android APK pair: production Companion setup UI1/1,
+native authenticated debug/cleanup5/5, visible consent/client/recorder22/22.
+The recorder collected11 observations over10,040ms from the actual guide service;
+there were no listeners, so it does not establish delivered audio. Permissions,
+credentials, scoped forwards and awake ownership were restored. Evidence is in
+`gateway-setup-ui/` and `debug-control/coordinated-candidate/` under the report.
+
+Final cross-runtime TLS command, exit0:
+
+```sh
+python3 scripts/verify_gateway_tls_interop.py --serial emulator-5554 --adb /Users/aessam/Library/Android/sdk/platform-tools/adb --binary Packages/GatewayTLSFixture/.build/out/Products/Debug/gateway-tls-fixture --apk Android/app/build/outputs/apk/debug/app-debug.apk --test-apk Android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk --output /tmp/GetOverHereGatewayTLSInterop-final
+```
+
+Both server-role cases passed,65,536 exact bytes each. The controller checked
+installed APK SHA256 against the selected artifacts before either case:
+app33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a;
+testee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c.
+Apple fixture SHA15076c6f14422fa97902305f34574171c8e9144ceec420ca46c0bc85c2d41af5.
+Both endpoints verified payload SHA4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2.
+Only test identities and the two owned ADB tunnels were removed. Retained
+`tls-interop-final/` includes preflight/result/native logs; whitespace in archived
+console logs is normalized. This is Mac Network.framework/AndroidKeyStore TLS
+over ADB, not an iPhone/USB/radio/codec test.
+
+Independent final artifact checks exited0:
+
+```sh
+python3 scripts/verify_debug_control_release.py /tmp/GetOverHereGatewayIOSRelease/Build/Products/Release-iphoneos/GetOverHere.app
+python3 scripts/verify_debug_control_release.py Android/app/build/outputs/apk/release/app-release-unsigned.apk
+codesign --verify --deep --strict /tmp/GetOverHereGatewayIOSDevice/Build/Products/Debug-iphoneos/GetOverHere.app
+```
+
+Both Release artifacts exclude debug control; the retained signed iPhone build
+passes signature integrity. No phone install or radio change was performed.
+Read-only final normal-UI integration review found no additional blocking guide,
+companion or listener wiring gap. Physical A13–A20 remain NOT RUN until the user
+returns with the devices; no group cap, acoustic or locked-operation claim is made.
+
+Cleanup: selected emulator5554 forward/reverse inventories were empty after the
+final TLS fixture. `adb -s emulator-5554 emu kill` stopped only the emulator this
+session launched; its owning process exited0. Retained builds/evidence were not
+deleted. Existing iOS Simulator and physical phone/radio state were not changed
+by this cleanup. Final `git diff --check` passed.
+
+## 2026-09-15 — independent gateway security/code review, devices unavailable
+
+Reviewed unchanged production HEAD ec1b0b8 and supplied F1–F10. Added isolated
+review-only test sources and a runner; no production source/configuration edits,
+phone queries/installs/radio changes, commit or push. Additional source findings:
+F11 per-read timeout is not an absolute pre-authentication deadline; F12 local
+socket is not cleaned if the accepted-reply write throws before its inner finally.
+Neither additional finding is labeled an executed native exploit.
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer bash scripts/review/gateway/run.sh
+```
+
+Exit1, with actual test failures rather than build/environment failures. Evidence
+directory `/tmp/GetOverHereSecurityReview.RpOF5q`: Swift1 selected/1 failed with
+`.expired`; Android3 selected/3 failed (same skew plus terminal and stalled
+encoder replacement). Fixed input: offer issued1,000,000ms, expiry1,120,000ms,
+scan after3s with companion10s behind gives993,000ms and127,000ms remaining.
+Encoder fixtures drive24 actual processor submissions over6s of virtual monotonic
+time; no physical/native codec quality is claimed. The codec provider is an
+explicit fault fixture and does not replace production capture-owner code.
+
+Independent baseline reruns, both exit0:
+
+```sh
+DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer swift test --disable-sandbox --package-path Packages/LocalLinkSecurity --scratch-path /tmp/GetOverHereTourSessionLinkSecurity
+# Working directory: Android
+JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew :app:testDebugUnitTest :tour-session-core:test
+```
+
+Normal Android app198 tests/37 suites passed without review injection. Kotlin
+core was UP-TO-DATE, not newly executed. LocalLinkSecurity4 definitions/8 cases
+passed, including actual valid TLS and wrong/missing/expired peer rejection.
+Console logs retained in `benchmarks/2026-09-15-security-review/*.txt`.
+The full review records corrections to the supplied review's scope/severity,
+dependency advisory sources, no-go verdict and software-versus-physical work.
+All commands completed; the ephemeral TLS fixture listeners were closed and no
+emulators were started for this review.
+
+## 2026-09-15 — implement review repairs without physical devices
+
+User authorized completing software and using all available host/simulator/emulator
+tools while phones are absent. Implemented F1–F12, preserving wire formats and the
+two-hub scope. No physical devices queried or installed. Full command manifest,
+counts, source disposition and retained raw output are in
+`benchmarks/2026-09-15-security-review/README.md`.
+
+Executed `DEVELOPER_DIR=/Users/aessam/Downloads/Xcode.app/Contents/Developer bash
+scripts/review/gateway/run.sh`: final output `/tmp/GetOverHereSecurityReview.017tuj`,
+exit0, Swift1/Android3 original regressions green. Normal source-set restoration:
+from Android, `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home'
+./gradlew :app:testDebugUnitTest :tour-session-core:test`; final log
+`/tmp/GetOverHereGatewayReview-final-units.log`, app205/core83, no failures/skips.
+
+Full `scripts/verify_tour_session.sh` with the README's Xcode/Java/scratch/destination
+environment passed all9 stages: `/tmp/GetOverHereGatewayReview-full-gate-2.log`.
+Swift core84; LocalLinkSecurity6 definitions/10 cases; wire262 cases/10 exact
+fixtures; host tools12+36; serial iOS201 definitions/248 passing runs/four explicit
+hardware-only skips. Final xcresult and two passing UI tests are recorded in the
+README and exported JSON summaries. UI command used `-parallel-testing-enabled NO`,
+`-collect-test-diagnostics never`, and selected gateway setup/deeplink tests.
+
+Retained unsuccessful attempts: `/tmp/GetOverHereGatewayReview-1.log` from the
+ad-hoc parallel run, canceled with SIGINT then SIGTERM after it stalled; first
+serial gate `/tmp/GetOverHereGatewayReview-full-gate.log` failed one pre-skew expiry
+assertion. It now checks rejection beyond the bounded allowance. No failed run is
+counted as passing; final full serial gate exited0.
+
+Started only local AVD GetOverHere_API_36, emulator-5554, no-window/no-audio,
+no-snapshot-save. Installed exact current Debug/test APKs and ran native gateway
+faults12/12, codec/reconnect8/8, setup/debug UI6/6. Scoped native tests clean their
+generated KeyStore aliases. Real Mac↔emulator TLS ran both server roles with
+65,536 byte-identical round trips; `tls-interop.json` retains SHA256s. ADB tunnels
+were owned/closed by the runner. Visible consent/client/recorder smoke passed22
+checks and reported no cleanup errors; it closed the room/endpoint and restored
+the microphone permission it granted. None of this proves USB/radio/acoustics.
+
+Built Android Release and generic iOS Release; `scripts/verify_debug_control_release.py`
+passes both. Built signed generic iPhone Debug without a phone; `codesign --verify
+--deep --strict /tmp/GetOverHereGatewayReviewDevice/Build/Products/Debug-iphoneos/GetOverHere.app`
+exited0. Artifact hashes and paths are retained in the evidence README. Existing
+compiler/deprecation warnings remain; no dependency update or broad cleanup made.
+After all tests, stopped the task-owned emulator with `adb -s emulator-5554 emu kill`
+(OK). Moved only the generated untracked `Android/.kotlin` session-marker directory
+to `/tmp/GetOverHereGatewayReview-kotlin-sessions-20260915`. No user data deleted.
+Stable tag verified unchanged at `59b0402c91cfabb3eb839800b2b8521be90854e0`.
+
+## 2026-09-19 — Physical Aware component qualification and current-device setup
+
+Revision72402535cdb4216298eeda36f4307ac4c684d9c7; existing iOS project/plist
+permission-description edits preserved. Xcode now `/Applications/Xcode.app`.
+Pixel7 `2A111FDH2007A1`, Pixel11Pro `66180DLKX006ND`, both Android17/API37,
+physical, Wi-Fi enabled and infrastructure-associated. iPhone13Pro
+`00008110-000528410CF8801E`, iOS27.0/24A437, physical, Developer Mode enabled.
+
+Builds passed:
+`JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./Android/gradlew -p Android :app:assembleDebug :app:assembleDebugAndroidTest`
+and `xcodebuild -project iOS/GetOverHere.xcodeproj -scheme GetOverHere -configuration Debug -destination 'id=00008110-000528410CF8801E' -derivedDataPath /tmp/GetOverHere-20260919-device -allowProvisioningUpdates build`.
+Logs `/tmp/GetOverHere-20260919-{android,ios}-build.log`. Installed current
+Android Debug/test APKs and signed iPhone Debug app. Generated iPhone plist
+contains microphone and local-network descriptions from the user's build settings.
+
+Physical fixture commands:
+`GOH_NEARBY_GUIDE=2A111FDH2007A1 GOH_NEARBY_GUEST=66180DLKX006ND GOH_NEARBY_TRANSPORT=aware bash scripts/verify_nearby_physical_android.sh`
+and reverse with `GOH_NEARBY_GUIDE=66180DLKX006ND GOH_NEARBY_GUEST=2A111FDH2007A1 GOH_NEARBY_TRANSPORT=aware GOH_NEARBY_REUSE_INSTALLED=1`.
+Both exit0, both roles `OK (1 test)`. Forward guide74.228s/guest14.785s;
+reverse guide70.956s/guest13.394s. Raw artifacts
+`/tmp/GetOverHereNearbyPhysical.aZw9DD` and `/tmp/GetOverHereNearbyPhysical.DzlTnu`;
+wrapper logs `/tmp/GetOverHere-20260919-aware-{forward,reverse}.log`.
+Installed APK/test hashes verified in reverse preflight. Actual Aware fixture,
+not LAN fallback: locked admission, pointer decode,512-byte asset equality and
+100 decoded non-silent audio frames. Generated440Hz input, not microphone or
+acoustic proof. No lock/endurance/group-capacity assertion.
+
+Authenticated app commands separately exercised iPhone create, settled audio
+RUNNING, next-slide request, pointer selection, leave; Pixel7 create settled
+RUNNING in automatic and strict-Aware modes, then leave. No listeners attached.
+Earlier Android create logged an IllegalStateException and rolled back; not
+reproduced on subsequent attempts and not claimed fixed. Debug commands rejected
+when screens timed out; Pixel11Pro final endpoint request returned TLS EOF.
+These require follow-up, not speculative repair.
+
+Read-only network inventory found no USB network on either Pixel. Secure
+wireless ADB connection to Pixel11Pro `192.168.1.17:43419` succeeded. User asked
+to move the iPhone cable directly to Pixel11Pro and enable USB tethering before
+full three-phone gateway testing. iPhone management network192.168.3.175 is not
+gateway-route evidence. All test-created tours ended. No source repair, commit,
+push, tag change, paid resource or shared-server restart.
+
+September19 cable follow-up: after the user's connection change, exact ADB
+inventory retains Pixel7 over Mac USB and Pixel11Pro over TLS wireless ADB
+192.168.1.17:43419. `adb -s 192.168.1.17:43419 shell dumpsys usb` identifies
+Apple Inc. iPhone, vendor1452/product4776, Android data_role=host,
+current_mode=dfp, can_change_data_role=false. `ip -brief address` has no wired
+network. Opened normal `android.settings.TETHER_SETTINGS`; UIAutomator confirms
+USB tethering enabled=false (unavailable), not merely an unchecked switch.
+No tethering/radio setting changed. Pixel7 also has no wired network.
+iPhone devicectl state unavailable; previous management endpoint returned NWError.
+Gateway admission/audio not attempted without a real wired IP link. Cable/adapter
+topology needs clarification; prior USB qualification must not be extrapolated
+to this iPhone13Pro Lightning connection.
+
+## 2026-09-23 — Issue #1 Android encoder recovery, device-free
+
+Environment: macOS, Android Studio bundled JBR, Gradle wrapper, branch
+`fix/deep-dive-2026-09-02`, baseline `b820aaf`. No devices queried or used.
+
+Command (with `JAVA_HOME=/Applications/Android Studio.app/Contents/jbr/Contents/Home`):
+`./Android/gradlew -p Android :app:testDebugUnitTest --tests '*RealtimeCaptureInboxTest.replacementContinuesAuthenticatedGuestPlayoutWithoutResettingTimeline'`.
+Before fix: one test failed at the real guest playout offer, expected ACCEPTED,
+actual DUPLICATE. Signature verification and AEAD opening had succeeded.
+Log: `/tmp/goh-issue1-red.log`.
+
+After fix: `./Android/gradlew -p Android :app:testDebugUnitTest :tour-session-core:test`.
+Build successful; app XML: 206 tests, zero failures/errors/skips. Core task was
+up-to-date, with cached XML: 83 tests, zero failures/errors/skips.
+Log: `/tmp/goh-issue1-green.log`. Independent read-only review found no blocker.
+Native codecs are substituted at the component seam; this does not prove physical
+speech, iOS decoding, radio behavior, or group capacity. Issue #1 remains open.
+
+Targeted mutation command: `bash scripts/verify_audio_recovery_mutation.sh`.
+Baseline passed after rebuilding. An isolated Android source copy reset the
+sequence on encoder retirement; the test failed specifically with ACCEPTED versus
+DUPLICATE, not a compilation failure. One targeted mutant killed; no general
+mutation-coverage claim. Scratch copy removed by the script. Log:
+`/tmp/goh-issue1-mutation.log`.
+
+## 2026-10-03 — Resume investigation and device-free baseline
+
+Inspected clean HEAD `7391db7` on `fix/deep-dive-2026-09-02`, handoff,
+September22 review, and GitHub issues #1–#5. Latest production change remains
+`5c13e79` (September23 encoder recovery); October2 added retained review artifacts.
+No xcodebuild, Swift build or Gradle build was running at initial process inspection.
+No physical devices queried, app source changed, issue updated, commit or push.
+
+Environment: macOS arm64, Xcode27.0/27A266a, Apple Swift6.4.0.34.1,
+Android Studio bundled JBR. All commands below ran from the repository root.
+
+```sh
+env JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./Android/gradlew -p Android :app:testDebugUnitTest :tour-session-core:test --offline --rerun-tasks --no-daemon > /tmp/GetOverHere-audit-20261003-android.log 2>&1
+env CLANG_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-module-cache SWIFT_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-module-cache swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHere-audit-20261003-swift > /tmp/GetOverHere-audit-20261003-swift.log 2>&1
+```
+
+Both exit0. Gradle: BUILD SUCCESSFUL in55s,28/28 tasks executed. Fresh XML:
+Android app206 tests/37 suites, Kotlin core83 tests/13 suites, zero failures,
+errors or skips. The authenticated guest-playout encoder-replacement regression
+passes. Swift core84 tests/13 suites pass. This is a unit/component baseline;
+the full host gate, iOS app suite, native codecs and physical audio were not rerun.
+
+Reexecuted retained FND-2 harness against current `TourSessionCore`:
+
+```sh
+mkdir -p /tmp/GetOverHere-audit-20261003-drift/Sources/drift2
+cp benchmarks/2026-09-22-code-review/repro/jitter-drift/Package.swift /tmp/GetOverHere-audit-20261003-drift/Package.swift
+cp benchmarks/2026-09-22-code-review/repro/jitter-drift/main.swift /tmp/GetOverHere-audit-20261003-drift/Sources/drift2/main.swift
+env CLANG_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-drift-cache SWIFT_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-drift-cache swift run --disable-sandbox --package-path /tmp/GetOverHere-audit-20261003-drift -c release > /tmp/GetOverHere-audit-20261003-drift.log 2>&1
+```
+
+Exit0 means the diagnostic ran, not that audio correctness passed. Four simulated
+hours,720,000 frames per case: +100ppm played229,998, first silence76.7min;
++40ppm played574,998, first silence191.7min; -40ppm played719,998, no post-startup
+silence. These clock skews are model inputs, not measurements of the phones.
+The monotonic-minimum offset remains in both current platform implementations.
+
+`xcrun simctl list devices available -j` confirms the verifier's default
+`iPhone 17 Pro` destination is absent; `iPhone 18 Pro Max` and `iPhone 17` are
+available on iOS27.0, both shut down. No simulator was booted. PDF issue #2 is
+still open; source currently imports/displays image slides, with no native PDF
+import/renderer found. Issue #1's last progress comment identifies Bluetooth-only
+route enforcement and reconnect coverage as the next software slice. The tracker
+keeps physical qualification deferred and USB work paused.
+
+Retained the three console logs above; removed only this investigation's temporary
+Swift build/module caches and copied drift package after collecting results.
+
+## 2026-10-04 — Phase 0 baseline at `7391db7` (`WirelessMegaphonePlan.md`)
+
+Environment: macOS 27, Xcode 27.0 (27A266a) at /Applications/Xcode.app (Xcode-beta
+no longer present), Android Studio JBR. Simulator `iPhone 17`
+5D72BABA-9416-4B7A-ABAA-B0F2628E84EE, iOS 27.0. No devices.
+
+`scripts/verify_tour_session.sh` now resolves `GOH_IOS_DESTINATION` or
+`GOH_IOS_SIMULATOR_NAME` (default `iPhone 17`) and preflights the simulator.
+Negative check: `GOH_IOS_SIMULATOR_NAME='iPhone 99' bash scripts/verify_tour_session.sh`
+exits 1 before step 1 and lists available iPhones.
+
+`bash scripts/verify_tour_session.sh`: steps 1–8 pass. Step 9 built, then failed with
+"Simulator device failed to launch com.aens.GetOverHere. No such process" on a
+cold simulator (exit 65, no test executed). Rerun of step 9 alone after
+`xcrun simctl bootstatus 5D72BABA-… -b`, same xcodebuild flags with
+`-destination 'platform=iOS Simulator,id=5D72BABA-…'`: exit 0, xcresult
+`Test-GetOverHere-2026.10.04_18-14-16--0700.xcresult` Passed, 205 total / 201 passed /
+0 failed / 4 skipped. Phase 1 needs no code: encoder replacement is already bounded and
+reported (see plan).
+
+## 2026-10-04 — Phases 2 and 3 (`WirelessMegaphonePlan.md`)
+
+Environment as the Phase 0 entry. No devices.
+
+FND-2 (`652bcaf`): red/green on both cores. With the original `RealtimeAudioBuffer`
+restored temporarily, `./Android/gradlew -p Android :tour-session-core:test --tests
+'*SessionProtocolTest.jitterBaseline*'` → 2 tests, 2 failed; Swift
+`swift test --filter jitterBaseline` → +200 and +100 ppm cases and the delay-step
+test failed (3 issues), −100 ppm passed. With the fix both pass (Kotlin 0.084 s for
+3×360,000 frames; Swift 0.350 s).
+FND-10 (`652bcaf`): `PlaybackBacklog` unit test passes (16/16 AudioEngine tests).
+The flush inside `AVAudioPlayerNode` is not exercised: simulator playback is unsupported.
+FND-8 deferred: a deeper capture backlog only bursts delayed buffers to guests, whose
+jitter buffer holds 13 frames (260 ms). The proper fix stamps capture time in the tap
+and submits off the main actor.
+
+Full gate at `652bcaf` from a temporary worktree, `GOH_IOS_DESTINATION=…id=5D72BABA…`,
+`GOH_IOS_DERIVED_DATA=/tmp/GetOverHereGateWT`: "Tour session verification passed".
+Swift core 86 tests; iOS xcresult `Test-GetOverHere-2026.10.04_18-21-13--0700`
+Passed 206 / 202 passed / 0 failed / 4 skipped. Worktree removed.
+
+Route policy (`46f6932`): Android `:app:testDebugUnitTest :tour-session-core:test
+:app:assembleDebug` exit 0, app 208 / core 85 tests, zero failures/errors/skips.
+Swift core 86 pass. iOS `NearbySocketBridgeTests` + `ChannelServiceLifecycleTests`:
+60/60 pass. `bash scripts/verify_route_policy_mutation.sh`: baseline pass; mutant
+`lan-admission` killed (timed out waiting for transports: the second gate in
+`tryNextGuestRoute` fails the LAN route); `lan-joinable` killed
+(`expected:<false> but was:<true>`). iOS mutants in a scratch copy (LAN admission
+gate removed; Aware branch policy check removed): both selected tests failed on the
+intended expectations (`["10.0.0.1","127.0.0.1"]`; `.wifiAware`). A first iOS
+mutant run used selectors without `()` and ran zero tests; it was rejected, not counted.
+
+## 2026-10-04 — Phase 4: PDF as page slides (ADR-072)
+
+Fixtures: `swift scripts/make_pdf_fixtures.swift` → `three-pages.pdf` (2,898 B; red portrait,
+green landscape, blue portrait) and `locked.pdf` (2,779 B, `/Encrypt`), byte-identical in
+`iOS/GetOverHereTests/Fixtures/` and `Android/app/src/androidTest/assets/`.
+
+iOS (simulator `iPhone 17` 5D72BABA…, iOS 27.0): `PDFSlideRendererTests` 3/3 pass: sizes
+1236×1600 / 1600×1236 / 1236×1600, center colors per page, identical bytes across two
+renders, locked/truncated/garbage/61-page rejections. `pdfImportBecomesOrderedDeck` passes:
+guide deck SHA-256 order equals page order.
+Android (emulator `GetOverHere_API_36`, Android 16, `ANDROID_SERIAL=emulator-5554`):
+`:app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=…PdfSlideRendererTest`
+3/3 pass with the same size/color/determinism/rejection checks; staged temp PDFs are deleted.
+`TourNavigationTest` 3/3 pass, now asserting the guide's enabled `importPDF` control.
+A first assertion used `performScrollTo` on a non-scrolling layout and failed; replaced with `assertExists`.
+
+Full gate `GOH_IOS_DESTINATION='platform=iOS Simulator,id=5D72BABA-…' bash scripts/verify_tour_session.sh`:
+"Tour session verification passed"; Swift core 86; iOS xcresult
+`Test-GetOverHere-2026.10.04_18-36-28--0700` Passed 213 / 209 / 0 failed / 4 skipped.
+Not verified: system document-picker UI automation; audio/asset coexistence on Bluetooth (moved to Phase 5);
+guest cache size cap/pruning (FND-13 remainder, open). iOS guest cache now excluded from backup (tested).
+
+## 2026-10-04 — Beta distribution readiness (ACT-1, ACT-2)
+
+FND-12: `PrivacyInfo.xcprivacy` now declares System Boot Time `35F9.1`
+(`ProcessInfo.systemUptime`, `UDPAudioPlane.swift:1084`) and File Timestamp `C617.1`
+(`attributesOfItem` size reads of app-container files, `TourAssetCache.swift:169`,
+`TourAssetTransferService.swift:756`). `plutil -lint` OK.
+`xcodebuild -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`:
+exit 0; built app's `PrivacyInfo.xcprivacy` contains both categories; `strings` finds no
+`DebugAppControl`/`debug-keep-awake`. Signed archive/upload not attempted (account action).
+
+Android release signing reads git-ignored `Android/keystore.properties`. Without it,
+`:app:assembleRelease` fails: "Release signing is not configured: create …/keystore.properties".
+`:app:assembleDebug` unaffected. With a throwaway 1-day RSA key in the session scratchpad
+(not committed; properties file moved out of the repo after the build): `app-release.apk`
+62,369,851 B, `apksigner verify` V2 signer CN=Throwaway, not debuggable; app classes in
+classes2.dex (`ChannelService` 45, `PdfSlideRenderer` 7 string hits), `GatewayDebugControl` 0 in all dex files.

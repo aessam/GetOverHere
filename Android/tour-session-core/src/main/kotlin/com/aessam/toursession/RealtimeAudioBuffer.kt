@@ -45,6 +45,16 @@ enum class EncodedAudioFrameOfferResult {
     CAPACITY_EXCEEDED,
 }
 
+/**
+ * One clock tick's playout decision (ADR-045): a playable frame, a single lost
+ * sequence to conceal with one silence frame, or nothing to play yet.
+ */
+sealed class EncodedAudioPlayoutDecision {
+    data class Frame(val frame: SequencedEncodedAudioFrame) : EncodedAudioPlayoutDecision()
+    data class Conceal(val missingSequence: Long) : EncodedAudioPlayoutDecision()
+    data object Wait : EncodedAudioPlayoutDecision()
+}
+
 class EncodedAudioJitterBuffer(
     val targetFrameCount: Int,
     val maximumFrameCount: Int,
@@ -57,7 +67,16 @@ class EncodedAudioJitterBuffer(
     private val frames = sortedMapOf<Long, BufferedFrame>()
     private var expectedSequence: Long? = null
     private var hasStarted = false
-    private var minimumClockOffsetNanoseconds: Long? = null
+    // Windowed minimum clock offset (FND-2): the baseline follows sender/receiver clock drift.
+    // An all-tour minimum expired every frame once a fast guest clock drifted past the lifetime.
+    private var currentWindowMinimumOffset: Long? = null
+    private var previousWindowMinimumOffset: Long? = null
+    private var offsetWindowStartNanoseconds = 0L
+
+    companion object {
+        /** Each window spans this much receiver time; the baseline covers the last one to two windows. */
+        const val CLOCK_OFFSET_WINDOW_NANOSECONDS = 10_000_000_000L
+    }
 
     init {
         if (targetFrameCount <= 0 || maximumFrameCount < targetFrameCount) {
@@ -87,36 +106,66 @@ class EncodedAudioJitterBuffer(
         return EncodedAudioFrameOfferResult.ACCEPTED
     }
 
-    fun popReady(nowNanoseconds: Long): SequencedEncodedAudioFrame? {
+    /**
+     * Clock-driven drain. Called once per negotiated frame duration by the playout timer.
+     * A missing expected sequence while the buffer is below the target depth is concealed
+     * (one silence frame keeps the timeline); at or above the target depth the buffer resyncs
+     * to its oldest frame instead of waiting for a frame that is probably lost.
+     */
+    fun popForPlayout(nowNanoseconds: Long): EncodedAudioPlayoutDecision {
         frames.entries.removeAll { (_, frame) -> frame.localDeadlineNanoseconds <= nowNanoseconds }
-        if (frames.isEmpty()) return null
+        if (frames.isEmpty()) return EncodedAudioPlayoutDecision.Wait
 
         if (!hasStarted) {
-            if (frames.size < targetFrameCount) return null
+            if (frames.size < targetFrameCount) return EncodedAudioPlayoutDecision.Wait
             hasStarted = true
             expectedSequence = frames.firstKey()
         }
 
-        var sequence = expectedSequence ?: return null
-        if (!frames.containsKey(sequence)) {
-            if (frames.size < targetFrameCount) return null
-            sequence = frames.firstKey()
+        val sequence = expectedSequence ?: return EncodedAudioPlayoutDecision.Wait
+        frames.remove(sequence)?.let { buffered ->
+            expectedSequence = if (sequence == Long.MAX_VALUE) null else sequence + 1
+            return EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(sequence, buffered.payload))
         }
-        val buffered = frames.remove(sequence) ?: return null
+        if (frames.size >= targetFrameCount) {
+            val next = frames.firstKey()
+            val buffered = frames.remove(next)
+            if (buffered != null) {
+                expectedSequence = if (next == Long.MAX_VALUE) null else next + 1
+                return EncodedAudioPlayoutDecision.Frame(SequencedEncodedAudioFrame(next, buffered.payload))
+            }
+        }
         expectedSequence = if (sequence == Long.MAX_VALUE) null else sequence + 1
-        return SequencedEncodedAudioFrame(sequence, buffered.payload)
+        return EncodedAudioPlayoutDecision.Conceal(sequence)
     }
 
     fun reset() {
         frames.clear()
         expectedSequence = null
         hasStarted = false
-        minimumClockOffsetNanoseconds = null
+        currentWindowMinimumOffset = null
+        previousWindowMinimumOffset = null
+        offsetWindowStartNanoseconds = 0L
+    }
+
+    private fun clockOffsetBaseline(observedOffset: Long, receivedAtNanoseconds: Long): Long {
+        val current = currentWindowMinimumOffset
+        val elapsed = receivedAtNanoseconds - offsetWindowStartNanoseconds
+        if (current == null || elapsed >= CLOCK_OFFSET_WINDOW_NANOSECONDS) {
+            // A window older than the one just closed is stale after a long silence.
+            previousWindowMinimumOffset = if (current != null && elapsed < 2 * CLOCK_OFFSET_WINDOW_NANOSECONDS) current else null
+            currentWindowMinimumOffset = observedOffset
+            offsetWindowStartNanoseconds = receivedAtNanoseconds
+        } else if (observedOffset < current) {
+            currentWindowMinimumOffset = observedOffset
+        }
+        val windowMinimum = currentWindowMinimumOffset ?: observedOffset
+        return previousWindowMinimumOffset?.let { minOf(it, windowMinimum) } ?: windowMinimum
     }
 
     /**
      * Maps the sender's monotonic capture timeline to receiver-local time.
-     * Delay above the minimum observed clock offset consumes frame lifetime.
+     * Delay above the recent minimum clock offset consumes frame lifetime.
      */
     private fun localDeadline(payload: EncodedAudioFramePayload, receivedAtNanoseconds: Long): Long? {
         if (receivedAtNanoseconds < 0L) return null
@@ -125,8 +174,7 @@ class EncodedAudioJitterBuffer(
         } catch (_: ArithmeticException) {
             return null
         }
-        val baseline = minOf(minimumClockOffsetNanoseconds ?: observedOffset, observedOffset)
-        minimumClockOffsetNanoseconds = baseline
+        val baseline = clockOffsetBaseline(observedOffset, receivedAtNanoseconds)
         val excessDelay = try {
             Math.subtractExact(observedOffset, baseline)
         } catch (_: ArithmeticException) {

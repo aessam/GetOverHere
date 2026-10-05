@@ -1,0 +1,151 @@
+INSTRUMENTATION_STATUS: class=com.aessam.comeoverhere.WiredRecoveryNativeTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.aessam.comeoverhere.WiredRecoveryNativeTest:
+INSTRUMENTATION_STATUS: test=explicitEmulatorEthernetMulticastSocketLoopsBackExactPayload
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.aessam.comeoverhere.WiredRecoveryNativeTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=explicitEmulatorEthernetMulticastSocketLoopsBackExactPayload
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.aessam.comeoverhere.WiredRecoveryNativeTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.aessam.comeoverhere.WiredRecoveryNativeTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalArgumentException: Scoped JmDNS advertiser was ready but browser did not resolve it; errors=[] browser=
+	---- Local Host -----
+	local host info[goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local., eth0:10.0.2.15, DNS: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72 [goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72/10.0.2.15] state: announced task: Renewer(goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72) state: announced]
+	---- Services -----
+	---- Types ----
+		Type: _goh-hub._tcp.local.: no subtypes
+
+	---- cache ----
+
+		name 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.'
+			[IPv4Address@172450655 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name 'goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local.'
+			[IPv4Address@187068844 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name '_goh-hub._tcp.local.'
+			[Pointer@218693237 type: TYPE_PTR index 12, class: CLASS_IN index 1, name: _goh-hub._tcp.local. ttl: '3595/3599' alias: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.']
+
+		name 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.'
+			[Service@232402442 type: TYPE_SRV index 33, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' server: 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.:50104']
+			[Text@94951035 type: TYPE_TXT index 16, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' text: 'v=1']
+	---- Service Collectors ----
+		Service Collector: _goh-hub._tcp.local.:
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued.
+	---- Service Listeners ----
+		Service Listener: _goh-hub._tcp.local.: [[Status for
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued. (goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local., ) ]]
+	at com.aessam.comeoverhere.WiredRecoveryNativeTest.publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses(WiredRecoveryNativeTest.kt:142)
+
+INSTRUMENTATION_STATUS: stream=
+Error in publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses(com.aessam.comeoverhere.WiredRecoveryNativeTest):
+java.lang.IllegalArgumentException: Scoped JmDNS advertiser was ready but browser did not resolve it; errors=[] browser=
+	---- Local Host -----
+	local host info[goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local., eth0:10.0.2.15, DNS: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72 [goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72/10.0.2.15] state: announced task: Renewer(goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72) state: announced]
+	---- Services -----
+	---- Types ----
+		Type: _goh-hub._tcp.local.: no subtypes
+
+	---- cache ----
+
+		name 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.'
+			[IPv4Address@172450655 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name 'goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local.'
+			[IPv4Address@187068844 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name '_goh-hub._tcp.local.'
+			[Pointer@218693237 type: TYPE_PTR index 12, class: CLASS_IN index 1, name: _goh-hub._tcp.local. ttl: '3595/3599' alias: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.']
+
+		name 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.'
+			[Service@232402442 type: TYPE_SRV index 33, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' server: 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.:50104']
+			[Text@94951035 type: TYPE_TXT index 16, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' text: 'v=1']
+	---- Service Collectors ----
+		Service Collector: _goh-hub._tcp.local.:
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued.
+	---- Service Listeners ----
+		Service Listener: _goh-hub._tcp.local.: [[Status for
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued. (goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local., ) ]]
+	at com.aessam.comeoverhere.WiredRecoveryNativeTest.publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses(WiredRecoveryNativeTest.kt:142)
+
+INSTRUMENTATION_STATUS: test=publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 11.283
+There was 1 failure:
+1) publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses(com.aessam.comeoverhere.WiredRecoveryNativeTest)
+java.lang.IllegalArgumentException: Scoped JmDNS advertiser was ready but browser did not resolve it; errors=[] browser=
+	---- Local Host -----
+	local host info[goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local., eth0:10.0.2.15, DNS: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72 [goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72/10.0.2.15] state: announced task: Renewer(goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72) state: announced]
+	---- Services -----
+	---- Types ----
+		Type: _goh-hub._tcp.local.: no subtypes
+
+	---- cache ----
+
+		name 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.'
+			[IPv4Address@172450655 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name 'goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local.'
+			[IPv4Address@187068844 type: TYPE_A index 1, class: CLASS_IN index 1-unique, name: goh-test-browser-3ea76620-c8bf-4a7f-b011-1aed446e7e72.local. ttl: '3595/3600' address: '10.0.2.15']
+
+		name '_goh-hub._tcp.local.'
+			[Pointer@218693237 type: TYPE_PTR index 12, class: CLASS_IN index 1, name: _goh-hub._tcp.local. ttl: '3595/3599' alias: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.']
+
+		name 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.'
+			[Service@232402442 type: TYPE_SRV index 33, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' server: 'goh-hub-2ad0e37a-47ff-4c4e-9f0b-f8b4374b12b6.local.:50104']
+			[Text@94951035 type: TYPE_TXT index 16, class: CLASS_IN index 1-unique, name: goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local. ttl: '3595/3599' text: 'v=1']
+	---- Service Collectors ----
+		Service Collector: _goh-hub._tcp.local.:
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued.
+	---- Service Listeners ----
+		Service Listener: _goh-hub._tcp.local.: [[Status for
+	Type: _goh-hub._tcp.local.
+	Services
+		Service: goh-0d78850c-75b4-4f77-b780-13245fc70855: [ServiceInfoImpl@140442776 name: 'goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local.' address: '/10.0.2.15:50104 ' status: 'NO DNS state: probing 1 task: null' is persistent, has data
+	v: 1]
+	No event queued. (goh-0d78850c-75b4-4f77-b780-13245fc70855._goh-hub._tcp.local., ) ]]
+	at com.aessam.comeoverhere.WiredRecoveryNativeTest.publicJmDNSAdvertisesOnlyExplicitEmulatorEthernetAddressAndCloses(WiredRecoveryNativeTest.kt:142)
+
+FAILURES!!!
+Tests run: 2,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

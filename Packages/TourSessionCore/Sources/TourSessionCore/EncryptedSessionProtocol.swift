@@ -37,7 +37,7 @@ public struct SessionFrameIdentity: Hashable, Sendable, CustomStringConvertible 
 }
 
 public struct SealedSessionEnvelope: Equatable, Sendable {
-    public static let majorVersion: UInt8 = 3
+    public static let majorVersion: UInt8 = 4
     public static let minorVersion: UInt8 = 0
     public static let headerSize = 70
     static let magic = Data("GOH2".utf8)
@@ -115,7 +115,7 @@ public struct SealedSessionEnvelope: Equatable, Sendable {
         }
         let major = try reader.readUInt8()
         guard major == majorVersion else {
-            throw SessionProtocolError.unsupportedMajorVersion(major)
+            throw SessionProtocolError.unsupportedMajorVersion(received: major, supported: majorVersion)
         }
         let minor = try reader.readUInt8()
         let laneRaw = try reader.readUInt8()

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.SignedNativeSessionTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-12T03:00:01.491Z" hostname="redacted" time="0.247">
+  <properties/>
+  <testcase name="admittedGuestWithMediaKeyCannotImpersonateGuideOnNativeSocket" classname="com.aessam.comeoverhere.SignedNativeSessionTest" time="0.055"/>
+  <testcase name="nativeLaneCannotStartWithoutExplicitAuthenticationAndClearErasesAuthority" classname="com.aessam.comeoverhere.SignedNativeSessionTest" time="0.053"/>
+  <testcase name="v2AdmissionBindsSameGuideAcrossAllThreeProductionLanes" classname="com.aessam.comeoverhere.SignedNativeSessionTest" time="0.085"/>
+  <testcase name="bridgeClassifiesSignedAudioWithoutTreatingClassificationAsAuthentication" classname="com.aessam.comeoverhere.SignedNativeSessionTest" time="0.054"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

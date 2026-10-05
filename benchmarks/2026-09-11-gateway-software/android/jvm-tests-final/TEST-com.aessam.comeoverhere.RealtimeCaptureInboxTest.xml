@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aessam.comeoverhere.RealtimeCaptureInboxTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-09-12T03:00:00.567Z" hostname="redacted" time="0.585">
+  <properties/>
+  <testcase name="coldBurstBacklogDrainsExpiredOutputsWithoutFresheningCaptureTimes" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.053"/>
+  <testcase name="delayedNativeOutputIsDiscardedWithoutRestartingWarmEncoder" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.052"/>
+  <testcase name="invalidOrOversizedInputIsRejectedBeforeRetainingOrEncoding" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.054"/>
+  <testcase name="slowEncoderRetainsAtMostEightEntriesAndStopDropsAllOutputs" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.053"/>
+  <testcase name="rejectedNativeInputsDoNotAccumulatePhantomTimestamps" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.054"/>
+  <testcase name="coldStartLongerThanFrameDeadlineDoesNotCauseEndlessEncoderRecreation" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.054"/>
+  <testcase name="staleEncoderOutputIsDroppedAndQueuedExpiredInputIsNeverEncoded" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.052"/>
+  <testcase name="discontinuityPreservesWarmCodecSequenceAndStream" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.054"/>
+  <testcase name="mixedPartialUsesOldOriginOnlyForTheFirstPacket" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.054"/>
+  <testcase name="bufferedNilOutputRetainsOldestSuppliedTimestamp" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.052"/>
+  <testcase name="eightAcceptedColdInputsDrainWithoutAcceptingNinthOrRestartingEncoder" classname="com.aessam.comeoverhere.RealtimeCaptureInboxTest" time="0.053"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

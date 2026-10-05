@@ -1,0 +1,2 @@
+{"event":"ready","pin":"1e0e295a54f69cb44044f73a3037e61d1295833130c3994e9156829a2fdae201","role":"client"}
+{"bytes":65536,"event":"pass","scope":"apple_android_tls_over_adb_only","sha256":"4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2"}

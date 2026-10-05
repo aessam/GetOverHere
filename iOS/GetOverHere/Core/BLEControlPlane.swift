@@ -11,6 +11,9 @@ import os
 /// - Peripheral notifies → remote central via commandNotify characteristic
 @Observable
 final class BLEControlPlane: NSObject, ControlPlane {
+    func setBluetoothDiscoveryMode(_ mode: BluetoothDiscoveryMode) {
+        precondition(mode == .off, "Legacy BLE control is not a room discovery implementation")
+    }
     let localPeer: PeerInfo
     private(set) var connectedPeers: [PeerInfo] = []
 

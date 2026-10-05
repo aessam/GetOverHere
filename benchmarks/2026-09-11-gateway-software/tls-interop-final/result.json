@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "scope": "apple_android_tls_over_adb_only",
+  "serial": "emulator-5554",
+  "passed": 2,
+  "failed": 0,
+  "skipped": 0,
+  "cases": [
+    {
+      "apple_role": "server",
+      "android_role": "client",
+      "status": "PASS",
+      "bytes_roundtripped": 65536,
+      "sha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2"
+    },
+    {
+      "apple_role": "client",
+      "android_role": "server",
+      "status": "PASS",
+      "bytes_roundtripped": 65536,
+      "sha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2"
+    }
+  ],
+  "artifacts": {
+    "apple_fixture_sha256": "15076c6f14422fa97902305f34574171c8e9144ceec420ca46c0bc85c2d41af5",
+    "android_app_sha256": "33e39ffd688c3be3dfea7a2bbd626edbe55b48e5532bde6da4170523cf51f64a",
+    "android_test_sha256": "ee4a6e7bda175c5877ca3edeafc1308fcc8e575c95f9d820ac095b48bf496d9c"
+  }
+}

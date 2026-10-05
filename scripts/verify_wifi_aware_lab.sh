@@ -3,8 +3,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-XCODE_DEVELOPER_DIR="${DEVELOPER_DIR:-/Users/aessam/Downloads/Xcode-beta.app/Contents/Developer}"
-ANDROID_JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo /Users/aessam/Downloads/Xcode-beta.app/Contents/Developer)}}"
+ANDROID_JAVA_HOME="${GOH_ANDROID_JAVA_HOME:-${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}}"
 IOS_DERIVED_DATA="/tmp/GetOverHereWiFiAwareDerived"
 IOS_MODULE_CACHE="/tmp/GetOverHereWiFiAwareModuleCache"
 

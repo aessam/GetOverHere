@@ -21,7 +21,7 @@ struct SessionProtocolTests {
 
         #expect(first == second)
         #expect(first.encode() == second.encode())
-        #expect(first.encode().lowercaseHex == "474f4832030002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050c7f03f42d9429524530ad6b2fdb72701e968b7d8c8b1f471366936db8c9e278bbea83db185892b7bfa27420165562877df907c7b735db72a8949fc7eb4fa46c3014b980fc13031a2c526ef32871ef1ad")
+        #expect(first.encode().lowercaseHex == "474f4832040002010000000000000000002a00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f0f1e2d3c4b5a69788796a5b4c3d2e1f000000050eaa9f8c5e519d5a5fc368f8dbfe6d7e45d70eb96c32dd250490c747f03506c02a397edbef6eb9dfab3c4fd42eca6b528684123fa95a9649bb3e5ad5ee146d2953f14667726159f3dcfd266a5f1d98fa6")
         #expect(first.encode().range(of: Data("Guest 7".utf8)) == nil)
 
         let opener = SessionFrameOpener(credential: credential)
@@ -146,13 +146,221 @@ struct SessionProtocolTests {
         }
     }
 
-    @Test("Encrypted protocol rejects a legacy major explicitly")
-    func encryptedVersionMismatch() throws {
+    @Test("Encrypted protocol rejects legacy majors explicitly", arguments: [SessionEnvelope.majorVersion, UInt8(3)])
+    func encryptedVersionMismatch(legacyMajor: UInt8) throws {
         var bytes = try TourSessionFixtures.encryptedHelloFixture().encode()
-        bytes[4] = SessionEnvelope.majorVersion
-        #expect(throws: SessionProtocolError.unsupportedMajorVersion(SessionEnvelope.majorVersion)) {
+        bytes[4] = legacyMajor
+        #expect(throws: SessionProtocolError.unsupportedMajorVersion(
+            received: legacyMajor,
+            supported: SealedSessionEnvelope.majorVersion
+        )) {
             try SealedSessionEnvelope.decode(bytes)
         }
+    }
+
+    @Test("Plaintext version mismatch carries both majors")
+    func plaintextVersionMismatchCarriesBothMajors() throws {
+        var bytes = try TourSessionFixtures.helloEnvelope().encode()
+        bytes[4] = SealedSessionEnvelope.majorVersion
+        #expect(throws: SessionProtocolError.unsupportedMajorVersion(
+            received: SealedSessionEnvelope.majorVersion,
+            supported: SessionEnvelope.majorVersion
+        )) {
+            try SessionEnvelope.decode(bytes)
+        }
+        #expect(
+            String(describing: SessionProtocolError.unsupportedMajorVersion(received: 3, supported: 2))
+                == "unsupported major version 3; this build requires 2"
+        )
+    }
+
+    @Test("Tour pack ordering is UTF-8 byte order with exact dedup")
+    func tourPackOrderingIsUTF8ByteOrderWithExactDedup() throws {
+        func asset(_ assetID: String, order: UInt32 = 0) throws -> TourAssetDescriptor {
+            try TourAssetDescriptor(
+                assetID: assetID,
+                kind: .slide,
+                sha256: String(repeating: "ab", count: 32),
+                byteLength: 1,
+                order: order,
+                mimeType: "image/jpeg"
+            )
+        }
+        let astral = "plaza-\u{1F5FA}"
+        let fullwidth = "plaza-\u{FF5E}"
+        let tie = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset(astral), asset(fullwidth)]
+        )
+        #expect(tie.assets.map { Array($0.assetID.utf8) } == [Array(fullwidth.utf8), Array(astral.utf8)])
+        let tieHex = try tie.encode().lowercaseHex
+        #expect(tieHex == "876543210fedcba9876543210fedcba90000000000000001000354696500020009706c617a612defbd9e01abababababababababababababababababababababababababababababababab000000000000000100000000000a696d6167652f6a706567000a706c617a612df09f97ba01abababababababababababababababababababababababababababababababab000000000000000100000000000a696d6167652f6a706567")
+        #expect(try TourPackManifestPayload.decode(tie.encode()).encode() == tie.encode())
+
+        let nfc = "caf\u{00E9}"
+        let nfd = "cafe\u{0301}"
+        let canonical = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset(nfc), asset(nfd)]
+        )
+        #expect(canonical.assets.count == 2)
+        #expect(Array(canonical.assets[0].assetID.utf8) == [0x63, 0x61, 0x66, 0x65, 0xCC, 0x81])
+        #expect(try TourPackManifestPayload.decode(canonical.encode()).encode() == canonical.encode())
+
+        let signed = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset("\u{00E9}"), asset("z")]
+        )
+        #expect(signed.assets.map { Array($0.assetID.utf8) } == [[0x7A], [0xC3, 0xA9]])
+        let prefix = try TourPackManifestPayload(
+            packID: TourSessionFixtures.packID,
+            manifestVersion: 1,
+            displayName: "Tie",
+            assets: [asset("ab"), asset("a")]
+        )
+        #expect(prefix.assets.map { Array($0.assetID.utf8) } == [[0x61], [0x61, 0x62]])
+
+        #expect(throws: SessionProtocolError.duplicateAssetID("gate-left")) {
+            try TourPackManifestPayload(
+                packID: TourSessionFixtures.packID,
+                manifestVersion: 1,
+                displayName: "Tie",
+                assets: [asset("gate-left"), asset("gate-left", order: 1)]
+            )
+        }
+    }
+
+    @Test("Slide manifest ordering is UTF-8 byte order with exact dedup")
+    func slideManifestOrderingIsUTF8ByteOrderWithExactDedup() throws {
+        func slide(_ slideID: String, order: UInt32 = 0) throws -> SlideAssetDescriptor {
+            try SlideAssetDescriptor(
+                slideID: slideID,
+                sha256: String(repeating: "ab", count: 32),
+                byteLength: 1,
+                order: order,
+                mimeType: "image/jpeg"
+            )
+        }
+        let astral = "gate-\u{1F5FA}"
+        let fullwidth = "gate-\u{FF5E}"
+        let tie = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide(astral), slide("gate-left", order: 1), slide(fullwidth)]
+        )
+        #expect(tie.assets.map { Array($0.slideID.utf8) } == [
+            Array(fullwidth.utf8),
+            Array(astral.utf8),
+            Array("gate-left".utf8),
+        ])
+        #expect(try AssetManifestPayload.decode(tie.encode()).encode() == tie.encode())
+        #expect(try AssetManifestPayload.decode(tie.encode()).assets.map { Array($0.slideID.utf8) } == [
+            Array(fullwidth.utf8),
+            Array(astral.utf8),
+            Array("gate-left".utf8),
+        ])
+
+        let signed = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide("\u{00E9}"), slide("z")]
+        )
+        #expect(signed.assets.map { Array($0.slideID.utf8) } == [[0x7A], [0xC3, 0xA9]])
+        let prefix = try AssetManifestPayload(
+            deckID: TourSessionFixtures.deckID,
+            manifestVersion: 1,
+            assets: [slide("ab"), slide("a")]
+        )
+        #expect(prefix.assets.map { Array($0.slideID.utf8) } == [[0x61], [0x61, 0x62]])
+
+        #expect(throws: SessionProtocolError.duplicateSlideID("gate-left")) {
+            try AssetManifestPayload(
+                deckID: TourSessionFixtures.deckID,
+                manifestVersion: 1,
+                assets: [slide("gate-left"), slide("gate-left", order: 1)]
+            )
+        }
+    }
+
+    @Test("Handshake fixture is stable")
+    func handshakeFixtureIsStable() throws {
+        let hex = try TourSessionFixtures.handshakeFixtureHex()
+        #expect(hex == "474f4832020102050000000000000000000100112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000000001102000102030405060708090a0b0c0d0e0f|474f4832020102020000000000000000000200112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000000003102202122232425262728292a2b2c2d2e2fc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf|474f4832020102040000000000000000002b00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f00000000")
+        let envelopes = try hex.split(separator: "|").map { try SessionEnvelope.decode(Data(hex: String($0))) }
+        #expect(envelopes.map(\.kind) == [.authChallenge, .welcome, .leave])
+        #expect(envelopes.map(\.senderID) == [
+            TourSessionFixtures.guideID,
+            TourSessionFixtures.guideID,
+            TourSessionFixtures.guestID,
+        ])
+        #expect(envelopes.map(\.sequence) == [1, 2, 43])
+        #expect(try AuthChallengePayload.decode(envelopes[0].payload) == AuthChallengePayload(
+            requestedLane: .control,
+            challengeNonce: Data(0x00 ... 0x0F)
+        ))
+        #expect(try WelcomePayload.decode(envelopes[1].payload) == WelcomePayload(
+            requestedLane: .control,
+            guideNonce: Data(0x20 ... 0x2F),
+            credentialProof: Data(0xC0 ... 0xDF)
+        ))
+        #expect(envelopes[2].payload.isEmpty)
+    }
+
+    @Test("Realtime audio frame seals deterministically")
+    func realtimeAudioFrameSealsDeterministically() throws {
+        let sealed = try TourSessionFixtures.encryptedRealtimeFixture()
+        #expect(sealed.encode().lowercaseHex == "474f4832040001100000000000000000004d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000f1e2d3c4b5a69788796a5b4c3d2e1f00000003adb8e5ed09b1fad51b1b2510ba6717d8d7f6542479429e44ea0349ee37b6ca4c834475e6c0e328fd8a8d8a2b6af8e80b05390378434de32c1675e")
+        #expect(try TourSessionFixtures.encryptedRealtimeFixture().encode() == sealed.encode())
+        let opener = SessionFrameOpener(credential: try TourSessionFixtures.fixtureCredential())
+        let opened = try opener.open(sealed)
+        guard case let .opened(envelope) = opened else {
+            Issue.record("fresh realtime fixture opened as \(opened)")
+            return
+        }
+        #expect(envelope.lane == .realtime)
+        #expect(envelope.kind == .audioFrame)
+        #expect(envelope.sequence == 77)
+        #expect(envelope.senderID == TourSessionFixtures.guideID)
+        #expect(try EncodedAudioFramePayload.decode(envelope.payload) == TourSessionFixtures.encodedAudioFixture())
+    }
+
+    @Test("State fixture describes every control and asset kind")
+    func stateFixtureDescribesEveryControlAndAssetKind() throws {
+        let stateDescription = [
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=presentationSnapshot|sequence=9|stateVersion=7|deckID=12345678-90ab-cdef-1234-567890abcdef|slide=676174652d6c656674|visible=true|effectiveAtMilliseconds=123456",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=bearingSnapshot|sequence=10|stateVersion=8|reference=1|bearingMilliDegrees=271250|visible=true",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=targetSnapshot|sequence=11|stateVersion=9|targetID=abcdef01-2345-6789-abcd-ef0123456789|latitudeE7=371769000|longitudeE7=-35889000|label=4d61696e2047617465|visible=true",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=visualFocusSnapshot|sequence=12|stateVersion=10|mode=2",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=assetManifest|sequence=12|deckID=12345678-90ab-cdef-1234-567890abcdef|manifestVersion=3|assets=676174652d6c656674,000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f,2048,0,696d6167652f6a706567;676174652defbd9e,1212121212121212121212121212121212121212121212121212121212121212,256,0,696d6167652f6a706567;676174652df09f97ba,efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef,512,0,696d6167652f6a706567",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=tourPackManifest|sequence=13|packID=87654321-0fed-cba9-8765-43210fedcba9|manifestVersion=4|displayName=416c68616d627261|assets=616c68616d6272612d6d6170,2,cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd,4096,0,6170706c69636174696f6e2f766e642e706d74696c6573;676174652d6c656674,1,abababababababababababababababababababababababababababababababab,2048,1,696d6167652f6a706567;706c617a612defbd9e,1,1212121212121212121212121212121212121212121212121212121212121212,256,2,696d6167652f6a706567;706c617a612df09f97ba,1,efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef,512,2,696d6167652f6a706567",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=asset|kind=assetRequest|sequence=14|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|offset=1024",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=asset|kind=assetStatus|sequence=15|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|status=1|byteLength=2048|detail=",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=asset|kind=assetChunk|sequence=16|sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f|offset=1024|totalLength=2048|bytes=303132333435363738393a3b3c3d3e3f",
+        ].joined(separator: "\n")
+        #expect(try TourSessionFixtures.describeEnvelopes(TourSessionFixtures.stateFixtureHex()) == stateDescription)
+
+        let handshakeDescription = [
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=authChallenge|sequence=1|requestedLane=2|challengeNonce=000102030405060708090a0b0c0d0e0f",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=ffeeddcc-bbaa-9988-7766-554433221100|lane=control|kind=welcome|sequence=2|requestedLane=2|guideNonce=202122232425262728292a2b2c2d2e2f|credentialProof=c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+            "session=00112233-4455-6677-8899-aabbccddeeff|sender=10213243-5465-7687-98a9-bacbdcedfe0f|lane=control|kind=leave|sequence=43|payloadBytes=0",
+        ].joined(separator: "\n")
+        #expect(try TourSessionFixtures.describeEnvelopes(TourSessionFixtures.handshakeFixtureHex()) == handshakeDescription)
+
+        let audioDescription = "codec=1|sampleRate=16000|channelCount=1|frameDurationMilliseconds=20|bitRate=20000|codecSpecificData=|capturedAtNanoseconds=1000000000|expiresAtNanoseconds=1250000000|encodedBytes=f8fffe010203"
+        #expect(try TourSessionFixtures.describeAudioFrame(TourSessionFixtures.encodedAudioFixture().encode()) == audioDescription)
+
+        let sealedDescription = try TourSessionFixtures.describeSealed(TourSessionFixtures.encryptedRealtimeFixture().encode())
+        #expect(sealedDescription.hasPrefix(
+            "version=\(SealedSessionEnvelope.majorVersion).\(SealedSessionEnvelope.minorVersion)"
+                + "|stream=0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0|"
+        ))
+        #expect(sealedDescription.hasSuffix("|lane=realtime|kind=audioFrame|sequence=77|audio=" + audioDescription))
     }
 
     @Test("Encoded audio frame and codec negotiation are deterministic")
@@ -214,10 +422,10 @@ struct SessionProtocolTests {
         var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 3, maximumFrameCount: 4)
         #expect(jitter.offer(.init(sequence: 11, payload: payload), nowNanoseconds: 200) == .accepted)
         #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .accepted)
-        #expect(jitter.popReady(nowNanoseconds: 200) == nil)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
         #expect(jitter.offer(.init(sequence: 12, payload: payload), nowNanoseconds: 200) == .accepted)
-        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 10)
-        #expect(jitter.popReady(nowNanoseconds: 200)?.sequence == 11)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 10, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 11, payload: payload)))
         #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .duplicate)
 
         var full = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 2)
@@ -228,8 +436,78 @@ struct SessionProtocolTests {
 
         var skewed = try EncodedAudioJitterBuffer(targetFrameCount: 1, maximumFrameCount: 2)
         #expect(skewed.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 10_000) == .accepted)
-        #expect(skewed.popReady(nowNanoseconds: 10_899)?.sequence == 1)
+        #expect(skewed.popForPlayout(nowNanoseconds: 10_899) == .frame(.init(sequence: 1, payload: payload)))
         #expect(skewed.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 11_000) == .expired)
+    }
+
+    /// Offers one 20 ms frame per step and returns the steps that failed to play after warm-up.
+    private func silentFramesUnderClockSkew(
+        ppm: Double, frameCount: Int, extraDelayAfter: Int = .max, extraDelayNanoseconds: UInt64 = 0
+    ) throws -> [Int] {
+        let configuration = try TourSessionFixtures.encodedAudioFixture().configuration
+        var buffer = try EncodedAudioJitterBuffer(targetFrameCount: 3, maximumFrameCount: 13)
+        var silent: [Int] = []
+        for step in 0..<frameCount {
+            let captured = 1_000_000_000 + UInt64(step) * 20_000_000
+            let delay = 5_000_000 + (step >= extraDelayAfter ? extraDelayNanoseconds : 0)
+            let guestNow = UInt64(Double(captured + delay) * (1 + ppm / 1_000_000))
+            let payload = try EncodedAudioFramePayload(
+                configuration: configuration,
+                capturedAtNanoseconds: captured,
+                expiresAtNanoseconds: captured + 500_000_000,
+                encodedBytes: Data([1])
+            )
+            _ = buffer.offer(.init(sequence: UInt64(step), payload: payload), nowNanoseconds: guestNow)
+            if case .frame = buffer.popForPlayout(nowNanoseconds: guestNow) {} else if step > 100 { silent.append(step) }
+        }
+        return silent
+    }
+
+    @Test("Jitter baseline follows guest clock drift for two hours", arguments: [200.0, 100.0, -100.0])
+    func jitterBaselineFollowsClockDrift(ppm: Double) throws {
+        #expect(try silentFramesUnderClockSkew(ppm: ppm, frameCount: 2 * 3600 * 50) == [])
+    }
+
+    @Test("Jitter baseline re-anchors after a sustained delay step")
+    func jitterBaselineReanchorsAfterDelayStep() throws {
+        // A sustained 600 ms extra path delay exceeds the 500 ms lifetime. Frames expire until
+        // the windowed baseline catches up (at most two 10 s windows), then playout resumes.
+        let silent = try silentFramesUnderClockSkew(
+            ppm: 0, frameCount: 3_000, extraDelayAfter: 1_000, extraDelayNanoseconds: 600_000_000
+        )
+        #expect(!silent.isEmpty)
+        #expect((silent.last ?? .max) < 1_000 + 2 * 500 + 50)
+    }
+
+    @Test("Clocked playout conceals a single gap and resyncs to the oldest frame")
+    func clockedPlayoutConcealsGapsAndResyncs() throws {
+        let payload = try EncodedAudioFramePayload(
+            configuration: TourSessionFixtures.encodedAudioFixture().configuration,
+            capturedAtNanoseconds: 100,
+            expiresAtNanoseconds: 1_000,
+            encodedBytes: Data([0x01])
+        )
+        var jitter = try EncodedAudioJitterBuffer(targetFrameCount: 2, maximumFrameCount: 4)
+        // Every pop is at now=200 except the final pop at 2_000, which expires the buffered frame.
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 1, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 2, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 1, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 2, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .wait)
+        #expect(jitter.offer(.init(sequence: 4, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .conceal(missingSequence: 3))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 4, payload: payload)))
+        #expect(jitter.offer(.init(sequence: 10, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.offer(.init(sequence: 11, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 10, payload: payload)))
+        #expect(jitter.popForPlayout(nowNanoseconds: 200) == .frame(.init(sequence: 11, payload: payload)))
+        #expect(jitter.offer(.init(sequence: 12, payload: payload), nowNanoseconds: 200) == .accepted)
+        #expect(jitter.popForPlayout(nowNanoseconds: 2_000) == .wait)
+        #expect(jitter.bufferedFrameCount == 0)
+
+        #expect(try TourSessionFixtures.simulatePlayout() == "w,w,f1,f2,w,c3,f4,f10,f11,w")
     }
 
     @Test("Message kinds cannot enter the wrong lane")
@@ -272,12 +550,13 @@ struct SessionProtocolTests {
     @Test("Authentication proofs are stable and reject another tour code")
     func authenticationProofs() throws {
         #expect(try TourSessionFixtures.authenticationFixtureHex() ==
-            "ae79db230a7910d38a2c941753c3ef29f0e0f74a7879cb5a04d1b450d7a2fb05|f304c62c6966c68cb380753be969776af76fee332070a59a3bf471d159b6b19b")
+            "5f837f1767e9bddd9a65096b1b2f458f1329a4f1c9e9a4d09bb9f15f8225a86d|98950abd4bf6d1e9ef3ea546586c7d027797d5e379aab69f1b99c23067d90a8f")
 
         let correct = try SessionCredential.derive(
             shortCode: "23456-789 ab",
             sessionID: TourSessionFixtures.sessionID
         )
+        #expect(correct.key == (try TourSessionFixtures.fixtureCredential()).key)
         let wrong = try SessionCredential.derive(
             shortCode: "23456789AC",
             sessionID: TourSessionFixtures.sessionID
@@ -314,6 +593,19 @@ struct SessionProtocolTests {
         #expect(throws: SessionSecurityError.invalidShortCode) {
             try SessionCredential.derive(shortCode: "O1IL", sessionID: TourSessionFixtures.sessionID)
         }
+    }
+
+    @Test("Credential stretch is a PBKDF2 wire contract")
+    func credentialStretchContract() throws {
+        #expect(SealedSessionEnvelope.majorVersion == 4)
+        #expect(SessionCredential.stretchIterations == 600_000)
+        #expect(SessionCredential.stretchSaltLabel == "GetOverHere/GOH4/credential-salt/v1")
+        #expect(SessionCredential.stretchedKeySize == 32)
+        let fixtureSalt = try Data(hex: "00112233445566778899aabbccddeeff4765744f766572486572652f474f48342f63726564656e7469616c2d73616c742f7631")
+        #expect(try SessionCredential.stretch(inputKey: Data("23456789AB".utf8), salt: fixtureSalt).lowercaseHex
+            == "92ed1ff17b00d8ed95c29c42930eea012bf535f0375174f8c01b0caa46bef215")
+        #expect(try TourSessionFixtures.fixtureCredential().key.lowercaseHex
+            == "21ad5672cb5998d6c28ca6573e170ca605c0d71d22ae25ede7444c124ef4b1cf")
     }
 
     @Test("Authentication challenge and welcome roundtrip")

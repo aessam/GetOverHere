@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import org.maplibre.android.MapLibre
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -17,6 +18,14 @@ import com.aessam.comeoverhere.ui.ChannelScreen
 import com.aessam.comeoverhere.ui.WiFiAwareLabScreen
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        (application as ComeOverHereApp).channelService.setDiscoveryForeground(true)
+    }
+    override fun onStop() {
+        (application as ComeOverHereApp).channelService.setDiscoveryForeground(false)
+        super.onStop()
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
@@ -26,10 +35,15 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(factory = AppViewModelFactory(channelService))
                 var showWiFiAwareLab by remember { mutableStateOf(false) }
-                if (showWiFiAwareLab && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                var showGateway by remember { mutableStateOf(false) }
+                val gateway = (application as ComeOverHereApp).gateway
+                val gatewayState by gateway.status.collectAsState()
+                if (showGateway || gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.COMPANION) {
+                    com.aessam.comeoverhere.ui.GatewayScreen(gateway, onBack = { showGateway = false })
+                } else if (showWiFiAwareLab && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     WiFiAwareLabScreen(onBack = { showWiFiAwareLab = false })
                 } else {
-                    ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true })
+                    ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true }, onOpenGateway = { showGateway = true })
                 }
             }
         }

@@ -2,17 +2,21 @@ package com.aessam.comeoverhere.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -31,9 +35,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.aessam.comeoverhere.core.Channel
+import com.aessam.comeoverhere.core.BluetoothRoomDiscovery
 import com.aessam.comeoverhere.core.ListenerOutput
 import com.aessam.comeoverhere.service.ListenState
 import com.aessam.comeoverhere.service.LocalDevicePosition
@@ -46,6 +52,8 @@ import com.aessam.comeoverhere.service.OfflineMapStatus
 import com.aessam.comeoverhere.service.readUpTo
 import com.aessam.comeoverhere.service.SlideImport
 import com.aessam.comeoverhere.service.SessionConnectionState
+import com.aessam.comeoverhere.service.AudioRuntimeState
+import com.aessam.comeoverhere.service.RoomJoinStage
 import com.aessam.toursession.BearingSnapshotPayload
 import com.aessam.toursession.PresentationSnapshotPayload
 import com.aessam.toursession.SessionCredential
@@ -61,11 +69,18 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
+fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenGateway: () -> Unit = {}) {
+    val strictAware by vm.strictAwareOnly.collectAsState()
     val channels by vm.channels.collectAsState()
+    val bluetoothEnabled by vm.bluetoothDiscoveryEnabled.collectAsState()
     val activeChannelID by vm.activeChannelID.collectAsState()
     val listenState by vm.listenState.collectAsState()
     val listenerCount by vm.listenerCount.collectAsState()
+    val connectedGuestCount by vm.connectedGuestCount.collectAsState()
+    val audioReadyGuestCount by vm.audioReadyGuestCount.collectAsState()
+    val guideKeyFingerprint by vm.guideKeyFingerprint.collectAsState()
+    val activeTransportRoute by vm.activeTransportRoute.collectAsState()
+    val speakerFeedbackWarning by vm.speakerFeedbackWarning.collectAsState()
     val readyParticipantCount by vm.readyParticipantCount.collectAsState()
     val activeChannel by vm.activeChannel.collectAsState(initial = null)
     val listenerOutput by vm.listenerOutput.collectAsState()
@@ -73,6 +88,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     val slides by vm.slides.collectAsState()
     val readySlideFiles by vm.readySlideFiles.collectAsState()
     val isImportingSlides by vm.isImportingSlides.collectAsState()
+    var isRenderingPdf by remember { mutableStateOf(false) }
     val isImportingMap by vm.isImportingMap.collectAsState()
     val offlineMapConfiguration by vm.offlineMapConfiguration.collectAsState()
     val offlineMapStatus by vm.offlineMapStatus.collectAsState()
@@ -88,18 +104,71 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
     val tourCode by vm.tourCode.collectAsState()
     val connectionState by vm.connectionState.collectAsState()
     val reconnectAttempt by vm.reconnectAttempt.collectAsState()
+    val audioState by vm.audioRuntimeState.collectAsState()
+    val audioError by vm.audioRuntimeError.collectAsState()
+    val joinStage by vm.joinStage.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showNearbySettings by remember { mutableStateOf(false) }
+    var showGuideIdentity by remember(activeChannelID) { mutableStateOf(false) }
     var newChannelName by remember { mutableStateOf("") }
     var pickerError by remember { mutableStateOf<String?>(null) }
+    var bluetoothError by remember { mutableStateOf<String?>(null) }
     var guestMinimizedSlide by remember { mutableStateOf(false) }
     var selectedFeature by remember { mutableStateOf(TourFeature.SLIDES) }
     var pendingJoinChannel by remember { mutableStateOf<Channel?>(null) }
     var joinCode by remember { mutableStateOf("") }
     var pendingCreateName by remember { mutableStateOf<String?>(null) }
     var createError by remember { mutableStateOf<String?>(null) }
+    var unavailableRoom by remember { mutableStateOf<Channel?>(null) }
+    var waitingConnectionRoom by remember { mutableStateOf<Channel?>(null) }
+    var afterNearbyPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
     val context = LocalContext.current
     val pickerScope = rememberCoroutineScope()
+    val nearbyPermissions = remember {
+        (BluetoothRoomDiscovery.requiredPermissions().toList() +
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) listOf(Manifest.permission.NEARBY_WIFI_DEVICES) else emptyList()).distinct().toTypedArray()
+    }
+    val enablePermittedNearby = {
+        val bluetoothGranted = BluetoothRoomDiscovery.requiredPermissions().all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        vm.setBluetoothDiscoveryEnabled(bluetoothGranted)
+        val awareGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+        if (awareGranted) vm.awareSettings?.setEnabled(true)
+        bluetoothError = if (bluetoothGranted && awareGranted) null else
+            "Nearby permission was denied. Nearby rooms may be unavailable; shared Wi-Fi still works. Open app settings to grant permission."
+    }
+    val nearbyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        enablePermittedNearby()
+        val action = afterNearbyPermission
+        afterNearbyPermission = null
+        action?.invoke()
+    }
+    val requestNearby: (() -> Unit) -> Unit = { action ->
+        if (nearbyPermissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+            enablePermittedNearby()
+            action()
+        } else {
+            afterNearbyPermission = action
+            nearbyPermission.launch(nearbyPermissions)
+        }
+    }
+    val bluetoothPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val granted = BluetoothRoomDiscovery.requiredPermissions().all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        vm.setBluetoothDiscoveryEnabled(granted)
+        bluetoothError = if (granted) null else "Bluetooth permission denied. Enable it in Settings to try again."
+    }
+    val requestBluetooth: (Boolean) -> Unit = { enabled ->
+        bluetoothError = null
+        val required = BluetoothRoomDiscovery.requiredPermissions()
+        if (!enabled || required.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+            vm.setBluetoothDiscoveryEnabled(enabled)
+        } else bluetoothPermission.launch(required)
+    }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(50),
     ) { uris ->
@@ -120,6 +189,30 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                 vm.importSlides(imports)
             } catch (error: Exception) {
                 pickerError = error.message ?: error.javaClass.simpleName
+            }
+        }
+    }
+    val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        isRenderingPdf = true
+        pickerScope.launch {
+            try {
+                val imports = withContext(Dispatchers.IO) {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                        val limited = input.readNBytesCompat(com.aessam.comeoverhere.service.PdfSlideRenderer.MAXIMUM_INPUT_BYTES + 1)
+                        if (limited.size > com.aessam.comeoverhere.service.PdfSlideRenderer.MAXIMUM_INPUT_BYTES) {
+                            throw com.aessam.comeoverhere.service.PdfSlideImportException("The PDF is larger than 100 MB.")
+                        }
+                        limited
+                    } ?: error("The selected PDF could not be read")
+                    com.aessam.comeoverhere.service.PdfSlideRenderer.render(bytes, context.cacheDir)
+                }
+                pickerError = null
+                vm.importSlides(imports)
+            } catch (error: Exception) {
+                pickerError = error.message ?: error.javaClass.simpleName
+            } finally {
+                isRenderingPdf = false
             }
         }
     }
@@ -149,6 +242,16 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         } else {
             pickerError = "Nearby Wi-Fi permission is required for offline device-to-device tours"
         }
+    }
+    val strictAwarePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { vm.setStrictAwareOnly(true); pickerError = null }
+        else pickerError = "Nearby Wi-Fi permission is required for the Wi-Fi Aware-only listener."
+    }
+    val setStrictAware: (Boolean) -> Unit = { enabled ->
+        if (enabled && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
+            strictAwarePermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+        else vm.setStrictAwareOnly(enabled)
     }
     val requestLocalGuidance = {
         if (
@@ -237,6 +340,14 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             }
         }
     }
+    LaunchedEffect(channels, waitingConnectionRoom?.id) {
+        val waiting = waitingConnectionRoom ?: return@LaunchedEffect
+        val resolved = channels.firstOrNull { it.id == waiting.id } ?: return@LaunchedEffect
+        if (!vm.canJoin(resolved)) return@LaunchedEffect
+        waitingConnectionRoom = null
+        if (resolved.roomAdmissionVersion != 2 || !resolved.isRoomLocked) vm.joinChannel(resolved, "")
+        else { pendingJoinChannel = resolved; joinCode = "" }
+    }
     LaunchedEffect(target?.stateVersion) {
         if (activeChannel?.createdBy != vm.localPeerID && target?.isVisible == true) {
             selectedFeature = TourFeature.MAP
@@ -266,8 +377,9 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             TopAppBar(
                 title = { Text("Megaphone") },
                 actions = {
-                    IconButton(onClick = requestOpenWiFiAwareLab) {
-                        Icon(Icons.Default.WifiTethering, "Wi-Fi Aware Lab")
+                    TextButton(onClick = onOpenGateway) { Text("Companion") }
+                    IconButton(onClick = { showNearbySettings = !showNearbySettings }) {
+                        Icon(Icons.Default.Settings, "Connection diagnostics")
                     }
                     IconButton(onClick = { showCreateDialog = true }) {
                         Icon(Icons.Default.Add, "Create Channel")
@@ -277,17 +389,66 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            if (activeChannel == null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Two-hub listener: Wi-Fi Aware only", Modifier.weight(1f))
+                    Switch(strictAware, setStrictAware, modifier = Modifier.testTag("gatewayStrictAware"))
+                }
+                Button(onClick = { requestNearby {} }, modifier = Modifier.padding(horizontal = 16.dp).testTag("findNearbyTours")) {
+                    Text(if (bluetoothEnabled) "Refresh Nearby Tours" else "Find Nearby Tours")
+                }
+            }
+            if (activeChannel == null || activeChannel?.createdBy == vm.localPeerID || showNearbySettings) {
+                vm.awareSettings?.let { NearbyAwareSettingsView(it, showAdvancedControls = showNearbySettings) }
+            }
+            if (showNearbySettings) {
+                TextButton(onClick = requestOpenWiFiAwareLab) { Text("Wi-Fi Aware Lab") }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bluetooth room discovery", modifier = Modifier.weight(1f))
+                    Switch(checked = bluetoothEnabled, onCheckedChange = requestBluetooth,
+                        modifier = Modifier.testTag("bluetoothRoomDiscovery"))
+                }
+                Text("Experimental direct Bluetooth joining and audio on Android 10+. Older apps may provide discovery only.",
+                    modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+            }
+            bluetoothError?.let {
+                Text(it, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }) {
+                    Text("Open App Settings")
+                }
+            }
             if (activeChannel != null) {
+                activeTransportRoute?.let { route ->
+                    val label = when (route) {
+                        com.aessam.toursession.SessionTransportRoute.LOCAL_LAN -> "Local Wi-Fi"
+                        com.aessam.toursession.SessionTransportRoute.WIFI_AWARE -> "Wi-Fi Aware"
+                        com.aessam.toursession.SessionTransportRoute.BLUETOOTH -> "Bluetooth"
+                        com.aessam.toursession.SessionTransportRoute.APPLE_PEER -> "Apple peer-to-peer"
+                    }
+                    Text("Connection: $label", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("sessionTransport"))
+                }
+                guideKeyFingerprint?.let { fingerprint ->
+                    TextButton(onClick = { showGuideIdentity = !showGuideIdentity }) { Text("Guide identity") }
+                    if (showGuideIdentity) {
+                        Text(fingerprint, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
+                        Text("First contact is unverified. Compare this fingerprint with the guide's phone. It stays pinned for this tour.",
+                            Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 if (activeChannel!!.createdBy == vm.localPeerID) {
                     CreatorView(
                         channel = activeChannel!!,
+                        audioState = audioState,
+                        audioError = audioError,
                         listenerCount = listenerCount,
+                        connectedGuestCount = connectedGuestCount,
+                        audioReadyGuestCount = audioReadyGuestCount,
                         readyParticipantCount = readyParticipantCount,
                         tourCode = tourCode,
                         presentation = presentation,
                         slides = slides,
                         readySlideFiles = readySlideFiles,
-                        isImportingSlides = isImportingSlides,
+                        isImportingSlides = isImportingSlides || isRenderingPdf,
                         isImportingMap = isImportingMap,
                         selectedFeature = selectedFeature,
                         onFeatureChange = {
@@ -316,6 +477,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
                         },
+                        onPickPdf = { pdfPicker.launch(arrayOf("application/pdf")) },
                         onPickMap = { mapPicker.launch(arrayOf("application/json", "application/octet-stream")) },
                         onRequestLocation = requestLocalGuidance,
                         vm = vm,
@@ -323,9 +485,13 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                 } else {
                     ListenerView(
                         channel = activeChannel!!,
+                        audioState = audioState,
+                        audioError = audioError,
                         listenerOutput = listenerOutput,
                         connectionState = connectionState,
                         reconnectAttempt = reconnectAttempt,
+                        tourFeatureError = tourFeatureError,
+                        speakerFeedbackWarning = speakerFeedbackWarning,
                         presentation = presentation,
                         readySlideFiles = readySlideFiles,
                         minimizedSlide = guestMinimizedSlide,
@@ -353,8 +519,35 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                     )
                 }
             } else {
-                ChannelListView(channels, vm.localPeerID) { channel ->
-                    pendingJoinChannel = channel
+                waitingConnectionRoom?.let { room ->
+                    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Waiting for a connection to ${room.name}. Complete device pairing if requested.", Modifier.weight(1f))
+                        TextButton(onClick = { waitingConnectionRoom = null }) { Text("Cancel") }
+                    }
+                }
+                if (connectionState == SessionConnectionState.CONNECTING) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(24.dp))
+                        Text(when (joinStage) {
+                            RoomJoinStage.CONNECTING_DEVICE -> "Connecting to guide…"
+                            RoomJoinStage.ADMITTING -> "Joining room…"
+                            RoomJoinStage.STARTING_AUDIO -> "Starting audio…"
+                            RoomJoinStage.IDLE -> "Connecting…"
+                        }, Modifier.weight(1f).padding(start = 12.dp))
+                        TextButton(onClick = vm::leaveChannel) { Text("Cancel") }
+                    }
+                }
+                if (connectionState == SessionConnectionState.FAILED) {
+                    tourFeatureError?.let { error ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                            Text("Could not start tour", style = MaterialTheme.typography.titleSmall)
+                            Text(error, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+                ChannelListView(channels, vm.localPeerID, canJoin = vm::canJoin, onUnavailable = { unavailableRoom = it }) { channel ->
+                    if (channel.roomAdmissionVersion != 2 || !channel.isRoomLocked) vm.joinChannel(channel, "")
+                    else pendingJoinChannel = channel
                     joinCode = ""
                 }
                 if (channels.isEmpty()) {
@@ -389,7 +582,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    requestCreateChannel(newChannelName)
+                    requestNearby { requestCreateChannel(newChannelName) }
                 }) { Text("Create") }
             },
             dismissButton = {
@@ -400,18 +593,36 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
         )
     }
 
+    unavailableRoom?.let { room ->
+        AlertDialog(
+            onDismissRequest = { unavailableRoom = null },
+            title = { Text("Connect to ${room.name}") },
+            text = { Text("The room is visible, but no audio connection is ready. Keep Bluetooth enabled for direct joining, or keep Wi-Fi enabled and pair with the guide below. Device pairing is separate from the optional room code.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    unavailableRoom = null
+                    waitingConnectionRoom = room
+                    requestNearby {}
+                }) { Text("Find Connection") }
+            },
+            dismissButton = {
+                TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }) { Text("Radio Settings") }
+            },
+        )
+    }
+
     pendingJoinChannel?.let { channel ->
         AlertDialog(
             onDismissRequest = { pendingJoinChannel = null; joinCode = "" },
             title = { Text(channel.name) },
             text = {
                 Column {
-                    Text("Enter the tour code shown on the guide's screen.")
+                    Text("This room is locked. Ask your guide for the code.")
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = joinCode,
-                        onValueChange = { joinCode = it.uppercase() },
-                        label = { Text("10-character tour code") },
+                        onValueChange = { joinCode = it },
+                        label = { Text("Room Code") },
                         singleLine = true,
                     )
                 }
@@ -423,7 +634,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
                         pendingJoinChannel = null
                         joinCode = ""
                     },
-                    enabled = SessionCredential.normalize(joinCode).length == SessionCredential.SHORT_CODE_LENGTH,
+                    enabled = com.aessam.toursession.RoomAccessPolicy.isValidCode(joinCode),
                 ) { Text("Join") }
             },
             dismissButton = {
@@ -434,9 +645,11 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}) {
 }
 
 @Composable
-private fun ChannelListView(
+internal fun ChannelListView(
     channels: List<Channel>,
     localPeerID: String,
+    canJoin: (Channel) -> Boolean = { it.audioHostIP != null || it.createdBy == localPeerID },
+    onUnavailable: (Channel) -> Unit = {},
     onJoin: (Channel) -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -453,7 +666,11 @@ private fun ChannelListView(
             ListItem(
                 headlineContent = { Text(channel.name) },
                 supportingContent = {
-                    Text(if (channel.createdBy == localPeerID) "Your megaphone" else "Live")
+                    Text(if (channel.createdBy == localPeerID) "Your megaphone"
+                        else if (channel.audioHostIP == null) {
+                            if (canJoin(channel)) "Nearby direct · Tap to join" else "Connection needed · Tap to connect"
+                        }
+                        else if (channel.isRoomLocked) "Locked room" else "Open room")
                 },
                 leadingContent = {
                     Icon(
@@ -465,12 +682,12 @@ private fun ChannelListView(
                 trailingContent = {
                     Icon(
                         Icons.Default.Circle,
-                        contentDescription = "Live",
+                        contentDescription = if (channel.audioHostIP == null && channel.createdBy != localPeerID) "Discovery only" else "Live",
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(8.dp)
                     )
                 },
-                modifier = Modifier.clickable { onJoin(channel) }
+                modifier = Modifier.clickable { if (canJoin(channel)) onJoin(channel) else onUnavailable(channel) }
             )
         }
     }
@@ -489,7 +706,8 @@ private fun EmptyState(onCreate: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text("No megaphones nearby", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
-            Text("Create one to start broadcasting", color = MaterialTheme.colorScheme.outline)
+            Text("Keep Bluetooth on and allow Nearby devices permission to discover rooms.",
+                modifier = Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.outline)
             Spacer(Modifier.height(24.dp))
             Button(onClick = onCreate) { Text("Create Megaphone") }
         }
@@ -499,7 +717,11 @@ private fun EmptyState(onCreate: () -> Unit) {
 @Composable
 private fun CreatorView(
     channel: Channel,
+    audioState: AudioRuntimeState,
+    audioError: String?,
     listenerCount: Int,
+    connectedGuestCount: Int,
+    audioReadyGuestCount: Int,
     readyParticipantCount: Int,
     tourCode: String?,
     presentation: PresentationSnapshotPayload?,
@@ -520,6 +742,7 @@ private fun CreatorView(
     guidance: LocalTargetGuidance?,
     error: String?,
     onPickSlides: () -> Unit,
+    onPickPdf: () -> Unit,
     onPickMap: () -> Unit,
     onRequestLocation: () -> Unit,
     vm: AppViewModel,
@@ -541,11 +764,11 @@ private fun CreatorView(
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(channel.name, style = MaterialTheme.typography.titleLarge)
-                Text("LIVE", color = MaterialTheme.colorScheme.error)
+                Text(if (audioState == AudioRuntimeState.RUNNING) "LIVE" else "MICROPHONE STOPPED", color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                "$listenerCount listeners",
+                "$connectedGuestCount connected · $audioReadyGuestCount audio ready",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.outline,
             )
@@ -557,17 +780,13 @@ private fun CreatorView(
             )
         }
 
+        if (audioState == AudioRuntimeState.FAILED || audioState == AudioRuntimeState.INTERRUPTED) {
+            audioError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Button(onClick = vm::restartMicrophone, modifier = Modifier.testTag("restartMicrophone")) { Text("Restart Microphone") }
+        }
+
         if (tourCode != null) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("TOUR CODE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
-                Spacer(Modifier.width(12.dp))
-                Text(tourCode, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.weight(1f))
-                Text("Share with guests", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-            }
+            RoomAccessControls(vm, channel.id, tourCode)
         }
 
         HorizontalDivider()
@@ -591,6 +810,7 @@ private fun CreatorView(
                     readySlideFiles,
                     isImportingSlides,
                     onPickSlides,
+                    onPickPdf,
                     vm,
                 )
                 TourFeature.MAP -> MapFeatureStage(
@@ -634,12 +854,42 @@ private fun CreatorView(
 }
 
 @Composable
+private fun RoomAccessControls(vm: AppViewModel, channelID: String, savedCode: String) {
+    val locked by vm.isRoomLocked.collectAsState()
+    val updating by vm.isUpdatingRoomAccess.collectAsState()
+    val error by vm.roomAccessError.collectAsState()
+    var code by remember(channelID) { mutableStateOf(savedCode) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Lock Room with Code", Modifier.weight(1f))
+            Switch(checked = locked, onCheckedChange = { vm.updateRoomAccess(it, code) }, enabled = !updating,
+                modifier = Modifier.testTag("roomLockToggle"))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = code, onValueChange = { code = it }, singleLine = true,
+                label = { Text("Room code (4–64 characters)") }, modifier = Modifier.weight(1f))
+            if (locked) {
+                TextButton(onClick = { vm.updateRoomAccess(true, code) },
+                    enabled = !updating && code != savedCode && com.aessam.toursession.RoomAccessPolicy.isValidCode(code)) {
+                    Text("Save Code")
+                }
+            }
+        }
+        Text(error ?: if (locked) "New guests need this code. Connected guests stay connected."
+            else "Room is open. Set a code, then turn on the lock.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (error == null) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
 private fun CreatorSlides(
     presentation: PresentationSnapshotPayload?,
     slides: List<TourAssetDescriptor>,
     readySlideFiles: Map<String, File>,
     isImportingSlides: Boolean,
     onPickSlides: () -> Unit,
+    onPickPdf: () -> Unit,
     vm: AppViewModel,
 ) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -649,12 +899,18 @@ private fun CreatorSlides(
                     Icon(Icons.Default.PhotoLibrary, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(12.dp))
                     Text("No slides", style = MaterialTheme.typography.headlineSmall)
-                    Text("Choose photos to prepare and send locally.", color = MaterialTheme.colorScheme.outline)
+                    Text("Choose photos or a PDF to prepare and send locally.", color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.height(20.dp))
                     Button(onClick = onPickSlides, enabled = !isImportingSlides) {
                         Icon(Icons.Default.AddPhotoAlternate, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Add Slides")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onPickPdf, enabled = !isImportingSlides, modifier = Modifier.testTag("importPDF")) {
+                        Icon(Icons.Default.PictureAsPdf, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import PDF")
                     }
                 }
             }
@@ -728,6 +984,11 @@ private fun CreatorSlides(
                         Icon(Icons.Default.AddPhotoAlternate, "Add slides")
                     }
                 }
+                item {
+                    OutlinedButton(onPickPdf, enabled = !isImportingSlides, modifier = Modifier.height(64.dp)) {
+                        Icon(Icons.Default.PictureAsPdf, "Import PDF")
+                    }
+                }
             }
         }
         if (isImportingSlides) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -737,9 +998,13 @@ private fun CreatorSlides(
 @Composable
 private fun ListenerView(
     channel: Channel,
+    audioState: AudioRuntimeState,
+    audioError: String?,
     listenerOutput: ListenerOutput,
     connectionState: SessionConnectionState,
     reconnectAttempt: Int,
+    tourFeatureError: String?,
+    speakerFeedbackWarning: String?,
     presentation: PresentationSnapshotPayload?,
     readySlideFiles: Map<String, File>,
     minimizedSlide: Boolean,
@@ -775,13 +1040,9 @@ private fun ListenerView(
             Column {
                 Text(channel.name, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    when (connectionState) {
-                        SessionConnectionState.IDLE -> "IDLE"
-                        SessionConnectionState.CONNECTING -> "CONNECTING"
-                        SessionConnectionState.CONNECTED -> "LISTENING"
-                        SessionConnectionState.RECONNECTING -> "RECONNECTING $reconnectAttempt/5"
-                        SessionConnectionState.FAILED -> "CONNECTION FAILED"
-                    },
+                    if (connectionState == SessionConnectionState.CONNECTED && audioState != AudioRuntimeState.RUNNING)
+                        audioError ?: "Connected · Waiting for audio…"
+                    else guestConnectionStatusText(connectionState, reconnectAttempt, tourFeatureError),
                     color = if (connectionState == SessionConnectionState.FAILED) {
                         MaterialTheme.colorScheme.error
                     } else {
@@ -789,6 +1050,10 @@ private fun ListenerView(
                     },
                 )
             }
+        }
+
+        if (audioState == AudioRuntimeState.FAILED || audioState == AudioRuntimeState.INTERRUPTED) {
+            Button(onClick = vm::retryAudio, modifier = Modifier.testTag("retryAudio")) { Text("Retry Audio") }
         }
 
         HorizontalDivider()
@@ -830,6 +1095,25 @@ private fun ListenerView(
         }
 
         HorizontalDivider()
+        speakerFeedbackWarning?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+        // FAILED already renders the reason in the header status line (ADR-041).
+        if (connectionState != SessionConnectionState.FAILED) {
+            tourFeatureError?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -955,7 +1239,7 @@ private fun PointerFeatureStage(
     val arrowRotation by animateFloatAsState((relativeDegrees ?: 0.0).toFloat(), label = "pointer")
 
     Column(
-        modifier.fillMaxSize().padding(20.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -1093,7 +1377,7 @@ private fun MapFeatureStage(
     var pendingTarget by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var targetLabelDraft by remember { mutableStateOf("") }
     if (configuration == null) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 if (isImporting) {
                     CircularProgressIndicator()
@@ -1300,4 +1584,16 @@ private fun SlideFileImage(file: File, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/** Reads at most [limit] bytes (InputStream.readNBytes needs API 33; minSdk is 26). */
+private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (output.size() < limit) {
+        val read = read(buffer, 0, minOf(buffer.size, limit - output.size()))
+        if (read < 0) break
+        output.write(buffer, 0, read)
+    }
+    return output.toByteArray()
 }

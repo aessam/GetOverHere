@@ -4,18 +4,20 @@ Read `AGENTS.md` first. `TourGuideProductSpec.md` is the authoritative product c
 
 ## Current implemented architecture
 
-- Discovery: Bonjour (`LocalControlPlane.swift`) and Android NSD (`LocalControlPlane.kt`) on a shared local Wi-Fi LAN. Internet is not required.
-- Realtime lane: TCP port 50000, guide Float32 PCM audio to authenticated guests.
+- Discovery: Bonjour/NSD, opt-in Bluetooth metadata plus native LE credit-based session endpoints, and explicit experimental Aware ownership. Endpoint-backed Bluetooth rooms can join; old metadata-only peers cannot. Internet is not required.
+- Realtime lane: TCP port 50000, encrypted GOH2 v4 encoded audio (native Opus or AAC-LC); the local capture/playback boundary is PCM16.
 - Control lane: TCP port 50001, authoritative presentation, target, bearing, membership, and recovery state.
-- Asset lane: TCP port 50002, request-driven 64 KiB chunks with resume, length checks, and SHA-256 verification.
-- Admission: a random per-tour short code derives nonce-based mutual proofs independently for every lane.
+- Asset lane: TCP port 50002, request-driven 60 KiB chunks with resume, length checks, SHA-256 verification and bounded fair/current-slide scheduling.
+- Admission: rooms start open, with optional guide-editable code locking. TCP port 50003 uses admission v2 to bind a hidden per-tour media credential and the guide signing key to a fresh transcript. Room codes, media credentials and OS pairing PINs are separate (ADR-052/059). Native app pairs must both support v2; v1 remains only in core/explicit compatibility fixtures.
 - State: `TourSessionCore` Swift package and `:tour-session-core` Kotlin module must emit identical GOH2 bytes.
 
-`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. The handshake authenticates admission but does not encrypt application payloads. Do not claim otherwise.
+`UDPAudioPlane` is a legacy name; it is the TCP realtime implementation. Each lane authenticates with the hidden admitted credential. Application payloads on all three LAN lanes are separately authenticated and encrypted as GOH2 v4 sealed frames. Locking or editing a room code does not revoke previously admitted guests. Short room codes remain vulnerable to offline guessing by an active malicious guide; they do not establish guide identity.
 
-BLE, Android LocalOnlyHotspot, RAFT, and iOS Multipeer files remain compiled legacy/experimental code but are not selected by `NetworkCoordinator`. Native Wi-Fi Aware exists only behind the explicit lab and requires iOS 26.4 at runtime. It must not raise the production iOS 17 minimum.
+Legacy BLE control-plane files remain unselected; `LocalControlPlane` owns the new Bluetooth/Aware endpoint adapters. LocalOnlyHotspot, RAFT leader election, Multipeer, and the chat/file/walkie-talkie stubs were deleted (ADR-050). Native Wi-Fi Aware requires iOS 26.4 at runtime; the production iOS floor remains 17. Android BLE sessions require API 29+, Aware ownership API 34+.
 
-The iOS production Wi-Fi Aware lane wrappers currently have no connection owner or product call sites. Do not claim that the normal app works over Aware until the isolated cross-platform probe and production wiring gates pass.
+`NearbySocketBridge` routes admission and sealed media protocols over native byte connections. It is not a remote-IP discovery mechanism or an arbitrary proxy. Typed nearby routes retain Bluetooth/Aware provenance; the loopback adapter is never a LAN address. Native guide frames now use one GOS1 signer across all lanes; admission-bound guide-key pinning rejects same-session substitution. Open-room first contact remains unverified human identity. Signed native relaying remains unimplemented. Shared software budgets and 30-member socket tests do not establish radio/group capacity. Direct Android BLE/Aware historical fixtures have physical evidence; current iPhone, locked-device, group and endurance acceptance remain open.
+
+Android Aware compatibility PIN/NDP uses `_goh-andr._tcp`. The separately gated public system-paired subscriber candidate uses Apple's `_goh-tour._tcp`, requires full SDK37.2 plus documented keypad/pairing/resources and allows35s setup. System-paired Android publishing has an unresolved public endpoint-bootstrap contract; do not add dummy keys, fixed ports or private API workarounds. Native mixed Aware bytes are unqualified. Keep iOS26.4 guards and the iOS17 baseline. See the current implementation section of `NextSession.md`, not historical checkpoints, for delivery status.
 
 ## Selected transport direction
 
@@ -28,9 +30,9 @@ The iOS production Wi-Fi Aware lane wrappers currently have no connection owner 
 - Application payloads require route-independent authenticated encryption; ADR-023 admission authentication alone is insufficient.
 - Encrypt a logical frame once at creation and route the immutable sealed bytes. Socket writers never encrypt or allocate nonces. Reusing one frame identity with different plaintext is a fatal protocol error.
 - Encrypted GOH2 is a hard major-version break. New builds expose legacy peers as an explicit version mismatch and never downgrade to plaintext.
-- V1 has session-wide revocation only. End and restart the tour to rotate a leaked code and all derived keys.
+- The product has session-wide revocation only. End and restart the tour to rotate the hidden media credential and revoke admitted guests. Editing the visible room code changes future admission only.
 
-`NextSession.md` is the canonical gate-by-gate execution plan. Execute P0 → P3 → P1; P1 is limited to four focused physical sessions or two engineering days. Do not start production Aware or BLE implementation before its preceding physical gate passes.
+`NextSession.md` is the canonical execution plan. The September 5 user instruction changes delivery to one integrated candidate: implement the remaining BLE admission/control/voice, Aware ownership, hybrid routing, and asset behavior before requesting physical feedback. Run software gates and create focused commits throughout. Missing or locked devices do not block implementation. Physical gates remain mandatory for acceptance and product claims, not prerequisites for experimental coding. Keep unqualified routes explicitly experimental and preserve the stable LAN baseline. The physical Aware investigation remains limited to four focused sessions or two engineering days.
 
 ## Product boundaries
 
