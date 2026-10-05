@@ -1,5 +1,17 @@
 # GetOverHere — Next Session
 
+## October 4 — current plan: `WirelessMegaphonePlan.md`
+
+Execution plan for the Sept 21 direction (one cross-platform app, Bluetooth as
+the no-router iPhone↔Android route, PDFs as page slides per ADR-072). Phases 0–4
+are device-free; Phase 5 is physical acceptance and waits for the user.
+Since Sept 21: deep code review `CodeReview-2026-09-22.md` (FND-1..34);
+FND-1 fixed in `5c13e79` (ADR-071). Commits `5c13e79`/`7391db7` are not pushed;
+push requires explicit approval. Hotspot fallback (DSCN-2) undecided.
+Xcode-beta is gone; `xcode-select` resolves to /Applications/Xcode.app (27.0).
+`verify_tour_session.sh` now defaults to the `iPhone 17` simulator and preflights it.
+Phase progress and evidence are appended to `ExperimentLog.md`.
+
 ## September 21 — current direction supersedes the USB steps below
 
 User stopped USB gateway work: the available iPhone13Pro + Pixel11Pro did not

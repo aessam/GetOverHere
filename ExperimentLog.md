@@ -1950,3 +1950,71 @@ sequence on encoder retirement; the test failed specifically with ACCEPTED versu
 DUPLICATE, not a compilation failure. One targeted mutant killed; no general
 mutation-coverage claim. Scratch copy removed by the script. Log:
 `/tmp/goh-issue1-mutation.log`.
+
+## 2026-10-03 — Resume investigation and device-free baseline
+
+Inspected clean HEAD `7391db7` on `fix/deep-dive-2026-09-02`, handoff,
+September22 review, and GitHub issues #1–#5. Latest production change remains
+`5c13e79` (September23 encoder recovery); October2 added retained review artifacts.
+No xcodebuild, Swift build or Gradle build was running at initial process inspection.
+No physical devices queried, app source changed, issue updated, commit or push.
+
+Environment: macOS arm64, Xcode27.0/27A266a, Apple Swift6.4.0.34.1,
+Android Studio bundled JBR. All commands below ran from the repository root.
+
+```sh
+env JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./Android/gradlew -p Android :app:testDebugUnitTest :tour-session-core:test --offline --rerun-tasks --no-daemon > /tmp/GetOverHere-audit-20261003-android.log 2>&1
+env CLANG_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-module-cache SWIFT_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-module-cache swift test --disable-sandbox --package-path Packages/TourSessionCore --scratch-path /tmp/GetOverHere-audit-20261003-swift > /tmp/GetOverHere-audit-20261003-swift.log 2>&1
+```
+
+Both exit0. Gradle: BUILD SUCCESSFUL in55s,28/28 tasks executed. Fresh XML:
+Android app206 tests/37 suites, Kotlin core83 tests/13 suites, zero failures,
+errors or skips. The authenticated guest-playout encoder-replacement regression
+passes. Swift core84 tests/13 suites pass. This is a unit/component baseline;
+the full host gate, iOS app suite, native codecs and physical audio were not rerun.
+
+Reexecuted retained FND-2 harness against current `TourSessionCore`:
+
+```sh
+mkdir -p /tmp/GetOverHere-audit-20261003-drift/Sources/drift2
+cp benchmarks/2026-09-22-code-review/repro/jitter-drift/Package.swift /tmp/GetOverHere-audit-20261003-drift/Package.swift
+cp benchmarks/2026-09-22-code-review/repro/jitter-drift/main.swift /tmp/GetOverHere-audit-20261003-drift/Sources/drift2/main.swift
+env CLANG_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-drift-cache SWIFT_MODULE_CACHE_PATH=/tmp/GetOverHere-audit-20261003-drift-cache swift run --disable-sandbox --package-path /tmp/GetOverHere-audit-20261003-drift -c release > /tmp/GetOverHere-audit-20261003-drift.log 2>&1
+```
+
+Exit0 means the diagnostic ran, not that audio correctness passed. Four simulated
+hours,720,000 frames per case: +100ppm played229,998, first silence76.7min;
++40ppm played574,998, first silence191.7min; -40ppm played719,998, no post-startup
+silence. These clock skews are model inputs, not measurements of the phones.
+The monotonic-minimum offset remains in both current platform implementations.
+
+`xcrun simctl list devices available -j` confirms the verifier's default
+`iPhone 17 Pro` destination is absent; `iPhone 18 Pro Max` and `iPhone 17` are
+available on iOS27.0, both shut down. No simulator was booted. PDF issue #2 is
+still open; source currently imports/displays image slides, with no native PDF
+import/renderer found. Issue #1's last progress comment identifies Bluetooth-only
+route enforcement and reconnect coverage as the next software slice. The tracker
+keeps physical qualification deferred and USB work paused.
+
+Retained the three console logs above; removed only this investigation's temporary
+Swift build/module caches and copied drift package after collecting results.
+
+## 2026-10-04 — Phase 0 baseline at `7391db7` (`WirelessMegaphonePlan.md`)
+
+Environment: macOS 27, Xcode 27.0 (27A266a) at /Applications/Xcode.app (Xcode-beta
+no longer present), Android Studio JBR. Simulator `iPhone 17`
+5D72BABA-9416-4B7A-ABAA-B0F2628E84EE, iOS 27.0. No devices.
+
+`scripts/verify_tour_session.sh` now resolves `GOH_IOS_DESTINATION` or
+`GOH_IOS_SIMULATOR_NAME` (default `iPhone 17`) and preflights the simulator.
+Negative check: `GOH_IOS_SIMULATOR_NAME='iPhone 99' bash scripts/verify_tour_session.sh`
+exits 1 before step 1 and lists available iPhones.
+
+`bash scripts/verify_tour_session.sh`: steps 1–8 pass. Step 9 built, then failed with
+"Simulator device failed to launch com.aens.GetOverHere. No such process" on a
+cold simulator (exit 65, no test executed). Rerun of step 9 alone after
+`xcrun simctl bootstatus 5D72BABA-… -b`, same xcodebuild flags with
+`-destination 'platform=iOS Simulator,id=5D72BABA-…'`: exit 0, xcresult
+`Test-GetOverHere-2026.10.04_18-14-16--0700.xcresult` Passed, 205 total / 201 passed /
+0 failed / 4 skipped. Phase 1 needs no code: encoder replacement is already bounded and
+reported (see plan).

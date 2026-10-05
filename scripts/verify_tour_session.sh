@@ -12,6 +12,8 @@ KOTLIN_CLI="$ANDROID_ROOT/tour-session-cli/build/install/tour-session-cli/bin/to
 XCODE_DEVELOPER_DIR="${GOH_XCODE_DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo /Users/aessam/Downloads/Xcode-beta.app/Contents/Developer)}"
 IOS_DERIVED_DATA="${GOH_IOS_DERIVED_DATA:-/tmp/GetOverHereTourSessionDerived}"
 IOS_MODULE_CACHE="${GOH_IOS_MODULE_CACHE:-/tmp/GetOverHereTourSessionModuleCache}"
+IOS_SIMULATOR_NAME="${GOH_IOS_SIMULATOR_NAME:-iPhone 17}"
+IOS_DESTINATION="${GOH_IOS_DESTINATION:-platform=iOS Simulator,name=$IOS_SIMULATOR_NAME}"
 
 mkdir -p "$SWIFT_MODULE_CACHE"
 export CLANG_MODULE_CACHE_PATH="$SWIFT_MODULE_CACHE"
@@ -38,6 +40,15 @@ fi
 
 if [[ ! -x "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
     echo "error: xcodebuild not found under $XCODE_DEVELOPER_DIR" >&2
+    exit 1
+fi
+
+# Fail before the long steps when the iOS destination cannot exist (xcodebuild otherwise exits 70 at step 9).
+echo "IOS_DESTINATION=$IOS_DESTINATION"
+if [[ -z "${GOH_IOS_DESTINATION:-}" ]] && ! DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" xcrun simctl list devices available \
+    | grep -Fq "    $IOS_SIMULATOR_NAME ("; then
+    echo "error: no available simulator named '$IOS_SIMULATOR_NAME'. Set GOH_IOS_SIMULATOR_NAME or GOH_IOS_DESTINATION. Available:" >&2
+    DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" xcrun simctl list devices available | grep -E '^    iPhone' >&2
     exit 1
 fi
 
@@ -361,7 +372,7 @@ SWIFT_MODULE_CACHE_PATH="$IOS_MODULE_CACHE" \
     "$XCODE_DEVELOPER_DIR/usr/bin/xcodebuild" -quiet \
     -project "$PROJECT_ROOT/iOS/GetOverHere.xcodeproj" \
     -scheme GetOverHere \
-    -destination "${GOH_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}" \
+    -destination "$IOS_DESTINATION" \
     -parallel-testing-enabled NO \
     -collect-test-diagnostics never \
     -derivedDataPath "$IOS_DERIVED_DATA" \

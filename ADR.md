@@ -780,3 +780,20 @@ would require changing both receive paths and handling delayed old-stream frames
 **Consequences:** No wire change. Component regression traverses signed encrypted
 sender output into the existing guest clock; radio/native/acoustic evidence remains
 required. Sequence exhaustion is explicitly rejected rather than wrapping.
+
+## ADR-072 — Deliver PDFs as guide-rendered page slides
+
+**Date:** 2026-10-04. **Tracking:** GitHub #2, `WirelessMegaphonePlan.md`.
+**Context:** The cross-platform no-router route is Bluetooth, measured at
+0.25–0.53 Mbps payload per guest (`benchmarks/2026-09-10/README.md`). A whole
+multi-megabyte PDF would delay the first visible page by minutes per guest.
+Slides already have current-slide-first delivery, SHA-256 verification, resume
+and late-join restore.
+**Decision:** The guide renders each PDF page to a bounded JPEG and imports it
+through the existing slide pipeline. The PDF page number is the slide index.
+No new asset kind and no GOH2 wire change.
+**Alternatives rejected:** A new PDF asset kind (slow first page, a wire change on
+both platforms); per-page PDF extraction (Android has no public page-copy API).
+**Consequences:** Guests see raster pages at a fixed resolution, with no vector zoom
+or text selection. Size caps are enforced at import. Physical audio and transfer
+coexistence on Bluetooth remains unqualified.
