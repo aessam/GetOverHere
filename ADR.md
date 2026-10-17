@@ -832,3 +832,33 @@ Debug control exposes `route-policy` and reports `routePolicy`/`activeRoute`.
 **Alternatives rejected:** A new product UI switch (not requested); relying on
 forgetting Wi-Fi on test phones (not provable from status).
 **Consequences:** Debug/test selection only; the product default remains automatic.
+
+## ADR-075 — Batch Opus frames per sealed packet
+
+**Date:** 2026-10-17. **Tracking:** `WirelessMegaphonePlan.md` October 17 update, ACT-1.
+**Context:** Every 20 ms Opus frame was sealed and signed on its own. The envelope header,
+audio header, GCM tag, length prefix and 64-byte GOS1 signature made about 80% of on-air bytes.
+Cross-platform Bluetooth carries 0.25–0.53 Mbps per guest, and relaying multiplies that load.
+**Decision:**
+- New realtime kind `audioBatch` (0x11). The codec configuration is written once, followed by
+  1–8 frames, each with its own capture time, expiry and bytes.
+- The envelope sequence is the first frame's sequence; frame `i` has sequence `first + i`.
+- Opus is always sent in batches of 3 (60 ms). A partial batch is flushed after 40 ms on the
+  encode queue. One batch is sealed once and fanned out (seal-once holds).
+- A new capability `opusBatchDecoder` (bit 4) gates Opus. Receivers without it get AAC-LC, and
+  receivers accept both kinds, so mixed old and new builds keep working.
+- `RealtimeAudioPlayoutSizing` (both cores) sets the Opus jitter target to two bursts (6 frames,
+  120 ms); the maximum is 13. AAC-LC is unchanged.
+**Evidence (software):**
+- Batch bytes are pinned and identical in Swift and Kotlin (verifier step 3), and cross-decode in step 4.
+- Sealed + signed with a 19-byte codec header, three 50-byte frames cost 408 B as one batch vs 801 B
+  as singles. That is about 54 vs 107 kbps on air (−49%); the test gate is ≤ 55%.
+- Under burst arrival with 9–45 ms jitter peaks, the 6-frame target never stalls. The old
+  3-frame target starves once at 18 ms peaks, then recovers with the latency it lost.
+**Costs:** Up to about 40 ms added at the sender (batch wait) and 60 ms at the guest (deeper
+target). A capture discontinuity drops at most one partial batch (< 60 ms).
+**Alternatives rejected:**
+- `opus_repacketizer` multi-frame packets: needs libopus, and platform decoder support is untested.
+- A minor-version bump: rewrites every sealed fixture for no compatibility gain over a capability bit.
+- A per-destination batched/unbatched split: two plaintexts per `(stream, sequence)` identity is fatal.
+**Not established:** On-air kbps over real Bluetooth, perceived delay, and relay behaviour (Phase 5).

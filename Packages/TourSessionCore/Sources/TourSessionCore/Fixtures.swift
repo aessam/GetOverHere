@@ -165,6 +165,8 @@ public enum TourSessionFixtures {
             ]
         case .audioFrame:
             fields.append("audio=\(try describeAudioFrame(envelope.payload))")
+        case .audioBatch:
+            fields.append("audioBatch=\(try describeAudioBatch(envelope.payload))")
         }
         return fields.joined(separator: "|")
     }
@@ -184,6 +186,42 @@ public enum TourSessionFixtures {
         return "version=\(SealedSessionEnvelope.majorVersion).\(sealed.minorVersion)"
             + "|stream=\(sealed.streamID.uuidString.lowercased())|"
             + (try describe(envelope))
+    }
+
+    /// Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity.
+    public static func encodedAudioBatchFixture() throws -> EncodedAudioBatchPayload {
+        let configuration = try SessionAudioCodecConfiguration(
+            codec: .opus,
+            sampleRate: 16_000,
+            channelCount: 1,
+            frameDurationMilliseconds: 20,
+            bitRate: 20_000,
+            codecSpecificData: Data([0x4F, 0x70, 0x75, 0x73])
+        )
+        return try EncodedAudioBatchPayload(frames: (0..<3).map { index in
+            try EncodedAudioFramePayload(
+                configuration: configuration,
+                capturedAtNanoseconds: 1_000_000_000 + UInt64(index) * 20_000_000,
+                expiresAtNanoseconds: 1_500_000_000 + UInt64(index) * 20_000_000,
+                encodedBytes: Data([0xF8, 0xFF, 0xFE, UInt8(index)])
+            )
+        })
+    }
+
+    public static func describeAudioBatch(_ encoded: Data) throws -> String {
+        let batch = try EncodedAudioBatchPayload.decode(encoded)
+        let configuration = batch.configuration
+        return ([
+            "codec=\(configuration.codec.rawValue)",
+            "sampleRate=\(configuration.sampleRate)",
+            "channelCount=\(configuration.channelCount)",
+            "frameDurationMilliseconds=\(configuration.frameDurationMilliseconds)",
+            "bitRate=\(configuration.bitRate)",
+            "codecSpecificData=\(configuration.codecSpecificData.lowercaseHex)",
+            "frameCount=\(batch.frames.count)",
+        ] + batch.frames.enumerated().map { index, frame in
+            "frame\(index)=\(frame.capturedAtNanoseconds)/\(frame.expiresAtNanoseconds)/\(frame.encodedBytes.lowercaseHex)"
+        }).joined(separator: "|")
     }
 
     public static func encodedAudioFixture() throws -> EncodedAudioFramePayload {

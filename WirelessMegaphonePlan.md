@@ -155,3 +155,27 @@ Do not probe devices until you say they are available. Use `scripts/verify_mixed
 
 Phase 0 → 1 → 2 → 3 → 4 can all run now without devices. Commit after each phase, once its exit gate passes.
 Phase 5 waits for you. No product-completion claim before Phase 5 passes.
+
+## October 17 update: audio cost, relaying and the improvement loop
+
+Devices available: iPhone 13 Pro and Pixel 7 only. Phase 5 runs on that pair. Anything
+needing 3 or more phones (relay fan-out, range extension, group capacity) stays NOT RUN.
+
+Research summary (three agents, sources in the session): per-packet overhead (envelope,
+audio header, GCM tag, GOS1 signature) was about 80% of on-air Opus bytes. Batching beats any
+codec change. Auracast has no app API on either platform. Wi-Fi Aware needs an iPhone PIN
+pairing. Bluetooth relaying is feasible only as a depth ≤2 tree after batching.
+
+Improvement loop (RSI levels). Each level has its own fixed evaluator. Go down a level only when
+the parent's metric shows that component is the limit. Evaluators are never edited by the loop.
+
+| Level | Loop | Fitness | Runs on |
+|---|---|---|---|
+| Macro | Field acceptance | Phase 5 matrix pass rate | Phones, with the user |
+| Sub | Audio on-air cost | On-air kbps at fixed quality | Unit tests plus phones |
+| Micro | ACT-1 batching (ADR-075) | Batch ≤ 55% of singles; zero stalls under burst arrival | Unit tests |
+| Micro | ACT-2/3 libopus 1.6 + NoLACE + DTX | ViSQOL per kbps on fixed clips | Mac only, offline |
+| Micro | ACT-4 slimmer envelope | Bytes per packet | Unit tests, fixtures |
+
+Next order: ACT-1 (this slice) → Phase 5 pair run → ACT-2/3 offline loop → ACT-4 → relay
+loopback test (2 phones prove per-hop mechanics only).

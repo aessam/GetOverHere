@@ -105,6 +105,14 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Batched Opus (ADR-075): pinned bytes, identical on both platforms.
+SWIFT_AUDIO_BATCH_HEX="$($SWIFT_BIN audio-batch-fixture)"
+KOTLIN_AUDIO_BATCH_HEX="$(run_kotlin audio-batch-fixture)"
+[[ -n "$SWIFT_AUDIO_BATCH_HEX" && "$SWIFT_AUDIO_BATCH_HEX" == "$KOTLIN_AUDIO_BATCH_HEX" ]] || {
+    echo "error: Swift and Kotlin encoded different batched audio bytes" >&2
+    exit 1
+}
+
 # Fixture outputs are assigned to variables first so a crashed CLI fails errexit instead of
 # comparing empty against empty inside a condition; the [[ -n ]] guards make that explicit.
 SWIFT_HANDSHAKE_HEX="$($SWIFT_BIN handshake)"
@@ -187,6 +195,12 @@ if [[ "$SWIFT_REALTIME_DESC" != "$KOTLIN_REALTIME_DESC" ]]; then
     exit 1
 fi
 
+SWIFT_AUDIO_BATCH_DESC="$($SWIFT_BIN decode-audio-batch "$KOTLIN_AUDIO_BATCH_HEX")"
+KOTLIN_AUDIO_BATCH_DESC="$(run_kotlin decode-audio-batch "$SWIFT_AUDIO_BATCH_HEX")"
+[[ -n "$SWIFT_AUDIO_BATCH_DESC" && "$SWIFT_AUDIO_BATCH_DESC" == "$KOTLIN_AUDIO_BATCH_DESC" ]] || {
+    echo "error: batched audio cross-decode mismatch" >&2
+    exit 1
+}
 SWIFT_AUDIO_DESC="$($SWIFT_BIN decode-audio "$KOTLIN_AUDIO_HEX")"
 [[ -n "$SWIFT_AUDIO_DESC" ]] || { echo "error: Swift could not decode Kotlin audio payload" >&2; exit 1; }
 KOTLIN_AUDIO_DESC="$(run_kotlin decode-audio "$SWIFT_AUDIO_HEX")"

@@ -2,6 +2,10 @@ package com.aessam.comeoverhere.core
 
 import android.os.SystemClock
 import android.util.Log
+import com.aessam.toursession.AudioFrameBatcher
+import com.aessam.toursession.EncodedAudioBatchPayload
+import com.aessam.toursession.RealtimeAudioPlayoutSizing
+import com.aessam.toursession.SequencedEncodedAudioBatch
 import com.aessam.toursession.HelloPayload
 import com.aessam.toursession.AuthChallengePayload
 import com.aessam.toursession.ParticipantPlatform
@@ -74,8 +78,15 @@ class UDPAudioPlane(
 
     private data class CaptureOrigin(val wall: Long, val monotonic: Long)
 
-    private class BroadcastCodecState(var encoder: RealtimeAudioEncoderInterface, var discontinuity: Long) {
+    private class BroadcastCodecState(var encoder: RealtimeAudioEncoderInterface, var discontinuity: Long, batched: Boolean) {
         var encoderClosed = false
+        /** Opus only (ADR-075): frames wait here until a batch is full or its deadline passes. */
+        val batcher: AudioFrameBatcher? = if (batched) AudioFrameBatcher(
+            RealtimeAudioPlayoutSizing.OPUS_BATCH_FRAME_COUNT,
+            RealtimeAudioPlayoutSizing.OPUS_BATCH_MAXIMUM_WAIT_NANOSECONDS,
+        ) else null
+        var batchWriters: List<BoundedSocketFrameWriter> = emptyList()
+        var batchFlushScheduled = false
         var accumulator = PCMFrameAccumulator(encoder.inputPCMByteCount)
         var partialOrigin: CaptureOrigin? = null
         val pendingInputs = java.util.ArrayDeque<CaptureOrigin>()
@@ -95,6 +106,8 @@ class UDPAudioPlane(
         private val monotonicClock: () -> Long = System::nanoTime,
         private val emitFrame: (ByteArray, List<BoundedSocketFrameWriter>) -> Unit = { frame, writers -> writers.forEach { it.enqueue(frame) } },
         private val onEncoderFailure: (String) -> Unit = {},
+        /** Production batches Opus (ADR-075). Per-frame admission tests opt out to observe single frames. */
+        private val batchesOpus: Boolean = true,
     ) {
         private companion object {
             const val MAXIMUM_PENDING_ENTRIES = 8
@@ -104,7 +117,8 @@ class UDPAudioPlane(
             const val MAXIMUM_CODEC_STALL_NANOSECONDS = 2_000_000_000L
             const val MAXIMUM_ENCODER_REPLACEMENTS = 3
         }
-        private val executor = Executors.newSingleThreadExecutor { body ->
+        // Scheduled so a partial batch's deadline flush runs on the same confined thread.
+        private val executor = Executors.newSingleThreadScheduledExecutor { body ->
             Thread(body, "audio-encode-seal").apply { isDaemon = true }
         }
         private val sealer = SessionFrameSealer(configured.credential)
@@ -218,6 +232,58 @@ class UDPAudioPlane(
             // Replace the crypto stream, but retain the codec's guest playout sequence.
         }
 
+        /** One batch is sealed once and fanned out to every Opus guest (seal-once invariant). */
+        private fun sealAndEmitBatch(
+            batch: SequencedEncodedAudioBatch,
+            state: BroadcastCodecState,
+            writers: List<BoundedSocketFrameWriter>,
+            generation: Long,
+        ) {
+            val logical = SessionEnvelope(
+                lane = SessionLane.REALTIME,
+                kind = SessionMessageKind.AUDIO_BATCH,
+                sequence = batch.firstSequence,
+                sessionId = configured.sessionID,
+                senderId = configured.participantID,
+                payload = batch.payload.encode(),
+            )
+            val frame = configured.authentication.encodeGuide(sealer.seal(logical, state.streamID))
+            synchronized(lock) {
+                if (!stopped && generation == discontinuity) {
+                    sentPacketCount++
+                    if (sentPacketCount == 1) Log.i(TAG, "TCP: sending first encrypted encoded audio batch")
+                    emitFrame(frame, writers)
+                } else if (!stopped) dropEntry()
+            }
+        }
+
+        /** A partial batch is flushed at its deadline so a phrase's tail never waits for more speech. */
+        private fun scheduleBatchFlush(codec: SessionAudioCodec, state: BroadcastCodecState) {
+            if (state.batchFlushScheduled) return
+            val deadline = state.batcher?.flushDeadlineNanoseconds ?: return
+            state.batchFlushScheduled = true
+            val delay = maxOf(0L, deadline - monotonicClock())
+            try {
+                executor.schedule(Runnable {
+                    if (codecStates[codec] !== state) return@Runnable
+                    state.batchFlushScheduled = false
+                    val generation = synchronized(lock) { if (stopped) return@Runnable; discontinuity }
+                    try {
+                        // Judged by the deadline this timer was scheduled for: it flushes that partial
+                        // batch, never a newer one started after an earlier batch filled.
+                        state.batcher?.flushIfDue(deadline)?.let { sealAndEmitBatch(it, state, state.batchWriters, generation) }
+                    } catch (error: Exception) {
+                        state.batcher?.discard()
+                        Log.e(TAG, "TCP: batched audio flush failed (${error.javaClass.simpleName})")
+                    }
+                    scheduleBatchFlush(codec, state)
+                }, delay, TimeUnit.NANOSECONDS)
+            } catch (error: java.util.concurrent.RejectedExecutionException) {
+                // stop() shut the executor down; pending frames end with the run.
+                state.batchFlushScheduled = false
+            }
+        }
+
         private fun process(entry: Entry, generation: Long) {
             if (stopped) return
             if (expired(entry.origin)) { synchronized(lock) { dropEntry() }; return }
@@ -225,13 +291,15 @@ class UDPAudioPlane(
                 if (writers.isEmpty() || codec in failedCodecs) return@forEach
                 try {
                     val state = codecStates.getOrPut(codec) {
-                        BroadcastCodecState(codecProvider.makeEncoder(codec), generation)
+                        BroadcastCodecState(codecProvider.makeEncoder(codec), generation, batchesOpus && codec == SessionAudioCodec.OPUS)
                     }
                     if (state.discontinuity != generation || state.partialOrigin?.let(::expired) == true) {
                         // Capture gaps invalidate partial PCM, not a warmed-up native codec.
                         // Preserve stamps of accepted inputs until delayed output is drained.
                         state.accumulator = PCMFrameAccumulator(state.encoder.inputPCMByteCount)
                         state.partialOrigin = null
+                        // A discontinuity drops at most one partial batch (< 60 ms) with the stale input.
+                        state.batcher?.discard()
                         state.discontinuity = generation
                     }
                     val partial = state.partialOrigin
@@ -279,13 +347,21 @@ class UDPAudioPlane(
                                 outputOrigin.wall + FRAME_LIFETIME_NANOSECONDS,
                                 packet.bytes,
                             )
+                            val sequence = nextSequences.getOrDefault(codec, 0L).also {
+                                check(it < Long.MAX_VALUE) { "Audio sequence exhausted" }
+                                nextSequences[codec] = it + 1
+                            }
+                            val batcher = state.batcher
+                            if (batcher != null) {
+                                state.batchWriters = writers
+                                batcher.append(SequencedEncodedAudioFrame(sequence, payload), monotonicClock())
+                                    .forEach { sealAndEmitBatch(it, state, writers, generation) }
+                                continue
+                            }
                             val logical = SessionEnvelope(
                                 lane = SessionLane.REALTIME,
                                 kind = SessionMessageKind.AUDIO_FRAME,
-                                sequence = nextSequences.getOrDefault(codec, 0L).also {
-                                    check(it < Long.MAX_VALUE) { "Audio sequence exhausted" }
-                                    nextSequences[codec] = it + 1
-                                },
+                                sequence = sequence,
                                 sessionId = configured.sessionID,
                                 senderId = configured.participantID,
                                 payload = payload.encode(),
@@ -304,6 +380,7 @@ class UDPAudioPlane(
                             return@forEach
                         }
                     }
+                    scheduleBatchFlush(codec, state)
                 } catch (error: Exception) {
                     Log.e(TAG, "TCP: encoded audio frame failed (${error.javaClass.simpleName})")
                     synchronized(lock) { dropEntry() }
@@ -342,8 +419,7 @@ class UDPAudioPlane(
 
         init {
             val duration = configuration.frameDurationMilliseconds
-            val targetFrames = maxOf(1, (60 + duration - 1) / duration)
-            val maximumFrames = maxOf(targetFrames, (250 + duration - 1) / duration)
+            val (targetFrames, maximumFrames) = RealtimeAudioPlayoutSizing.frameCounts(configuration)
             jitter = EncodedAudioJitterBuffer(targetFrames, maximumFrames)
             silenceFrame = ByteArray(
                 (configuration.sampleRate * duration / 1_000 * configuration.channelCount * 2).toInt(),
@@ -716,14 +792,18 @@ class UDPAudioPlane(
                     if (
                         envelope.sessionId != configured.sessionID ||
                         envelope.senderId != guideID ||
-                        envelope.kind != SessionMessageKind.AUDIO_FRAME ||
+                        (envelope.kind != SessionMessageKind.AUDIO_FRAME && envelope.kind != SessionMessageKind.AUDIO_BATCH) ||
                         envelope.lane != SessionLane.REALTIME
                     ) {
                         throw IllegalArgumentException("unexpected GOH2 frame")
                     }
                     receivedPacketCount++
                     if (receivedPacketCount == 1) Log.i(TAG, "TCP: received first GOH2 audio frame")
-                    val encoded = EncodedAudioFramePayload.decode(envelope.payload)
+                    // Older guides send single frames; batched Opus carries consecutive sequences (ADR-075).
+                    val frames = if (envelope.kind == SessionMessageKind.AUDIO_BATCH) {
+                        SequencedEncodedAudioBatch(envelope.sequence, EncodedAudioBatchPayload.decode(envelope.payload)).sequencedFrames
+                    } else listOf(SequencedEncodedAudioFrame(envelope.sequence, EncodedAudioFramePayload.decode(envelope.payload)))
+                    val encoded = frames[0].payload
                     if (playout?.configuration != encoded.configuration) {
                         // The receive thread only offers; the clock drains, decodes, and conceals (ADR-045).
                         playout?.close()
@@ -738,7 +818,8 @@ class UDPAudioPlane(
                         ).also { it.start() }
                     }
                     val clock = playout ?: continue
-                    val offered = clock.offer(SequencedEncodedAudioFrame(envelope.sequence, encoded), wallClockNanoseconds())
+                    val now = wallClockNanoseconds()
+                    val offered = frames.map { clock.offer(it, now) }.last()
                     if (receivedPacketCount % 100 == 0) {
                         Log.d(TAG, "TCP: received $receivedPacketCount audio frames; latest jitter result $offered")
                     }

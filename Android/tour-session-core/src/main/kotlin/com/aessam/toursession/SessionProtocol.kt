@@ -27,6 +27,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
     LEAVE(0x04, SessionLane.CONTROL),
     AUTH_CHALLENGE(0x05, SessionLane.CONTROL),
     AUDIO_FRAME(0x10, SessionLane.REALTIME),
+    AUDIO_BATCH(0x11, SessionLane.REALTIME),
     PRESENTATION_SNAPSHOT(0x20, SessionLane.CONTROL),
     BEARING_SNAPSHOT(0x21, SessionLane.CONTROL),
     TARGET_SNAPSHOT(0x22, SessionLane.CONTROL),
@@ -46,6 +47,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
             LEAVE -> "leave"
             AUTH_CHALLENGE -> "authChallenge"
             AUDIO_FRAME -> "audioFrame"
+            AUDIO_BATCH -> "audioBatch"
             PRESENTATION_SNAPSHOT -> "presentationSnapshot"
             BEARING_SNAPSHOT -> "bearingSnapshot"
             TARGET_SNAPSHOT -> "targetSnapshot"

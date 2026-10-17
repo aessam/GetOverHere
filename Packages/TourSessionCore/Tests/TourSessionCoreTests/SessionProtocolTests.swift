@@ -388,7 +388,7 @@ struct SessionProtocolTests {
         #expect(!fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds - 1))
         #expect(fixture.isExpired(atNanoseconds: fixture.expiresAtNanoseconds))
 
-        let all: SessionCapabilities = [.opusEncoder, .opusDecoder, .aacLCEncoder, .aacLCDecoder]
+        let all: SessionCapabilities = [.opusEncoder, .opusDecoder, .opusBatchDecoder, .aacLCEncoder, .aacLCDecoder]
         #expect(try SessionAudioCodecNegotiation.preferredCodec(sender: all, receiver: all) == .opus)
         #expect(try SessionAudioCodecNegotiation.preferredCodec(
             sender: [.aacLCEncoder],

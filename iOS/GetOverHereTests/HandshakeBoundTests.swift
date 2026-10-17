@@ -116,7 +116,7 @@ private func rawReceiveByte(fd: Int32, timeoutSeconds: Int) -> Int {
 
 private final class BoundTestCodecProvider: RealtimeAudioCodecProviderInterface {
     func sessionCapabilities() -> SessionCapabilities {
-        [.opusEncoder, .opusDecoder]
+        [.opusEncoder, .opusDecoder, .opusBatchDecoder]
     }
 
     func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface {

@@ -81,7 +81,8 @@ nonisolated enum NativeRealtimeAudioCodecFactory {
         let native = try NativeAudioCodecCapabilities.current()
         var result: SessionCapabilities = []
         if native.opusEncoder { result.insert(.opusEncoder) }
-        if native.opusDecoder { result.insert(.opusDecoder) }
+        // This build's receive path accepts batched Opus (ADR-075).
+        if native.opusDecoder { result.formUnion([.opusDecoder, .opusBatchDecoder]) }
         if native.aacLCEncoder { result.insert(.aacLCEncoder) }
         if native.aacLCDecoder { result.insert(.aacLCDecoder) }
         return result

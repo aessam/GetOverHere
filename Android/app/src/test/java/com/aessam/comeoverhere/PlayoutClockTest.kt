@@ -26,7 +26,7 @@ class PlayoutClockTest {
         val decoder = FakePlayoutDecoder(failing = true, failingClose = true)
         val failures = AtomicInteger()
         val clock = UDPAudioPlane.PlayoutClock(decoder, { fixedNow }, {}, { failures.incrementAndGet() })
-        listOf(1L, 2L, 3L).forEach {
+        (1L..target(decoder)).forEach {
             clock.offer(SequencedEncodedAudioFrame(it, decoder.payload(1)), fixedNow)
         }
         clock.tick()
@@ -43,25 +43,27 @@ class PlayoutClockTest {
         val failures = AtomicInteger()
         val clock = UDPAudioPlane.PlayoutClock(decoder, { fixedNow }, { emitted += it }, { failures.incrementAndGet() })
         try {
-            listOf(1L, 2L, 3L, 5L).forEach { sequence ->
+            // Fill the playout target with sequence `target + 1` missing, then one frame after the gap.
+            val target = target(decoder)
+            val offered = (1L..target) + (target + 2)
+            offered.forEach { sequence ->
                 assertEquals(
                     EncodedAudioFrameOfferResult.ACCEPTED,
                     clock.offer(SequencedEncodedAudioFrame(sequence, decoder.payload(sequence.toByte())), fixedNow),
                 )
             }
-            repeat(5) { clock.tick() }
+            repeat(offered.size + 1) { clock.tick() }
 
             // 16 kHz * 20 ms / 1000 * 1 channel * 2 bytes = 640 bytes of PCM16 silence.
             assertEquals(640, clock.silenceFrame.size)
-            assertEquals(5, emitted.size)
-            assertArrayEquals(byteArrayOf(1), emitted[0])
-            assertArrayEquals(byteArrayOf(2), emitted[1])
-            assertArrayEquals(byteArrayOf(3), emitted[2])
-            assertEquals(640, emitted[3].size)
-            assertTrue(emitted[3].all { it == 0.toByte() })
-            assertArrayEquals(byteArrayOf(5), emitted[4])
+            assertEquals(offered.size + 1, emitted.size)
+            (1L..target).forEachIndexed { index, sequence -> assertArrayEquals(byteArrayOf(sequence.toByte()), emitted[index]) }
+            val silence = emitted[target.toInt()]
+            assertEquals(640, silence.size)
+            assertTrue(silence.all { it == 0.toByte() })
+            assertArrayEquals(byteArrayOf((target + 2).toByte()), emitted.last())
             assertEquals(0, failures.get())
-            assertEquals(4, decoder.decodeCount.get())
+            assertEquals(offered.size, decoder.decodeCount.get())
         } finally {
             clock.close()
         }
@@ -74,7 +76,7 @@ class PlayoutClockTest {
         val failures = AtomicInteger()
         val clock = UDPAudioPlane.PlayoutClock(decoder, { fixedNow }, { emitted += it }, { failures.incrementAndGet() })
         try {
-            listOf(1L, 2L, 3L).forEach { sequence ->
+            (1L..target(decoder)).forEach { sequence ->
                 assertEquals(
                     EncodedAudioFrameOfferResult.ACCEPTED,
                     clock.offer(SequencedEncodedAudioFrame(sequence, decoder.payload(sequence.toByte())), fixedNow),
@@ -111,3 +113,7 @@ private class FakePlayoutDecoder(private val failing: Boolean = false, private v
         if (failingClose) throw IllegalStateException("codec stop rejected after decode failure")
     }
 }
+
+/** The shared playout target for the fake decoder's configuration (ADR-075). */
+private fun target(decoder: RealtimeAudioDecoderInterface): Long =
+    com.aessam.toursession.RealtimeAudioPlayoutSizing.frameCounts(decoder.configuration).first.toLong()

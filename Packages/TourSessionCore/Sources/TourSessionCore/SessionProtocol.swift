@@ -13,6 +13,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
     case leave = 0x04
     case authChallenge = 0x05
     case audioFrame = 0x10
+    case audioBatch = 0x11
     case presentationSnapshot = 0x20
     case bearingSnapshot = 0x21
     case targetSnapshot = 0x22
@@ -26,7 +27,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
 
     public var requiredLane: SessionLane {
         switch self {
-        case .audioFrame:
+        case .audioFrame, .audioBatch:
             .realtime
         case .hello, .welcome, .heartbeat, .leave, .authChallenge, .presentationSnapshot, .bearingSnapshot,
              .targetSnapshot, .visualFocusSnapshot, .audioStatus:

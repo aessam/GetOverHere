@@ -137,6 +137,32 @@ struct AudioEncodeAdmissionTests {
         #expect(f.provider.createdCount == 0)
     }
 
+    @Test("Opus frames leave as one sealed, signed batch per three frames (ADR-075)")
+    func fullBatchIsSealedOnce() async throws {
+        let f = try Fixture(mode: .passthrough, batched: true)
+        defer { f.stop() }
+        for value: UInt8 in 1...3 { f.submit(value) }
+        try await waitUntil { f.frames.count == 1 }
+        let envelope = try #require(try f.envelopes.first)
+        #expect(envelope.kind == .audioBatch)
+        let batch = SequencedEncodedAudioBatch(firstSequence: envelope.sequence,
+                                               payload: try EncodedAudioBatchPayload.decode(envelope.payload))
+        #expect(batch.payload.frames.map(\.encodedBytes) == (1...3).map { Data(repeating: $0, count: 4) })
+        let sequences = batch.sequencedFrames.map(\.sequence)
+        #expect(sequences == [sequences[0], sequences[0] + 1, sequences[0] + 2])
+    }
+
+    @Test("A partial batch is flushed at its deadline instead of waiting for more speech")
+    func partialBatchFlushesAtDeadline() async throws {
+        let f = try Fixture(mode: .passthrough, batched: true)
+        defer { f.stop() }
+        f.submit(7)
+        try await waitUntil { f.frames.count == 1 }
+        let envelope = try #require(try f.envelopes.first)
+        #expect(envelope.kind == .audioBatch)
+        #expect(try EncodedAudioBatchPayload.decode(envelope.payload).frames.map(\.encodedBytes) == [Data(repeating: 7, count: 4)])
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while !condition() {
@@ -155,7 +181,7 @@ struct AudioEncodeAdmissionTests {
         private let credential: SessionCredential
         private let verifier: GuideFrameVerifier
 
-        init(mode: TestProvider.Mode) throws {
+        init(mode: TestProvider.Mode, batched: Bool = false) throws {
             let session = UUID(), guide = UUID()
             credential = try SessionCredential.derive(shortCode: "23456789AB", sessionID: session)
             let signer = GuideFrameSigner(sessionID: session, guideID: guide)
@@ -166,7 +192,7 @@ struct AudioEncodeAdmissionTests {
                 configuration: .init(sessionID: session, participantID: guide, displayName: "Guide", platform: .iOS, credential: credential),
                 codecProvider: provider, frameLifetimeNanoseconds: 500_000_000,
                 authentication: .guide(signer), monotonicClock: { clock.monotonic }, wallClock: { clock.wall },
-                deliver: { frame, _ in recorder.append(frame) })
+                deliver: { frame, _ in recorder.append(frame) }, batchesOpus: batched)
         }
 
         func submit(_ byte: UInt8) { processor.submit(pcm: Data(repeating: byte, count: 4), destinations: [.opus: []]) }

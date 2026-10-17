@@ -2089,3 +2089,33 @@ Android release signing reads git-ignored `Android/keystore.properties`. Without
 (not committed; properties file moved out of the repo after the build): `app-release.apk`
 62,369,851 B, `apksigner verify` V2 signer CN=Throwaway, not debuggable; app classes in
 classes2.dex (`ChannelService` 45, `PdfSlideRenderer` 7 string hits), `GatewayDebugControl` 0 in all dex files.
+
+## 2026-10-17 — ACT-1 batched Opus (ADR-075)
+
+Environment: macOS 27, Xcode 27.0 (27A266a), simulator `iPhone 17` 5D72BABA…, Android Studio JBR.
+No devices.
+
+Research inputs: three read-only agents (RSI practice, low-bitrate codecs, Bluetooth relay).
+The per-frame signing claim was verified in code: `UDPAudioPlane.swift:236` calls `encodeGuideFrame`
+for every audio frame; `headerSize = 70`, `tagSize = 16`, `fixedHeaderSize = 36`.
+
+Byte parity: `tour-session-swift audio-batch-fixture` == Kotlin CLI output (pinned in both test
+suites); `decode-audio-batch` cross-decodes identically. Both are added to verify steps 3/4.
+Size: sealed + 76 B framing/signature per packet, 3×50 B frames with 19 B codec data:
+batch 408 B vs singles 801 B per 60 ms (≈54.4 vs 106.8 kbps).
+Burst playout model, 200 batches with jitter pattern ×1..5 (9–45 ms peaks): target 6 → 0 stalls
+at every scale. Target 3 → 0/1/1/1/2 stalls. The first assertion assumed the old target always
+stalls; measurement showed none at ±9 ms, so the test now asserts the measured ±18 ms case.
+
+Swift core 93/93. Kotlin core 92/92. Android app 208/208 (`:app:testDebugUnitTest`).
+`bash scripts/verify_audio_recovery_mutation.sh`: PASS, the mutant is killed by the guest playout
+assertion through the batched path.
+Full gate (`GOH_IOS_DESTINATION=…id=5D72BABA…`): "Tour session verification passed"; iOS
+`Test-GetOverHere-2026.10.17_15-14-49--0700` Passed 215 / 211 / 0 failed / 4 skipped.
+
+Test adaptations:
+- Per-frame admission tests opt out with `batchesOpus: false` (iOS) / `batched = false` (Android).
+- The FND-1 continuity test, end-to-end transport tests and playout tests now use production batching.
+- Those tests send enough frames to fill the 6-frame target, derived from `RealtimeAudioPlayoutSizing`.
+
+Not verified: real Bluetooth on-air rate, audible delay, and older-build interop on devices.

@@ -96,7 +96,7 @@ struct LocalSessionTransportTests {
         do {
             _ = try client.authenticate(sessionID: sessionID, participantID: participantID, displayName: "Guest",
                 platform: .iOS, credential: credential, lane: lane, guideVerifier: verifier,
-                capabilities: SessionCapabilities.opusDecoder.rawValue)
+                capabilities: SessionCapabilities([.opusDecoder, .opusBatchDecoder]).rawValue)
             return client
         } catch { client.close(); throw error }
     }
@@ -162,9 +162,8 @@ struct LocalSessionTransportTests {
         #expect(guide.connectedClientDescriptors.count == 1)
         #expect(tcpNoDelay(fd: try #require(guide.connectedClientDescriptors.first)) != 0)
 
-        guide.sendAudio(payload)
-        guide.sendAudio(payload)
-        guide.sendAudio(payload)
+        // Batched Opus (ADR-075): the guest starts once two bursts fill its playout target.
+        for _ in 0..<(2 * RealtimeAudioPlayoutSizing.opusBatchFrameCount) { guide.sendAudio(payload) }
         let (received, deliveryQueueLabel) = try await next(from: audio)
         #expect(received == payload)
         #expect(deliveryQueueLabel == "audio.tcp.playout")
@@ -1549,7 +1548,7 @@ private func writeTestFrame(fd: Int32, data: Data) -> Bool {
 
 private final class PassThroughRealtimeAudioCodecProvider: RealtimeAudioCodecProviderInterface {
     func sessionCapabilities() -> SessionCapabilities {
-        [.opusEncoder, .opusDecoder]
+        [.opusEncoder, .opusDecoder, .opusBatchDecoder]
     }
 
     func makeEncoder(codec: SessionAudioCodec) throws -> any RealtimeAudioEncoderInterface {

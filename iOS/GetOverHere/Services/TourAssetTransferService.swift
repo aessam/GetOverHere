@@ -728,7 +728,7 @@ final class TourAssetTransferService {
                 return nil
             }
         case .tourPackManifest, .assetRequest, .assetStatus, .assetManifest,
-             .hello, .authChallenge, .welcome, .heartbeat, .leave, .audioFrame,
+             .hello, .authChallenge, .welcome, .heartbeat, .leave, .audioFrame, .audioBatch,
              .presentationSnapshot, .bearingSnapshot, .targetSnapshot, .visualFocusSnapshot, .audioStatus:
             return nil
         }

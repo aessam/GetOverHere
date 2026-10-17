@@ -141,6 +141,11 @@ fun main(arguments: Array<String>) {
                 println(TourSessionFixtures.describeAudioFrame(arguments[1].hexToByteArray()))
             }
             "audio-fixture" -> println(TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex())
+            "audio-batch-fixture" -> println(TourSessionFixtures.encodedAudioBatchFixture().encode().lowercaseHex())
+            "decode-audio-batch" -> {
+                if (arguments.size != 2) fail("decode-audio-batch requires one hex argument")
+                println(TourSessionFixtures.describeAudioBatch(arguments[1].hexToByteArray()))
+            }
             "handshake" -> println(TourSessionFixtures.handshakeFixtureHex())
             "realtime-fixture" -> println(TourSessionFixtures.encryptedRealtimeFixture().encode().lowercaseHex())
             "simulate" -> {

@@ -176,6 +176,9 @@ object TourSessionFixtures {
             SessionMessageKind.AUDIO_FRAME -> {
                 fields += "audio=${describeAudioFrame(envelope.payload)}"
             }
+            SessionMessageKind.AUDIO_BATCH -> {
+                fields += "audioBatch=${describeAudioBatch(envelope.payload)}"
+            }
         }
         return fields.joinToString("|")
     }
@@ -191,6 +194,37 @@ object TourSessionFixtures {
         return "version=${SealedSessionEnvelope.MAJOR_VERSION}.${sealed.minorVersion}" +
             "|stream=${sealed.streamId.toString().lowercase()}|" +
             describe(opened.envelope)
+    }
+
+    /** Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity. */
+    fun encodedAudioBatchFixture(): EncodedAudioBatchPayload {
+        val configuration = SessionAudioCodecConfiguration(
+            SessionAudioCodec.OPUS, 16_000, 1, 20, 20_000, byteArrayOf(0x4f, 0x70, 0x75, 0x73),
+        )
+        return EncodedAudioBatchPayload((0 until 3).map { index ->
+            EncodedAudioFramePayload(
+                configuration,
+                1_000_000_000L + index * 20_000_000L,
+                1_500_000_000L + index * 20_000_000L,
+                byteArrayOf(0xf8.toByte(), 0xff.toByte(), 0xfe.toByte(), index.toByte()),
+            )
+        })
+    }
+
+    fun describeAudioBatch(encoded: ByteArray): String {
+        val batch = EncodedAudioBatchPayload.decode(encoded)
+        val configuration = batch.configuration
+        return (listOf(
+            "codec=${configuration.codec.rawValue}",
+            "sampleRate=${configuration.sampleRate}",
+            "channelCount=${configuration.channelCount}",
+            "frameDurationMilliseconds=${configuration.frameDurationMilliseconds}",
+            "bitRate=${configuration.bitRate}",
+            "codecSpecificData=${configuration.codecSpecificData.lowercaseHex()}",
+            "frameCount=${batch.frames.size}",
+        ) + batch.frames.mapIndexed { index, frame ->
+            "frame$index=${frame.capturedAtNanoseconds}/${frame.expiresAtNanoseconds}/${frame.encodedBytes.lowercaseHex()}"
+        }).joinToString("|")
     }
 
     fun encodedAudioFixture(): EncodedAudioFramePayload = EncodedAudioFramePayload(

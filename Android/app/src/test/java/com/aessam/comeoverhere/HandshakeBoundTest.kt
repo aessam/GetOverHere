@@ -110,7 +110,7 @@ class HandshakeBoundTest {
 
 private class BoundTestCodecProvider : RealtimeAudioCodecProvider {
     override fun sessionCapabilities(): Long =
-        SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit
+        SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit or SessionCapability.OPUS_BATCH_DECODER.bit
 
     override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface = BoundTestEncoder(codec)
 

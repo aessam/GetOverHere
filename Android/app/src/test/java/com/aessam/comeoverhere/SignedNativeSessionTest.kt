@@ -99,7 +99,7 @@ class SignedNativeSessionTest {
             assertTrue("Signed handshakes failed", connected.await(5, TimeUnit.SECONDS))
             guideControl.send(SessionMessageKind.TARGET_SNAPSHOT, bytes)
             guideAssets.send(SessionMessageKind.ASSET_CHUNK, bytes, guestID)
-            repeat(3) { guideAudio.sendAudio(bytes) }
+            repeat(2 * com.aessam.toursession.RealtimeAudioPlayoutSizing.OPUS_BATCH_FRAME_COUNT) { guideAudio.sendAudio(bytes) }
             assertTrue("Signed production payloads not delivered", delivered.await(5, TimeUnit.SECONDS))
         } finally {
             guestAudio.clearSession(); guideAudio.clearSession()

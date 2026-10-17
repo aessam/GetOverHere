@@ -105,7 +105,7 @@ class NativeParticipantCapacityTest {
                 assertEquals(SessionMessageKind.AUTH_CHALLENGE, challengeEnvelope.kind)
                 val challenge = AuthChallengePayload.decode(challengeEnvelope.payload)
                 val nonce = SessionAuthenticator.randomNonce()
-                val capabilities = SessionCapability.OPUS_DECODER.bit
+                val capabilities = SessionCapability.OPUS_DECODER.bit or SessionCapability.OPUS_BATCH_DECODER.bit
                 val proof = SessionAuthenticator.guestProof(credential, room, guideID, member, lane,
                     challenge.challengeNonce, nonce, SessionRole.GUEST, ParticipantPlatform.ANDROID, capabilities, "Guest")
                 val hello = SessionEnvelope(lane = SessionLane.CONTROL, kind = SessionMessageKind.HELLO, sequence = 0,

@@ -104,9 +104,8 @@ class LocalSessionTransportTest {
             assertTrue("accepted socket keeps Nagle", guide.acceptedClientSockets().single().tcpNoDelay)
 
             val expected = byteArrayOf(0x10, 0x20, 0x30, 0x40)
-            guide.sendAudio(expected)
-            guide.sendAudio(expected)
-            guide.sendAudio(expected)
+            // Batched Opus (ADR-075): the guest starts once two bursts fill its playout target.
+            repeat(2 * com.aessam.toursession.RealtimeAudioPlayoutSizing.OPUS_BATCH_FRAME_COUNT) { guide.sendAudio(expected) }
             assertTrue("Audio did not arrive", audioReceived.await(3, TimeUnit.SECONDS))
             assertArrayEquals(expected, receivedPayload.get())
             assertEquals("goh2-audio-playout", audioThreadName.get())
@@ -992,7 +991,7 @@ internal class PassThroughRealtimeAudioCodecProvider : RealtimeAudioCodecProvide
     val encodeThreadNames = CopyOnWriteArraySet<String>()
 
     override fun sessionCapabilities(): Long =
-        SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit
+        SessionCapability.OPUS_ENCODER.bit or SessionCapability.OPUS_DECODER.bit or SessionCapability.OPUS_BATCH_DECODER.bit
 
     override fun makeEncoder(codec: SessionAudioCodec): RealtimeAudioEncoderInterface =
         PassThroughRealtimeAudioEncoder(codec, encodeThreadNames)

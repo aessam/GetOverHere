@@ -208,3 +208,20 @@ public struct EncodedAudioJitterBuffer: Sendable {
         return deadlineOverflow ? UInt64.max : deadline
     }
 }
+
+/// Playout and sender batch sizing shared by both apps (ADR-075). Opus arrives as bursts of
+/// `opusBatchFrameCount` frames, so the jitter target covers two bursts; other codecs keep 60 ms.
+public enum RealtimeAudioPlayoutSizing {
+    public static let opusBatchFrameCount = 3
+    /// Longest time a sender holds a partial batch, so a phrase's last frames never wait for more speech.
+    public static let opusBatchMaximumWaitNanoseconds: UInt64 = 40_000_000
+
+    public static func frameCounts(for configuration: SessionAudioCodecConfiguration) -> (target: Int, maximum: Int) {
+        let duration = Int(configuration.frameDurationMilliseconds)
+        let burst = configuration.codec == .opus ? opusBatchFrameCount : 1
+        let targetMilliseconds = configuration.codec == .opus ? 2 * burst * duration : 60
+        let target = max(1, (targetMilliseconds + duration - 1) / duration)
+        let maximum = max(target + burst, (250 + duration - 1) / duration)
+        return (target, maximum)
+    }
+}

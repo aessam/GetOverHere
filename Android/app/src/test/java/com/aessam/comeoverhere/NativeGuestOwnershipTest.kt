@@ -115,7 +115,7 @@ class NativeGuestOwnershipTest {
             assertTrue(joined.await(3, TimeUnit.SECONDS))
             factory.release.countDown()
             assertTrue("Superseded socket was not closed", factory.closed.await(3, TimeUnit.SECONDS))
-            repeat(3) { guide.sendAudio(byteArrayOf(1, 2, 3, 4)) }
+            repeat(2 * com.aessam.toursession.RealtimeAudioPlayoutSizing.OPUS_BATCH_FRAME_COUNT) { guide.sendAudio(byteArrayOf(1, 2, 3, 4)) }
             assertTrue("Current audio socket was replaced", audio.await(3, TimeUnit.SECONDS))
             assertTrue("Old callback received new PCM", oldAudio.count == 1L)
         } finally {

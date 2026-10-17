@@ -49,7 +49,8 @@ struct PlayoutClockTests {
             emit: { pcm in emitted.withLock { $0.append(pcm) } },
             onDecodeFailure: { failures.withLock { $0 += 1 } })
         defer { clock.stop(); decoder.release.signal() }
-        for sequence: UInt64 in [1, 2, 3] {
+        let target = UInt64(RealtimeAudioPlayoutSizing.frameCounts(for: decoder.configuration).target)
+        for sequence: UInt64 in 1...target {
             let payload = try EncodedAudioFramePayload(configuration: decoder.configuration,
                 capturedAtNanoseconds: 0, expiresAtNanoseconds: 500_000_000,
                 encodedBytes: Data([UInt8(sequence)]))
@@ -79,21 +80,26 @@ struct PlayoutClockTests {
         )
         defer { clock.stop() }
 
-        for sequence: UInt64 in [1, 2, 3, 5] {
+        // Fill the playout target with sequence `target + 1` missing, then one frame after the gap.
+        let target = UInt64(RealtimeAudioPlayoutSizing.frameCounts(for: decoder.configuration).target)
+        let offered = Array(1..<(target + 1)) + [target + 2]
+        for sequence in offered {
             let frame = SequencedEncodedAudioFrame(
                 sequence: sequence,
                 payload: try decoder.payload(byte: UInt8(sequence))
             )
             #expect(clock.offer(frame, nowNanoseconds: Self.fixedNow) == .accepted)
         }
-        for _ in 0 ..< 5 { clock.tick() }
+        for _ in 0 ..< offered.count + 1 { clock.tick() }
 
         // 16 kHz * 20 ms / 1000 * 1 channel * 2 bytes = 640 bytes of PCM16 silence.
         #expect(clock.silenceFrame.count == 640)
         #expect(clock.silenceFrame == Data(count: 640))
-        #expect(emitted.withLock { $0 } == [Data([1]), Data([2]), Data([3]), Data(count: 640), Data([5])])
+        // The first `target` frames, one silence frame for the gap, then the next frame.
+        let expected = (1...target).map { Data([UInt8($0)]) } + [Data(count: 640), Data([UInt8(target + 2)])]
+        #expect(emitted.withLock { $0 } == expected)
         #expect(failures.withLock { $0 } == 0)
-        #expect(decoder.decodeCount == 4)
+        #expect(decoder.decodeCount == offered.count)
     }
 
     @Test("A throwing decoder reports failure exactly once and stops the clock")
@@ -109,7 +115,8 @@ struct PlayoutClockTests {
         )
         defer { clock.stop() }
 
-        for sequence: UInt64 in [1, 2, 3] {
+        let target = UInt64(RealtimeAudioPlayoutSizing.frameCounts(for: decoder.configuration).target)
+        for sequence: UInt64 in 1...target {
             let frame = SequencedEncodedAudioFrame(
                 sequence: sequence,
                 payload: try decoder.payload(byte: UInt8(sequence))

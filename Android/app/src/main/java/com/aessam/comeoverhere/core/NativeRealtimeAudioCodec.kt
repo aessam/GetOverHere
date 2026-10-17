@@ -55,7 +55,10 @@ object NativeRealtimeAudioCodecFactory : RealtimeAudioCodecProvider {
         val native = NativeAudioCodecCapabilities.current()
         var result = 0L
         if (native.opusEncoder != null) result = result or SessionCapability.OPUS_ENCODER.bit
-        if (native.opusDecoder != null) result = result or SessionCapability.OPUS_DECODER.bit
+        // This build's receive path accepts batched Opus (ADR-075).
+        if (native.opusDecoder != null) {
+            result = result or SessionCapability.OPUS_DECODER.bit or SessionCapability.OPUS_BATCH_DECODER.bit
+        }
         if (native.aacLCEncoder != null) result = result or SessionCapability.AAC_LC_ENCODER.bit
         if (native.aacLCDecoder != null) result = result or SessionCapability.AAC_LC_DECODER.bit
         return result

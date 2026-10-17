@@ -6,7 +6,7 @@ enum TourSessionCLI {
     static func main() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | handshake | realtime-fixture | nearby-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
+            fail("usage: tour-session-swift fixture | encrypted-fixture | decode HEX[|HEX...] | decode-encrypted HEX | decode-audio HEX | audio-fixture | decode-audio-batch HEX | audio-batch-fixture | handshake | realtime-fixture | nearby-fixture | simulate COUNT | faults | playout | state | auth | recovery | focus")
         }
 
         switch command {
@@ -94,6 +94,11 @@ enum TourSessionCLI {
             print(try TourSessionFixtures.describeAudioFrame(Data(hex: arguments[1])))
         case "audio-fixture":
             print(try TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex)
+        case "audio-batch-fixture":
+            print(try TourSessionFixtures.encodedAudioBatchFixture().encode().lowercaseHex)
+        case "decode-audio-batch":
+            guard arguments.count == 2 else { fail("decode-audio-batch requires one hex argument") }
+            print(try TourSessionFixtures.describeAudioBatch(Data(hex: arguments[1])))
         case "handshake":
             print(try TourSessionFixtures.handshakeFixtureHex())
         case "realtime-fixture":

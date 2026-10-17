@@ -31,11 +31,14 @@ import java.util.concurrent.atomic.AtomicLong
 
 class RealtimeCaptureInboxTest {
     @Test fun replacementContinuesAuthenticatedGuestPlayoutWithoutResettingTimeline() {
+        // Production batching (ADR-075): two full batches fill the guest playout target.
+        val target = com.aessam.toursession.RealtimeAudioPlayoutSizing.frameCounts(inboxPacket(byteArrayOf()).configuration).first
         val provider = InboxCodecProvider { instance, call, pcm ->
-            if (instance == 1 && call > 3) error("Injected terminal codec failure")
+            if (instance == 1 && call > target) error("Injected terminal codec failure")
             inboxPacket(pcm)
         }
-        val h = InboxHarness(provider, expectedOutputs = 3, signed = true)
+        val h = InboxHarness(provider, expectedOutputs = target / com.aessam.toursession.RealtimeAudioPlayoutSizing.OPUS_BATCH_FRAME_COUNT,
+            signed = true, batched = true)
         val played = mutableListOf<ByteArray>()
         val decoder = object : RealtimeAudioDecoderInterface {
             override val configuration = inboxPacket(byteArrayOf()).configuration
@@ -47,26 +50,29 @@ class RealtimeCaptureInboxTest {
         val opener = SessionFrameOpener(h.credential)
         fun receive(bytes: ByteArray) {
             val opened = opener.open(h.authentication.decodeGuide(bytes)) as SessionFrameOpenResult.Opened
-            assertEquals("Recovered frame must enter the existing guest timeline",
-                EncodedAudioFrameOfferResult.ACCEPTED,
-                clock.offer(SequencedEncodedAudioFrame(opened.envelope.sequence,
-                    EncodedAudioFramePayload.decode(opened.envelope.payload)), InboxHarness.WALL_BASE))
+            assertEquals(com.aessam.toursession.SessionMessageKind.AUDIO_BATCH, opened.envelope.kind)
+            com.aessam.toursession.SequencedEncodedAudioBatch(opened.envelope.sequence,
+                com.aessam.toursession.EncodedAudioBatchPayload.decode(opened.envelope.payload)).sequencedFrames.forEach {
+                assertEquals("Recovered frame must enter the existing guest timeline",
+                    EncodedAudioFrameOfferResult.ACCEPTED, clock.offer(it, InboxHarness.WALL_BASE))
+            }
         }
         try {
-            repeat(3) { h.submit(byteArrayOf(1, 2, 3, 4)) }
+            repeat(target) { h.submit(byteArrayOf(1, 2, 3, 4)) }
             assertTrue(h.output.await(3, TimeUnit.SECONDS))
             h.frames.forEach(::receive)
-            repeat(3) { clock.tick() }
-            assertEquals(3, played.size)
+            repeat(target) { clock.tick() }
+            assertEquals(target, played.size)
             h.submit(byteArrayOf(5, 6, 7, 8))
             assertTrue(provider.firstClosed.await(3, TimeUnit.SECONDS))
             val resumed = CountDownLatch(1)
             h.afterOutput = { resumed.countDown() }
             h.submit(byteArrayOf(9, 10, 11, 12))
             assertTrue(resumed.await(3, TimeUnit.SECONDS))
+            // The recovered single frame is flushed as a one-frame batch at its 40 ms deadline.
             receive(h.frames.last())
             clock.tick()
-            assertEquals(4, played.size)
+            assertEquals(target + 1, played.size)
             assertArrayEquals(byteArrayOf(9, 10, 11, 12), played.last())
         } finally { clock.close(); h.close() }
     }
@@ -352,7 +358,7 @@ class RealtimeCaptureInboxTest {
 }
 
 private class InboxHarness(provider: InboxCodecProvider, expectedOutputs: Int = 1,
-    signed: Boolean = false, failure: (String) -> Unit = {}) : AutoCloseable {
+    signed: Boolean = false, failure: (String) -> Unit = {}, batched: Boolean = false) : AutoCloseable {
     companion object { const val WALL_BASE = 1_000_000_000L }
     val time = AtomicLong(0)
     val frames = CopyOnWriteArrayList<ByteArray>()
@@ -372,6 +378,8 @@ private class InboxHarness(provider: InboxCodecProvider, expectedOutputs: Int = 
         wallClock = { WALL_BASE + time.get() }, monotonicClock = time::get,
         emitFrame = { bytes, _ -> frames += bytes; output.countDown(); afterOutput?.invoke() },
         onEncoderFailure = failure,
+        // Per-frame admission tests observe single frames; the guest-continuity test uses production batching.
+        batchesOpus = batched,
     )
     fun submit(bytes: ByteArray) = processor.submit(bytes, mapOf(SessionAudioCodec.OPUS to listOf(writer)))
     fun payloads(): List<EncodedAudioFramePayload> {

@@ -190,3 +190,22 @@ class EncodedAudioJitterBuffer(
         }
     }
 }
+
+/**
+ * Playout and sender batch sizing shared by both apps (ADR-075). Opus arrives as bursts of
+ * [OPUS_BATCH_FRAME_COUNT] frames, so the jitter target covers two bursts; other codecs keep 60 ms.
+ */
+object RealtimeAudioPlayoutSizing {
+    const val OPUS_BATCH_FRAME_COUNT = 3
+    /** Longest time a sender holds a partial batch, so a phrase's last frames never wait for more speech. */
+    const val OPUS_BATCH_MAXIMUM_WAIT_NANOSECONDS = 40_000_000L
+
+    fun frameCounts(configuration: SessionAudioCodecConfiguration): Pair<Int, Int> {
+        val duration = configuration.frameDurationMilliseconds
+        val burst = if (configuration.codec == SessionAudioCodec.OPUS) OPUS_BATCH_FRAME_COUNT else 1
+        val targetMilliseconds = if (configuration.codec == SessionAudioCodec.OPUS) 2 * burst * duration else 60
+        val target = maxOf(1, (targetMilliseconds + duration - 1) / duration)
+        val maximum = maxOf(target + burst, (250 + duration - 1) / duration)
+        return target to maximum
+    }
+}

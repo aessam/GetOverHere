@@ -40,13 +40,25 @@ final class UDPAudioPlane: AudioPlane {
         var sequence: UInt64 = 0
         var partialStamp: SubmissionStamp?
         var suppliedInputs: [(stamp: SubmissionStamp, sequence: UInt64)] = []
+        /// Opus only (ADR-075): frames wait here until a batch is full or its deadline passes.
+        var batcher: AudioFrameBatcher?
+        var batchWriters: [BoundedSocketFrameWriter] = []
+        var batchFlushScheduled = false
 
-        init(encoder: any RealtimeAudioEncoderInterface) throws {
+        init(encoder: any RealtimeAudioEncoderInterface, batched: Bool) throws {
             self.encoder = encoder
             accumulator = try PCMFrameAccumulator(frameByteCount: encoder.inputPCMByteCount)
+            if batched {
+                batcher = try AudioFrameBatcher(
+                    maximumFrameCount: RealtimeAudioPlayoutSizing.opusBatchFrameCount,
+                    maximumWaitNanoseconds: RealtimeAudioPlayoutSizing.opusBatchMaximumWaitNanoseconds
+                )
+            }
         }
 
         func resetPacketizer() {
+            // A discontinuity drops at most one partial batch (< 60 ms) with the stale input.
+            batcher?.discard()
             accumulator.reset()
             partialStamp = nil
             suppliedInputs.removeAll()
@@ -79,6 +91,8 @@ final class UDPAudioPlane: AudioPlane {
         private let monotonicClock: @Sendable () -> UInt64
         private let wallClock: @Sendable () -> UInt64
         private let deliver: @Sendable (Data, [BoundedSocketFrameWriter]) -> Void
+        /// Production batches Opus (ADR-075). Per-frame admission tests opt out to observe single frames.
+        private let batchesOpus: Bool
         private var codecStates: [SessionAudioCodec: BroadcastCodecState] = [:]
         private var sentPacketCount = 0
         private var stopped = false
@@ -100,8 +114,10 @@ final class UDPAudioPlane: AudioPlane {
             wallClock: @escaping @Sendable () -> UInt64 = { UDPAudioPlane.wallClockNanoseconds() },
             deliver: @escaping @Sendable (Data, [BoundedSocketFrameWriter]) -> Void = { frame, writers in
                 writers.forEach { $0.enqueue(frame) }
-            }
+            },
+            batchesOpus: Bool = true
         ) {
+            self.batchesOpus = batchesOpus
             self.configuration = configuration
             self.codecProvider = codecProvider
             sealer = SessionFrameSealer(credential: configuration.credential)
@@ -163,6 +179,53 @@ final class UDPAudioPlane: AudioPlane {
             }
         }
 
+        private func deliverSealed(_ frame: Data, writers: [BoundedSocketFrameWriter]) {
+            lock.withLock {
+                guard !stopped else { return }
+                sentPacketCount += 1
+                if sentPacketCount == 1 { Logger.audio.info("TCP: sending first encrypted encoded audio frame") }
+                // Only bounded enqueue operations occur here, never socket IO.
+                deliver(frame, writers)
+            }
+        }
+
+        /// One batch is sealed once and fanned out to every Opus guest (seal-once invariant).
+        private func sealAndDeliver(_ batch: SequencedEncodedAudioBatch, state: BroadcastCodecState, writers: [BoundedSocketFrameWriter]) throws {
+            let envelope = try SessionEnvelope(
+                lane: .realtime, kind: .audioBatch, sequence: batch.firstSequence,
+                sessionID: configuration.sessionID, senderID: configuration.participantID,
+                payload: batch.payload.encode()
+            )
+            deliverSealed(try authentication.encodeGuideFrame(sealer.seal(envelope, streamID: state.streamID)), writers: writers)
+        }
+
+        /// A partial batch is flushed on this queue at its deadline so a phrase's tail never waits for more speech.
+        private func scheduleBatchFlush(codec: SessionAudioCodec, state: BroadcastCodecState) {
+            guard !state.batchFlushScheduled, let deadline = state.batcher?.flushDeadlineNanoseconds else { return }
+            state.batchFlushScheduled = true
+            let now = monotonicClock()
+            let delay = deadline > now ? deadline - now : 0
+            queue.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int.max))))) { [weak self] in
+                guard let self, let current = codecStates[codec], current === state else { return }
+                state.batchFlushScheduled = false
+                guard !lock.withLock({ self.stopped }), var batcher = state.batcher else { return }
+                do {
+                    // Judged by the deadline this timer was scheduled for: it flushes that partial batch,
+                    // never a newer one started after an earlier batch filled.
+                    if let batch = try batcher.flushIfDue(nowNanoseconds: deadline) {
+                        state.batcher = batcher
+                        try sealAndDeliver(batch, state: state, writers: state.batchWriters)
+                    } else {
+                        state.batcher = batcher
+                    }
+                } catch {
+                    state.resetPacketizer()
+                    Logger.audio.error("TCP: batched audio flush failed")
+                }
+                scheduleBatchFlush(codec: codec, state: state)
+            }
+        }
+
         private func isFresh(_ stamp: SubmissionStamp) -> Bool {
             guard !lock.withLock({ stopped }) else { return false }
             let now = monotonicClock()
@@ -185,7 +248,7 @@ final class UDPAudioPlane: AudioPlane {
                     let state: BroadcastCodecState
                     if let existing = codecStates[codec] { state = existing }
                     else {
-                        state = try BroadcastCodecState(encoder: codecProvider.makeEncoder(codec: codec))
+                        state = try BroadcastCodecState(encoder: codecProvider.makeEncoder(codec: codec), batched: batchesOpus && codec == .opus)
                         codecStates[codec] = state
                     }
                     if let oldest = state.suppliedInputs.first?.stamp ?? state.partialStamp, !isFresh(oldest) {
@@ -228,6 +291,16 @@ final class UDPAudioPlane: AudioPlane {
                             expiresAtNanoseconds: deadline,
                             encodedBytes: packet.bytes
                         )
+                        if var batcher = state.batcher {
+                            let batches = try batcher.append(
+                                SequencedEncodedAudioFrame(sequence: input.sequence, payload: payload),
+                                nowNanoseconds: monotonicClock()
+                            )
+                            state.batcher = batcher
+                            state.batchWriters = writers
+                            for batch in batches { try sealAndDeliver(batch, state: state, writers: writers) }
+                            continue
+                        }
                         let envelope = try SessionEnvelope(
                             lane: .realtime, kind: .audioFrame, sequence: input.sequence,
                             sessionID: configuration.sessionID, senderID: configuration.participantID,
@@ -235,14 +308,9 @@ final class UDPAudioPlane: AudioPlane {
                         )
                         let frame = try authentication.encodeGuideFrame(sealer.seal(envelope, streamID: state.streamID))
                         guard isFresh(input.stamp) else { recordDrop(); state.resetPacketizer(); break }
-                        lock.withLock {
-                            guard !stopped else { return }
-                            sentPacketCount += 1
-                            if sentPacketCount == 1 { Logger.audio.info("TCP: sending first encrypted encoded audio frame") }
-                            // Only bounded enqueue operations occur here, never socket IO.
-                            deliver(frame, writers)
-                        }
+                        deliverSealed(frame, writers: writers)
                     }
+                    scheduleBatchFlush(codec: codec, state: state)
                 } catch {
                     codecStates[codec]?.resetPacketizer()
                     Logger.audio.error("TCP: encoded audio frame failed")
@@ -679,7 +747,7 @@ final class UDPAudioPlane: AudioPlane {
                     }
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == guideID,
-                          envelope.kind == .audioFrame,
+                          envelope.kind == .audioFrame || envelope.kind == .audioBatch,
                           envelope.lane == .realtime else {
                         Logger.audio.error("TCP: rejected unexpected GOH2 frame")
                         break
@@ -688,7 +756,17 @@ final class UDPAudioPlane: AudioPlane {
                     if receivedPacketCount == 1 {
                         Logger.audio.info("TCP: received first GOH2 audio frame")
                     }
-                    let encoded = try EncodedAudioFramePayload.decode(envelope.payload)
+                    // Older guides send single frames; batched Opus carries consecutive sequences (ADR-075).
+                    let frames: [SequencedEncodedAudioFrame] = envelope.kind == .audioBatch
+                        ? SequencedEncodedAudioBatch(
+                            firstSequence: envelope.sequence,
+                            payload: try EncodedAudioBatchPayload.decode(envelope.payload)
+                        ).sequencedFrames
+                        : [SequencedEncodedAudioFrame(
+                            sequence: envelope.sequence,
+                            payload: try EncodedAudioFramePayload.decode(envelope.payload)
+                        )]
+                    let encoded = frames[0].payload
                     let now = Self.wallClockNanoseconds()
                     if playout?.configuration != encoded.configuration {
                         // The read loop only offers; the clock drains, decodes, and conceals (ADR-045).
@@ -706,10 +784,7 @@ final class UDPAudioPlane: AudioPlane {
                         playout = clock
                     }
                     guard let playout else { continue }
-                    _ = playout.offer(
-                        SequencedEncodedAudioFrame(sequence: envelope.sequence, payload: encoded),
-                        nowNanoseconds: now
-                    )
+                    for frame in frames { _ = playout.offer(frame, nowNanoseconds: now) }
                 } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                     runCallbacks.emitSession(.versionMismatch(
                         remoteMajor: remoteMajor,
@@ -1161,11 +1236,10 @@ nonisolated final class PlayoutClock: @unchecked Sendable {
         self.onDecodeFailure = onDecodeFailure
         let configuration = decoder.configuration
         let duration = Int(configuration.frameDurationMilliseconds)
-        let targetFrames = max(1, (60 + duration - 1) / duration)
-        let maximumFrames = max(targetFrames, (250 + duration - 1) / duration)
+        let sizing = RealtimeAudioPlayoutSizing.frameCounts(for: configuration)
         jitter = try EncodedAudioJitterBuffer(
-            targetFrameCount: targetFrames,
-            maximumFrameCount: maximumFrames
+            targetFrameCount: sizing.target,
+            maximumFrameCount: sizing.maximum
         )
         silenceFrame = Data(
             count: Int(configuration.sampleRate) * duration / 1_000 * Int(configuration.channelCount) * 2
