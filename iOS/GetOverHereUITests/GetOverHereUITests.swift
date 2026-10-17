@@ -88,7 +88,10 @@ final class GetOverHereUITests: XCTestCase {
             let room = app.buttons.containing(.staticText, identifier: name).firstMatch
             XCTAssertTrue(room.waitForExistence(timeout: 90), app.debugDescription)
             room.tap()
-            XCTAssertTrue(app.staticTexts["Listening to the guide"].waitForExistence(timeout: 45), app.debugDescription)
+            // The header status persists across guide screen changes. The Slides placeholder text does not:
+            // the guide switches to Pointer about a second after audio-ready, which raced this check (Oct 17).
+            XCTAssertTrue(app.staticTexts["LISTENING"].waitForExistence(timeout: 45), app.debugDescription)
+            XCTAssertEqual(app.staticTexts["guestTransportRoute"].label, "Bluetooth", "Router-free pair must not use LAN")
             let pointer = app.segmentedControls.buttons["Pointer"]
             XCTAssertTrue(pointer.waitForExistence(timeout: 15), app.debugDescription)
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: pointer)

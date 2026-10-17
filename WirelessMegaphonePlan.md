@@ -179,3 +179,7 @@ the parent's metric shows that component is the limit. Evaluators are never edit
 
 Next order: ACT-1 (this slice) → Phase 5 pair run → ACT-2/3 offline loop → ACT-4 → relay
 loopback test (2 phones prove per-hop mechanics only).
+
+Oct 17 Phase 5 status (pair iPhone 13 Pro + Pixel 7, build with ADR-075): steps 2-3 smoke PASS in
+both guide directions over Bluetooth (create/join, live audio at full PCM rate, screen following).
+Remaining: speech audibility/latency, PDF during speech (4b), locked guest (5), 30/90 min endurance (6).

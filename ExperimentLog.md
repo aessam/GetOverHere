@@ -2119,3 +2119,28 @@ Test adaptations:
 - Those tests send enough frames to fill the 6-frame target, derived from `RealtimeAudioPlayoutSizing`.
 
 Not verified: real Bluetooth on-air rate, audible delay, and older-build interop on devices.
+
+## 2026-10-17 — Phase 5 pair smoke: batched build over Bluetooth, both guide directions
+
+Devices: iPhone 13 Pro "WorkTest001" `00008110-000528410CF8801E` (unlocked, no passcode),
+Pixel 7 `2A111FDH2007A1` (Android 17 / API 37; Bluetooth on, Wi-Fi on). Build `24b23c8` plus
+the UI-test fix below. iOS `build-for-testing` into `/tmp/GetOverHerePhase5`; Android
+`:app:assembleDebug :app:assembleDebugAndroidTest`. Pixel woken with
+`input keyevent KEYCODE_WAKEUP` + `wm dismiss-keyguard` (no passcode). No radio, pairing or settings changed.
+
+1. `python3 scripts/verify_mixed_normal_ui.py 00008110-000528410CF8801E 2A111FDH2007A1 …xctestrun --ios-role guide`
+   → PASS (`GetOverHereNormalUI-bmm6863d`). The Android guest asserted route BLUETOOTH and the renderer
+   accepted 160,000 PCM bytes in 5,011 ms ("Live BLE cadence", the full 32,000 B/s). iOS 1/0.
+2. `--ios-role guest`, first run → FAIL (`GetOverHereNormalUI-s8ewmkto`), and the cause was the test:
+   - The screen recording at 12 s shows the iPhone LISTENING over Bluetooth, following the guide's
+     Pointer selection. The Android guide passed `audioReadyGuestCount == 1`.
+   - The UI test waited 45 s for "Listening to the guide". That is the empty-Slides placeholder, which
+     the guide's switch to Pointer replaces about 1 s after audio-ready. A race in the test, not a product defect.
+   - Fix: wait for the header "LISTENING" status and assert `guestTransportRoute` == "Bluetooth".
+     The route was previously unasserted in this direction.
+3. Rerun `--ios-role guest` → PASS (`GetOverHereNormalUI-r3ur0vdh`): Android `OK (1 test)`, iOS 1/0.
+
+What this establishes: router-free iPhone↔Android Bluetooth join, authenticated audio with batched Opus,
+guide-authoritative screen following, both guide directions, on this exact pair.
+Not established: audible speech quality, perceived delay, the locked-screen test (A5), endurance,
+PDF transfer during speech (RSK-3), or groups larger than 2.
