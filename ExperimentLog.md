@@ -2279,3 +2279,8 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Pixel 7 guide "PixelGuide" (LIVE); iPhone 13 Pro joined over Bluetooth via WDA with Relay host on: "LISTENING", "Island bridge · generation 2"; Pixel "1 connected · 1 audio ready".
 - Mac `dns-sd -B _goh-peer._tcp` (pty browse script): instance AD0947CD… on anri3/en23 while joined, resolves to a device host on :51444; after `ios_drive.py leave` the browse shows no instance; after rejoin (generation 3) a new instance 31213CA9… appears. The island advert follows the assignment and the tour lifecycle.
 - Not covered: a far iPhone joining the island (needs the second iPhone and the iOS far-guest client, P4 step 4).
+
+### 2026-10-18 14:10 — Relay device matrix status
+- T1–T8 (`CrossIslandDesign.md`): NOT RUN — needs the second iPhone and the Pixel 11. User decision: software is finished; the matrix runs when the hardware arrives.
+- Proven on the current two phones: both guides assign the other platform as bridge; both bridges publish their island (Pixel Aware publish ready; iPhone `_goh-peer._tcp` follows the tour lifecycle).
+- Proven in software only: far-guest handshake and lanes, bridge-served assets, W5 readiness, T5 refusal, failover without readmission. Final gate: "Tour session verification passed" (tag `p6-relay-t5`).
