@@ -2168,3 +2168,7 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Tooling: ReCont was tried for iPhone control and rejected ("not maintainable"): long pointer moves miss by
   40–120 px, drags register as taps, and the USB screen capture stalls. WebDriverAgent (BSD, appium-ios
   monorepo `1f41c4c`) was chosen as the ready-made XCUITest command server; facebook-wda 1.5.4 is in `tools/.venv`.
+- Run D result: PASS (`GetOverHereNormalUI-gk8qyaxl`, ended 17:35:52). Pixel guest: `seconds=1800
+  totalPCMBytes=57626880 stalledWindowsAt=[]`, 180/180 windows at 316–320 kB per 10 s, route BLUETOOTH
+  throughout, including the confirmed lock 17:15:32–17:25:33. iPhone guide held foreground (Auto-Lock Never).
+  Bridge byte counters were not in this build; the next run measures radio bytes.
