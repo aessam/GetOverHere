@@ -18,15 +18,9 @@ echo "Artifacts: $OUT room=$ROOM"
 
 awake() { "$ADB" -s "$SERIAL" shell input keyevent KEYCODE_WAKEUP; "$ADB" -s "$SERIAL" shell wm dismiss-keyguard; }
 tree() { awake; "$ADB" -s "$SERIAL" shell uiautomator dump /sdcard/goh-ui.xml >/dev/null; "$ADB" -s "$SERIAL" shell cat /sdcard/goh-ui.xml; }
-tap() {  # tap the first node whose text or content-desc contains $1
+tap() {  # exact label first, substring fallback (scripts/android_tree.py)
     local point
-    point="$(tree | python3 -c '
-import re, sys
-needle = sys.argv[1]
-for node in re.findall(r"<node [^>]*>", sys.stdin.read()):
-    if any(needle in label for label in re.findall(r"(?:text|content-desc)=\"([^\"]*)\"", node)):
-        a = list(map(int, re.search(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node).groups()))
-        print((a[0] + a[2]) // 2, (a[1] + a[3]) // 2); break' "$1")"
+    point="$(tree | "$ROOT/scripts/android_tree.py" "$1")"
     [[ -n "$point" ]] || { echo "error: '$1' not on the Pixel screen" >&2; return 1; }
     "$ADB" -s "$SERIAL" shell input tap $point
 }
