@@ -104,6 +104,11 @@ struct ChannelSidebar: View {
             }
 #endif
             ToolbarItem(placement: .topBarTrailing) {
+                Button("Prepared Tours", systemImage: "tray.full") { coordinator.showPreparedTours = true }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                    .disabled(service.companionModeActive)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     coordinator.showCreateChannel = true
                 } label: {
@@ -169,6 +174,12 @@ struct ChannelSidebar: View {
             }
 
             Spacer()
+
+            if let pack = channel.tourPack, coordinator.packLibrary.holds(pack) {
+                Label("Tour ready", systemImage: "checkmark.seal.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
 
             if channel.isRoomLocked { Image(systemName: "lock.fill").accessibilityLabel("Locked room") }
 

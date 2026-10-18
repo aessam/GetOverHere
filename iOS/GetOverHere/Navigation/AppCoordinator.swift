@@ -11,6 +11,8 @@ final class AppCoordinator {
     let gateway: GatewaySessionCoordinator
     let packImporter: TourPackImporter
     let packLibrary: TourPackLibrary
+    let preparedTours: PreparedTourStore
+    var showPreparedTours = false
     /// Result of the last `.gohtour` import, shown once to the user.
     var packImportMessage: String?
 
@@ -42,6 +44,9 @@ final class AppCoordinator {
                 rootDirectory: applicationSupport.appending(path: "TourPacks", directoryHint: .isDirectory)
             )
             self.packImporter = TourPackImporter(cache: cache)
+            self.preparedTours = try PreparedTourStore(
+                rootDirectory: applicationSupport.appending(path: "PreparedTours", directoryHint: .isDirectory)
+            )
             self.packLibrary = try TourPackLibrary(
                 fileURL: applicationSupport.appending(path: "ImportedTourPacks.json")
             )

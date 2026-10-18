@@ -1,8 +1,10 @@
 import Foundation
+import Observation
 import TourSessionCore
 
 /// Tour packs this device has imported (ADR-080). Drives the "Tour ready" badge for a room whose
 /// record advertises a pack (ADR-082); readiness itself is still decided by the session manifest's hashes.
+@Observable
 @MainActor
 final class TourPackLibrary {
     struct Entry: Codable, Equatable {
@@ -11,7 +13,7 @@ final class TourPackLibrary {
         let displayName: String
     }
 
-    private let fileURL: URL
+    @ObservationIgnored private let fileURL: URL
     private(set) var entries: [Entry]
 
     init(fileURL: URL) throws {
