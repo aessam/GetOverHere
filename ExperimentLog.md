@@ -2224,3 +2224,8 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
   - F4xJVe: PASS, ready after 315 s; audio frames import=700 transferEnd=6700 end=7600; reconnects=0 assetFailures=0.
   - rhmc6s: PASS, ready after 315 s; audio frames import=700 transferEnd=6600 end=7600; reconnects=0 assetFailures=0.
 - FND-P5-5 root cause: Android guest `LocalSessionControlTransport` maps the guide's clean close (EOFException) to `Failed("Session: guide connection failed")` before `Disconnected`; `LocalSessionTransportTest` pins this order.
+
+### 2026-10-17 20:00 — iPhone guest Speaker switch, user confirmation
+- Build `01909e3` on iPhone 13 Pro guest in Android guide tour Lock-be67f0 (Wi-Fi off, Bluetooth). User confirmed by ear that the megaphone plays through the iPhone Speaker after the fix. Device log: 5 live Earpiece/Speaker switches, playback ~32 kB/s with no gap (03:02:50–03:03:50 UTC).
+- Software gate after the fix: `scripts/verify_tour_session.sh` passed; iOS 217 tests, 213 passed, 0 failed, 4 skipped.
+- Phase 5 acceptance runs (10-min locked iPhone guest, 30-min endurance with page turns) deferred by the user.
