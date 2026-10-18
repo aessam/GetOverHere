@@ -191,6 +191,7 @@ private final class LocalAuthenticatedSessionTransport {
                         overflowPolicy: .disconnect,
                         sendTimeoutMilliseconds: 2_000
                     ) { [weak self] _, _ in
+                        GuideLaneEvents.record("\(expectedApplicationLane) guest removed: writer failed (send timeout or overflow)")
                         Task { @MainActor [weak self] in
                             self?.removeClient(socket: socket)
                         }
@@ -235,6 +236,7 @@ private final class LocalAuthenticatedSessionTransport {
                             break
                         }
                     }
+                    GuideLaneEvents.record("\(expectedApplicationLane) guest removed: read loop ended")
                     writer.stop()
                     Task { @MainActor [weak self] in
                         self?.removeClient(socket: socket)

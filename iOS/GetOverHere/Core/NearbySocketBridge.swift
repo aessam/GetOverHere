@@ -241,9 +241,15 @@ final class NearbySocketBridge {
                 let realtime = request.lane == .realtime
                 let framed: any NearbyByteConnection = realtime ? NearbyRealtimeConnection(remote) : remote
                 if realtime { connections[id]?.append(framed) }
-                try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission,
-                    audioResidenceMilliseconds: audioResidenceMilliseconds,
-                    reliableWriteTimeoutMilliseconds: guideConnector == nil ? nil : 5_000)
+                do {
+                    try await Self.pump(framed, local, realtime: realtime, drainAdmissionReply: request.lane == .admission,
+                        audioResidenceMilliseconds: audioResidenceMilliseconds,
+                        reliableWriteTimeoutMilliseconds: guideConnector == nil ? nil : 5_000)
+                    GuideLaneEvents.record("\(request.lane) bridge ended cleanly")
+                } catch {
+                    GuideLaneEvents.record("\(request.lane) bridge failed: \(String(describing: error))")
+                    throw error
+                }
             } catch {
                 if !Task.isCancelled { report(error) }
             }
@@ -477,6 +483,40 @@ private final class NearbyOwnedListener {
         let pending = waiters; waiters.removeAll()
         pending.forEach { $0.resume() }
     }
+}
+
+/// Debug evidence for FND-P5-3: the guide's last lane removals and bridge endings, newest last.
+nonisolated enum GuideLaneEvents {
+    private static let events = OSAllocatedUnfairLock<[String]>(initialState: [])
+    static var recent: [String] { events.withLock { $0 } }
+    static func record(_ event: String) {
+        let line = "\(Date().ISO8601Format(.iso8601.time(includingFractionalSeconds: true))) \(event)"
+        events.withLock {
+            $0.append(line); if $0.count > 32 { $0.removeFirst($0.count - 32) }
+            #if DEBUG
+            appendToFile(line)
+            #endif
+        }
+    }
+
+    #if DEBUG
+    /// Debug builds also append to Documents/lane-events.log so the guide's view survives without a network
+    /// path to the Mac: `devicectl device copy from --domain-type appDataContainer`.
+    private static func appendToFile(_ line: String) {
+        guard let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("lane-events.log") else { return }
+        let data = Data((line + "\n").utf8)
+        do {
+            if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url); return }
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            Logger.transport.error("lane-events.log append failed (\(String(describing: type(of: error))))")
+        }
+    }
+    #endif
 }
 
 @MainActor

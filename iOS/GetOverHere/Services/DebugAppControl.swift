@@ -230,6 +230,7 @@ final class DebugAppControl: DebugCommandHandler {
             "bluetooth": service.bluetoothDiscoveryEnabled, "aware": service.awareDiscoveryEnabled,
             "error": service.audioRuntimeError ?? service.tourFeatureError ?? service.roomAccessError ?? "",
             "nearbyError": service.nearbyError ?? "",
+            "laneEvents": GuideLaneEvents.recent,
             "rooms": service.channels.prefix(64).map { room in
                 ["id": room.id, "name": room.name, "locked": room.isRoomLocked,
                  "joinable": service.canJoin(room), "nearby": room.nearbyAvailable] as [String: Any]

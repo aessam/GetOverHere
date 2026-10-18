@@ -37,6 +37,11 @@ echo "import $PDF at $(date '+%H:%M:%S')"
 wait "$GUEST" || true
 "$ADB" -s "$SERIAL" logcat -d -v time > "$OUT/logcat.txt"
 "$PY" "$ROOT/scripts/ios_drive.py" end > "$OUT/end.log" 2>&1 || echo "warning: guide end failed; see $OUT/end.log" >&2
+# Guide-side lane removals and bridge endings (Debug builds; GuideLaneEvents), pulled over USB.
+xcrun devicectl device copy from --device "${IOS_DEVICE:-00008110-000528410CF8801E}" --domain-type appDataContainer \
+    --domain-identifier com.aens.GetOverHere --source Documents/lane-events.log --destination "$OUT/guide-lane-events.log" \
+    > "$OUT/copy.log" 2>&1 && grep -E 'removed|bridge failed' "$OUT/guide-lane-events.log" | tail -20 \
+    || echo "warning: no guide lane-events.log; see $OUT/copy.log" >&2
 
 grep -E 'NearbyLive.*Endurance (t=|summary)' "$OUT/logcat.txt" \
     | sed -E 's/.*Endurance (t=[0-9]+s) delta=(-?[0-9]+).*realtimeFromRadio=([0-9]+).*reliableFromRadio=([0-9]+)\}.*/\1 pcm=\2 audioDown=\3 assetDown=\4/' \
