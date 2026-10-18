@@ -1,5 +1,13 @@
 # GetOverHere — Next Session
 
+## October 18 (later) — relay core done; app wiring waits for the new phones
+
+- Relay P0 core in both cores (tag `p6-relay-core`): W1–W6, verified RelayForwarder, ADR-083 handshake.
+- User decision: wire the relay into the apps only when the second iPhone and Pixel 11 are connected, so each
+  piece (P1 Android bridge, P2 guide BridgeAuthority, P3 guest island discovery/failover, P4 iPhone bridge) is
+  proven on device with T1–T8 from `CrossIslandDesign.md` as it lands.
+- Push pending: `! git push origin main --follow-tags` from the Mac prompt.
+
 ## October 18 — Phase 5 accepted; tour packs done (Phase 6 step 1)
 
 - Phase 5 accepted (tag `phase5-accepted`): locked iPhone guest 10 min PCM 1.0; 30-min endurance 0 stalls.
