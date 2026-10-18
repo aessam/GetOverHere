@@ -106,4 +106,23 @@ class RelayHubTest {
         assertEquals(3, healthy.frames.size)
         assertEquals(1L, hub.counters.dropped)
     }
+
+    @Test fun laneAndKindComeFromTheSignedEnvelope() {
+        val control = Writer()
+        hub.attach(SessionLane.CONTROL, control)
+        // A guide audio frame delivered on the control socket is a route fault, not control state.
+        hub.onUpstreamFrame(SessionLane.CONTROL, frame(SessionMessageKind.AUDIO_BATCH), 0, 0)
+        assertEquals(SessionLane.CONTROL, faults.single().first)
+        assertTrue(control.frames.isEmpty())
+    }
+
+    @Test fun olderAssignmentCannotReinstateAHostAfterRevocation() {
+        hub.onUpstreamFrame(SessionLane.CONTROL, assignment(bridgeID, 5), 0, 0)
+        hub.onUpstreamFrame(SessionLane.CONTROL, assignment(UUID.randomUUID(), 6), 0, 0)
+        assertNull(hub.assignmentFrame)
+        hub.onUpstreamFrame(SessionLane.CONTROL, assignment(bridgeID, 5), 0, 0) // a replayed, older guide frame
+        assertNull("generation watermark never goes back", hub.assignmentFrame)
+        hub.onUpstreamFrame(SessionLane.CONTROL, assignment(bridgeID, 7), 0, 0)
+        assertEquals(7L, hub.assignment!!.generation)
+    }
 }

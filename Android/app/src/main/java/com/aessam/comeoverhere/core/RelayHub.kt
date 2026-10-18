@@ -50,6 +50,8 @@ class RelayHub(
         private set
     @get:Synchronized var assignment: BridgeAssignmentPayload? = null
         private set
+    /** Highest assignment generation seen; never decreases, so a replayed older assignment cannot reinstate a host. */
+    private var generationWatermark: Long? = null
 
     @get:Synchronized val counters: Counters get() = Counters(forwarded, duplicates, expired, conflicts, dropped)
 
@@ -70,9 +72,15 @@ class RelayHub(
                 onRouteFault(lane, "guide frame identity reused with different bytes")
             }
             RelayForwarder.Decision.FORWARD -> {
+                // Lane and kind come from the guide-signed envelope, never from the socket that delivered it.
+                val envelope = verifier.verify(frame)
+                if (envelope.lane != lane) {
+                    onRouteFault(lane, "guide ${envelope.lane} frame arrived on the $lane lane")
+                    return
+                }
                 forwarded++
-                if (lane == SessionLane.CONTROL) observeAssignment(frame)
-                fanOut(lane, frame)
+                if (envelope.kind == SessionMessageKind.BRIDGE_ASSIGNMENT) observeAssignment(envelope, frame)
+                fanOut(envelope.lane, frame)
             }
         }
     }
@@ -112,14 +120,13 @@ class RelayHub(
         }
     }
 
-    /** Opens only `bridgeAssignment` frames, which the bridge must read to know whether it is still the bridge. */
-    private fun observeAssignment(frame: ByteArray) {
-        val sealed = verifier.verify(frame) // already verified by the forwarder; this only recovers the envelope
-        if (sealed.kind != SessionMessageKind.BRIDGE_ASSIGNMENT) return
+    /** Reads the guide's assignment to know whether this phone is still the bridge (frame already verified). */
+    private fun observeAssignment(sealed: com.aessam.toursession.SealedSessionEnvelope, frame: ByteArray) {
         val opened = opener.open(sealed) as? SessionFrameOpenResult.Opened ?: return
         val value = BridgeAssignmentPayload.decode(opened.envelope.payload)
-        val current = assignment
-        if (current != null && java.lang.Long.compareUnsigned(value.generation, current.generation) < 0) return
+        val watermark = generationWatermark
+        if (watermark != null && java.lang.Long.compareUnsigned(value.generation, watermark) < 0) return
+        generationWatermark = value.generation
         if (value.bridgeID == bridgeID) {
             assignment = value
             assignmentFrame = frame.copyOf()
