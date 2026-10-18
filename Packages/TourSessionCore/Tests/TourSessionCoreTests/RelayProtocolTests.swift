@@ -5,7 +5,7 @@ import Testing
 @Suite("Cross-island relay core (ADR-081)")
 struct RelayProtocolTests {
     /// Pinned on both platforms (RelayProtocolTest.kt).
-    static let fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=ec768fa4619a86bd,37e0ac21a9a914ba"
+    static let fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5"
 
     @Test func pinnedFixture() throws {
         #expect(try TourSessionFixtures.relayFixture() == Self.fixture)
@@ -42,23 +42,46 @@ struct RelayProtocolTests {
         #expect(throws: RelayProtocolError.trailingBytes(1)) { try RelayUpstreamRecord.decode(value.encode() + Data([0])) }
     }
 
+    private struct Guide {
+        let session = UUID(), id = UUID(), stream = UUID()
+        let signer: GuideFrameSigner
+        init() { signer = GuideFrameSigner(sessionID: session, guideID: id) }
+        func verifier() throws -> GuideFrameVerifier {
+            try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: session, guideID: id)
+        }
+        func frame(_ kind: SessionMessageKind, _ sequence: UInt64, by signer: GuideFrameSigner? = nil) throws -> Data {
+            try (signer ?? self.signer).sign(SealedSessionEnvelope(lane: kind.requiredLane, kind: kind, sequence: sequence,
+                sessionID: session, senderID: id, streamID: stream, sealedPayload: Data(count: 16))).encode()
+        }
+    }
+
     @Test func forwarderWindowForgetsOldestIdentity() throws {
-        let session = UUID(), sender = UUID(), stream = UUID()
-        func frame(_ sequence: UInt64) throws -> (SealedSessionEnvelope, Data) {
-            let envelope = try SealedSessionEnvelope(lane: .control, kind: .heartbeat, sequence: sequence, sessionID: session,
-                                                     senderID: sender, streamID: stream, sealedPayload: Data(count: 16))
-            return (envelope, envelope.encode())
-        }
-        var forwarder = RelayForwarder()
+        let guide = Guide()
+        var forwarder = RelayForwarder(verifier: try guide.verifier())
         for sequence in 1 ... UInt64(RelayForwarder.windowSize + 1) {
-            let (envelope, bytes) = try frame(sequence)
-            #expect(forwarder.admit(envelope, frame: bytes, receivedAtMilliseconds: 0, nowMilliseconds: 0) == .forward)
+            #expect(try forwarder.admit(guide.frame(.heartbeat, sequence), receivedAtMilliseconds: 0, nowMilliseconds: 0) == .forward)
         }
-        let (oldest, bytes) = try frame(1)
-        #expect(forwarder.admit(oldest, frame: bytes, receivedAtMilliseconds: 0, nowMilliseconds: 0) == .forward,
+        #expect(try forwarder.admit(guide.frame(.heartbeat, 1), receivedAtMilliseconds: 0, nowMilliseconds: 0) == .forward,
                 "beyond the window the identity is forgotten; the guest's own replay window still rejects it")
-        let (recent, recentBytes) = try frame(UInt64(RelayForwarder.windowSize))
-        #expect(forwarder.admit(recent, frame: recentBytes, receivedAtMilliseconds: 0, nowMilliseconds: 0) == .duplicate)
+        // A fresh signature over a remembered identity is different bytes: a conflict, never a silent duplicate.
+        let recent = try guide.frame(.heartbeat, UInt64(RelayForwarder.windowSize))
+        #expect(try forwarder.admit(recent, receivedAtMilliseconds: 0, nowMilliseconds: 0) == .conflict)
         #expect(forwarder.snapshotFrames.isEmpty, "heartbeats are not cached control state")
+    }
+
+    @Test("A frame not signed by the pinned guide changes nothing: no pre-emption, no cache poisoning")
+    func unverifiedFramesAreRejectedBeforeAnyState() throws {
+        let guide = Guide()
+        let member = GuideFrameSigner(sessionID: guide.session, guideID: guide.id) // an admitted member's own key
+        var forwarder = RelayForwarder(verifier: try guide.verifier())
+        let forged = try guide.frame(.presentationSnapshot, 9, by: member)
+        #expect(throws: GuideSignatureError.self) { try forwarder.admit(forged, receivedAtMilliseconds: 0, nowMilliseconds: 0) }
+        #expect(forwarder.snapshotFrames.isEmpty)
+        let real = try guide.frame(.presentationSnapshot, 9)
+        #expect(try forwarder.admit(real, receivedAtMilliseconds: 0, nowMilliseconds: 0) == .forward,
+                "the forged copy did not claim the identity")
+        #expect(forwarder.snapshotFrames == [real])
+        var tampered = [UInt8](real); tampered[tampered.count - 70] ^= 1
+        #expect(throws: (any Error).self) { try forwarder.admit(Data(tampered), receivedAtMilliseconds: 0, nowMilliseconds: 0) }
     }
 }

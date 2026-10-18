@@ -210,27 +210,29 @@ public enum TourSessionFixtures {
             standbyIDs: [UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A2")!])
         let upstream = try RelayUpstreamRecord(farParticipantID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000B1")!,
                                                lane: .control, frame: Data([0x47, 0x4F, 0x48, 0x32, 0x01]))
-        func frame(_ lane: SessionLane, _ kind: SessionMessageKind, _ sequence: UInt64, _ body: UInt8) throws
-            -> (SealedSessionEnvelope, Data) {
-            let envelope = try SealedSessionEnvelope(lane: lane, kind: kind, sequence: sequence, sessionID: session,
-                                                     senderID: guide, streamID: stream,
-                                                     sealedPayload: Data(repeating: body, count: 16))
-            return (envelope, envelope.encode())
+        // Signatures are randomized, so the trace compares decisions and snapshot order, not digests.
+        let signer = GuideFrameSigner(sessionID: session, guideID: guide)
+        func frame(_ lane: SessionLane, _ kind: SessionMessageKind, _ sequence: UInt64, _ body: UInt8) throws -> Data {
+            try signer.sign(SealedSessionEnvelope(lane: lane, kind: kind, sequence: sequence, sessionID: session,
+                                                  senderID: guide, streamID: stream,
+                                                  sealedPayload: Data(repeating: body, count: 16))).encode()
         }
-        var forwarder = RelayForwarder()
-        let steps: [((SealedSessionEnvelope, Data), UInt64, UInt64)] = [
-            (try frame(.realtime, .audioBatch, 1, 0xA1), 0, 10),
-            (try frame(.realtime, .audioBatch, 1, 0xA1), 0, 10),
+        var forwarder = RelayForwarder(verifier: try GuideFrameVerifier(pinnedPublicKey: signer.publicKey,
+                                                                         sessionID: session, guideID: guide))
+        let first = try frame(.realtime, .audioBatch, 1, 0xA1)
+        let steps: [(Data, UInt64, UInt64)] = [
+            (first, 0, 10),
+            (first, 0, 10),
             (try frame(.realtime, .audioBatch, 1, 0xB2), 0, 10),
             (try frame(.realtime, .audioBatch, 2, 0xA2), 0, 51),
             (try frame(.control, .presentationSnapshot, 5, 0xC5), 0, 0),
             (try frame(.control, .presentationSnapshot, 3, 0xC3), 0, 0),
             (try frame(.control, .bearingSnapshot, 4, 0xD4), 0, 0),
         ]
-        let decisions = steps.map { step in
-            "\(forwarder.admit(step.0.0, frame: step.0.1, receivedAtMilliseconds: step.1, nowMilliseconds: step.2))"
+        let decisions = try steps.map { step in
+            "\(try forwarder.admit(step.0, receivedAtMilliseconds: step.1, nowMilliseconds: step.2))"
         }
-        let snapshots = forwarder.snapshotFrames.map { Data(CryptoKit.SHA256.hash(data: $0)).lowercaseHex.prefix(16) }
+        let snapshots = forwarder.snapshotSummary
         return [
             "assignment=\(assignment.encode().lowercaseHex)",
             "upstream=\(upstream.encode().lowercaseHex)",

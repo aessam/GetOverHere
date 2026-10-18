@@ -11,9 +11,13 @@ import java.util.UUID
  */
 data class TourPackAdvert(val packID: UUID, val manifestVersion: Long)
 
+/** The island host a far guest should attach to (ADR-081 W3): the guide-assigned bridge, at this generation. */
+data class RelayHostAdvert(val hostID: UUID, val bridgeGeneration: Long)
+
 /**
  * Public discovery only; GOR1/v1 and GOR2/v2 have the same 439-byte maximum.
- * Flags: 1 Android guide, 2 locked, 4 a [TourPackAdvert] (16-byte pack ID + u64 version) follows the name.
+ * Flags: 1 Android guide, 2 locked, 4 a [TourPackAdvert] (16-byte pack ID + u64 version) follows the name,
+ * 8 a [RelayHostAdvert] (16-byte host ID + u64 bridge generation) follows that.
  */
 data class BluetoothRoomRecord(
     val roomID: UUID,
@@ -23,23 +27,28 @@ data class BluetoothRoomRecord(
     val isLocked: Boolean,
     val admissionVersion: Int = 1,
     val pack: TourPackAdvert? = null,
+    val relayHost: RelayHostAdvert? = null,
 ) {
     fun encode(): ByteArray {
         val encoded = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT).encode(CharBuffer.wrap(name))
         val text = ByteArray(encoded.remaining()).also { encoded.get(it) }
-        val packLength = if (pack == null) 0 else PACK_ADVERT_LENGTH
+        val packLength = (if (pack == null) 0 else PACK_ADVERT_LENGTH) + (if (relayHost == null) 0 else PACK_ADVERT_LENGTH)
         require(text.size in 1..400 && 39 + text.size + packLength <= MAXIMUM_LENGTH && admissionVersion in 1..2) {
             "Invalid Bluetooth room record"
         }
         return ByteBuffer.allocate(39 + text.size + packLength).apply {
             put((if (admissionVersion == 1) "GOR1" else "GOR2").toByteArray(Charsets.US_ASCII))
-            put(((if (isAndroid) 1 else 0) or (if (isLocked) 2 else 0) or (if (pack == null) 0 else 4)).toByte())
+            put(((if (isAndroid) 1 else 0) or (if (isLocked) 2 else 0) or (if (pack == null) 0 else 4) or (if (relayHost == null) 0 else 8)).toByte())
             putLong(roomID.mostSignificantBits); putLong(roomID.leastSignificantBits)
             putLong(guideID.mostSignificantBits); putLong(guideID.leastSignificantBits)
             putShort(text.size.toShort()); put(text)
             if (pack != null) {
                 putLong(pack.packID.mostSignificantBits); putLong(pack.packID.leastSignificantBits)
                 putLong(pack.manifestVersion)
+            }
+            if (relayHost != null) {
+                putLong(relayHost.hostID.mostSignificantBits); putLong(relayHost.hostID.leastSignificantBits)
+                putLong(relayHost.bridgeGeneration)
             }
         }.array()
     }
@@ -57,18 +66,20 @@ data class BluetoothRoomRecord(
                 else -> throw IllegalArgumentException("Unsupported Bluetooth room record")
             }
             val flags = buffer.get().toInt() and 255
-            require(flags <= 7) { "Invalid Bluetooth room flags" }
+            require(flags <= 15) { "Invalid Bluetooth room flags" }
             val packLength = if (flags and 4 != 0) PACK_ADVERT_LENGTH else 0
+            val hostLength = if (flags and 8 != 0) PACK_ADVERT_LENGTH else 0
             val room = UUID(buffer.long, buffer.long)
             val guide = UUID(buffer.long, buffer.long)
             val length = buffer.short.toInt() and 65535
-            require(length == buffer.remaining() - packLength) { "Invalid Bluetooth room name length" }
+            require(length == buffer.remaining() - packLength - hostLength) { "Invalid Bluetooth room name length" }
             val nameBytes = ByteBuffer.wrap(data, buffer.position(), length)
             val name = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(nameBytes).toString()
             require(name.isNotEmpty()) { "Invalid Bluetooth room name" }
             buffer.position(buffer.position() + length)
             val pack = if (packLength == 0) null else TourPackAdvert(UUID(buffer.long, buffer.long), buffer.long)
-            return BluetoothRoomRecord(room, guide, name, flags and 1 != 0, flags and 2 != 0, admissionVersion, pack)
+            val relayHost = if (hostLength == 0) null else RelayHostAdvert(UUID(buffer.long, buffer.long), buffer.long)
+            return BluetoothRoomRecord(room, guide, name, flags and 1 != 0, flags and 2 != 0, admissionVersion, pack, relayHost)
         }
     }
 }

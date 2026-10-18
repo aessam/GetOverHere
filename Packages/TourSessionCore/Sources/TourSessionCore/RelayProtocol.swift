@@ -107,6 +107,10 @@ public struct RelayUpstreamRecord: Equatable, Sendable {
 
 /// The bridge's per-session forwarding state: duplicate suppression across routes, a residence bound
 /// for speech, and the latest control snapshot per kind for far guests that join later.
+///
+/// Every frame is verified against the guide key pinned at admission before any state changes, so no
+/// admitted member can claim a frame identity first or poison the snapshot cache. A verification failure
+/// throws; the bridge treats it as a route fault and fails over (CrossIslandDesign D7).
 public struct RelayForwarder: Sendable {
     public enum Decision: Equatable, Sendable {
         case forward
@@ -128,16 +132,19 @@ public struct RelayForwarder: Sendable {
     public static let windowSize = 4_096
     public static let audioResidenceMilliseconds: UInt64 = 50
 
+    private let verifier: GuideFrameVerifier
     private var seen: [Identity: Data] = [:]
     private var order: [Identity] = []
     private var snapshots: [SessionMessageKind: (sequence: UInt64, frame: Data)] = [:]
 
-    public init() {}
+    public init(verifier: GuideFrameVerifier) {
+        self.verifier = verifier
+    }
 
-    /// Decides what to do with one sealed frame (`SealedSessionEnvelope` bytes, optionally inside GOS1),
-    /// given when it arrived and when it is about to be forwarded.
-    public mutating func admit(_ envelope: SealedSessionEnvelope, frame: Data,
-                               receivedAtMilliseconds: UInt64, nowMilliseconds: UInt64) -> Decision {
+    /// Decides what to do with one GOS1 guide frame, given when it arrived and when it is about to be
+    /// forwarded. Throws when the signature, session or guide does not match the pinned guide.
+    public mutating func admit(_ frame: Data, receivedAtMilliseconds: UInt64, nowMilliseconds: UInt64) throws -> Decision {
+        let envelope = try verifier.verify(frame)
         let identity = Identity(sessionID: envelope.sessionID, senderID: envelope.senderID,
                                 streamID: envelope.streamID, sequence: envelope.sequence)
         let digest = Data(SHA256.hash(data: frame))
@@ -159,6 +166,11 @@ public struct RelayForwarder: Sendable {
     /// Control state a far guest needs on join, replayed locally in sequence order (no bridge bytes).
     public var snapshotFrames: [Data] {
         snapshots.values.sorted { $0.sequence < $1.sequence }.map(\.frame)
+    }
+
+    /// `kind:sequence` of the cached snapshots in replay order (fixtures and diagnostics).
+    public var snapshotSummary: [String] {
+        snapshots.sorted { $0.value.sequence < $1.value.sequence }.map { "\($0.key):\($0.value.sequence)" }
     }
 
     static let snapshotKinds: Set<SessionMessageKind> = [

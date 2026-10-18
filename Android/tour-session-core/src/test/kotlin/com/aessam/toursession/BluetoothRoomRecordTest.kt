@@ -28,6 +28,26 @@ class BluetoothRoomRecordTest {
         assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(noAdvert) }
     }
 
+    /** Mirrors BluetoothRoomRecordTests.relayHost (ADR-081 W3). */
+    @Test fun relayHost() {
+        val room = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")
+        val guide = UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100")
+        val pack = TourPackAdvert(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a1"), 2)
+        val host = RelayHostAdvert(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000b1"), 7)
+        val record = BluetoothRoomRecord(room, guide, "Tour", true, false, 2, pack, host)
+        assertEquals("474f52320d00112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000004546f75726f1c5c6a0000400080000000000000a100000000000000026f1c5c6a0000400080000000000000b10000000000000007", record.encode().lowercaseHex())
+        assertEquals(record, BluetoothRoomRecord.decode(record.encode()))
+        val hostOnly = BluetoothRoomRecord(room, guide, "Tour", false, true, relayHost = host)
+        assertEquals(hostOnly, BluetoothRoomRecord.decode(hostOnly.encode()))
+        val longest = BluetoothRoomRecord(room, guide, "x".repeat(352), true, false, pack = pack, relayHost = host)
+        assertEquals(longest, BluetoothRoomRecord.decode(longest.encode()))
+        assertThrows(IllegalArgumentException::class.java) {
+            BluetoothRoomRecord(room, guide, "x".repeat(353), true, false, pack = pack, relayHost = host).encode()
+        }
+        val bytes = record.encode().also { it[4] = (it[4].toInt() and 8.inv()).toByte() }
+        assertThrows(Exception::class.java) { BluetoothRoomRecord.decode(bytes) }
+    }
+
     @Test fun sharedFixtureAndRoundtrips() {
         val room = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")
         val guide = UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100")

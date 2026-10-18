@@ -41,12 +41,20 @@ enum TourSessionCLI {
                 isAndroid: false, isLocked: true, admissionVersion: 2,
                 pack: TourPackAdvert(packID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!,
                                      manifestVersion: 0x0102030405060708)).encode().lowercaseHex)
+        case "bluetooth-relay-fixture":
+            print(try BluetoothRoomRecord(roomID: UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!,
+                guideID: UUID(uuidString: "FFEEDDCC-BBAA-9988-7766-554433221100")!, name: "Tour",
+                isAndroid: true, isLocked: false, admissionVersion: 2,
+                pack: TourPackAdvert(packID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!, manifestVersion: 2),
+                relayHost: RelayHostAdvert(hostID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000B1")!,
+                                           bridgeGeneration: 7)).encode().lowercaseHex)
         case "decode-bluetooth-record":
             guard arguments.count == 2 else { fail("decode-bluetooth-record requires one hex argument") }
             let record = try BluetoothRoomRecord.decode(Data(hex: arguments[1]))
             print([record.roomID.uuidString.lowercased(), record.guideID.uuidString.lowercased(), record.name,
                    "\(record.isAndroid)", "\(record.isLocked)", "\(record.admissionVersion)",
-                   record.pack.map { "\($0.packID.uuidString.lowercased())/\($0.manifestVersion)" } ?? "none"].joined(separator: "|"))
+                   record.pack.map { "\($0.packID.uuidString.lowercased())/\($0.manifestVersion)" } ?? "none",
+                   record.relayHost.map { "\($0.hostID.uuidString.lowercased())/\($0.bridgeGeneration)" } ?? "none"].joined(separator: "|"))
         case "room-v2-guide", "room-v2-guest":
             do { try roomAdmissionV2(arguments) }
             catch { fail("admission-v2 rejected: \(error.localizedDescription)") }

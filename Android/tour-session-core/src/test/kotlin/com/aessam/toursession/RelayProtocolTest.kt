@@ -8,7 +8,7 @@ import org.junit.Test
 
 /** Mirrors RelayProtocolTests.swift (ADR-081); the pinned fixture must stay identical on both platforms. */
 class RelayProtocolTest {
-    private val fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=ec768fa4619a86bd,37e0ac21a9a914ba"
+    private val fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5"
 
     @Test fun pinnedFixture() = assertEquals(fixture, TourSessionFixtures.relayFixture())
 
@@ -35,22 +35,39 @@ class RelayProtocolTest {
         assertThrows(RelayProtocolException::class.java) { RelayUpstreamRecord.decode(value.encode() + byteArrayOf(0)) }
     }
 
+    private class Guide {
+        val session: UUID = UUID.randomUUID(); val id: UUID = UUID.randomUUID(); val stream: UUID = UUID.randomUUID()
+        val signer = GuideFrameSigner(session, id)
+        fun verifier() = GuideFrameVerifier(signer.publicKey, session, id)
+        fun frame(kind: SessionMessageKind, sequence: Long, by: GuideFrameSigner = signer): ByteArray =
+            by.sign(SealedSessionEnvelope(lane = kind.requiredLane, kind = kind, sequence = sequence, sessionId = session,
+                senderId = id, streamId = stream, sealedPayload = ByteArray(16))).encode()
+    }
+
     @Test fun forwarderWindowForgetsOldestIdentity() {
-        val session = UUID.randomUUID(); val sender = UUID.randomUUID(); val stream = UUID.randomUUID()
-        fun frame(sequence: Long): Pair<SealedSessionEnvelope, ByteArray> {
-            val envelope = SealedSessionEnvelope(lane = SessionLane.CONTROL, kind = SessionMessageKind.HEARTBEAT, sequence = sequence,
-                sessionId = session, senderId = sender, streamId = stream, sealedPayload = ByteArray(16))
-            return envelope to envelope.encode()
-        }
-        val forwarder = RelayForwarder()
+        val guide = Guide()
+        val forwarder = RelayForwarder(guide.verifier())
         for (sequence in 1..RelayForwarder.WINDOW_SIZE + 1L) {
-            val (envelope, bytes) = frame(sequence)
-            assertEquals(RelayForwarder.Decision.FORWARD, forwarder.admit(envelope, bytes, 0, 0))
+            assertEquals(RelayForwarder.Decision.FORWARD, forwarder.admit(guide.frame(SessionMessageKind.HEARTBEAT, sequence), 0, 0))
         }
-        val (oldest, bytes) = frame(1)
-        assertEquals(RelayForwarder.Decision.FORWARD, forwarder.admit(oldest, bytes, 0, 0))
-        val (recent, recentBytes) = frame(RelayForwarder.WINDOW_SIZE.toLong())
-        assertEquals(RelayForwarder.Decision.DUPLICATE, forwarder.admit(recent, recentBytes, 0, 0))
+        assertEquals(RelayForwarder.Decision.FORWARD, forwarder.admit(guide.frame(SessionMessageKind.HEARTBEAT, 1), 0, 0))
+        assertEquals(RelayForwarder.Decision.CONFLICT,
+            forwarder.admit(guide.frame(SessionMessageKind.HEARTBEAT, RelayForwarder.WINDOW_SIZE.toLong()), 0, 0))
         assertTrue(forwarder.snapshotFrames.isEmpty())
+    }
+
+    /** A frame not signed by the pinned guide changes nothing: no pre-emption, no cache poisoning. */
+    @Test fun unverifiedFramesAreRejectedBeforeAnyState() {
+        val guide = Guide()
+        val member = GuideFrameSigner(guide.session, guide.id)
+        val forwarder = RelayForwarder(guide.verifier())
+        val forged = guide.frame(SessionMessageKind.PRESENTATION_SNAPSHOT, 9, by = member)
+        assertThrows(Exception::class.java) { forwarder.admit(forged, 0, 0) }
+        assertTrue(forwarder.snapshotFrames.isEmpty())
+        val real = guide.frame(SessionMessageKind.PRESENTATION_SNAPSHOT, 9)
+        assertEquals(RelayForwarder.Decision.FORWARD, forwarder.admit(real, 0, 0))
+        assertEquals(1, forwarder.snapshotFrames.size)
+        val tampered = real.copyOf().also { it[it.size - 70] = (it[it.size - 70].toInt() xor 1).toByte() }
+        assertThrows(Exception::class.java) { forwarder.admit(tampered, 0, 0) }
     }
 }

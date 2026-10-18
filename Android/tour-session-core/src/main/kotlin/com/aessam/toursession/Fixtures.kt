@@ -216,25 +216,24 @@ object TourSessionFixtures {
             ParticipantPlatform.ANDROID, 1_700_000_000_123L, listOf(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a2")))
         val upstream = RelayUpstreamRecord(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000b1"), SessionLane.CONTROL,
             byteArrayOf(0x47, 0x4F, 0x48, 0x32, 0x01))
-        fun frame(lane: SessionLane, kind: SessionMessageKind, sequence: Long, body: Int): Pair<SealedSessionEnvelope, ByteArray> {
-            val envelope = SealedSessionEnvelope(lane = lane, kind = kind, sequence = sequence, sessionId = session,
-                senderId = guide, streamId = stream, sealedPayload = ByteArray(16) { body.toByte() })
-            return envelope to envelope.encode()
-        }
-        val forwarder = RelayForwarder()
+        // Signatures are randomized, so the trace compares decisions and snapshot order, not digests.
+        val signer = GuideFrameSigner(session, guide)
+        fun frame(lane: SessionLane, kind: SessionMessageKind, sequence: Long, body: Int): ByteArray =
+            signer.sign(SealedSessionEnvelope(lane = lane, kind = kind, sequence = sequence, sessionId = session,
+                senderId = guide, streamId = stream, sealedPayload = ByteArray(16) { body.toByte() })).encode()
+        val forwarder = RelayForwarder(GuideFrameVerifier(signer.publicKey, session, guide))
+        val first = frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xA1)
         val steps = listOf(
-            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xA1), 0L, 10L),
-            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xA1), 0L, 10L),
+            Triple(first, 0L, 10L),
+            Triple(first, 0L, 10L),
             Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xB2), 0L, 10L),
             Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 2, 0xA2), 0L, 51L),
             Triple(frame(SessionLane.CONTROL, SessionMessageKind.PRESENTATION_SNAPSHOT, 5, 0xC5), 0L, 0L),
             Triple(frame(SessionLane.CONTROL, SessionMessageKind.PRESENTATION_SNAPSHOT, 3, 0xC3), 0L, 0L),
             Triple(frame(SessionLane.CONTROL, SessionMessageKind.BEARING_SNAPSHOT, 4, 0xD4), 0L, 0L),
         )
-        val decisions = steps.map { (step, received, now) ->
-            forwarder.admit(step.first, step.second, received, now).name.lowercase()
-        }
-        val snapshots = forwarder.snapshotFrames.map { java.security.MessageDigest.getInstance("SHA-256").digest(it).lowercaseHex().take(16) }
+        val decisions = steps.map { (frame, received, now) -> forwarder.admit(frame, received, now).name.lowercase() }
+        val snapshots = forwarder.snapshotSummary
         return listOf(
             "assignment=${assignment.encode().lowercaseHex()}",
             "upstream=${upstream.encode().lowercaseHex()}",

@@ -105,6 +105,18 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Room record with a relay host section (ADR-081 W3): identical bytes, cross-decoded.
+SWIFT_RELAY_RECORD="$($SWIFT_BIN bluetooth-relay-fixture)"
+KOTLIN_RELAY_RECORD="$(run_kotlin bluetooth-relay-fixture)"
+[[ -n "$SWIFT_RELAY_RECORD" && "$SWIFT_RELAY_RECORD" == "$KOTLIN_RELAY_RECORD" ]] || {
+    echo "error: Swift and Kotlin encoded different relay-host room records" >&2
+    exit 1
+}
+[[ "$($SWIFT_BIN decode-bluetooth-record "$KOTLIN_RELAY_RECORD")" == "$(run_kotlin decode-bluetooth-record "$SWIFT_RELAY_RECORD")" ]] || {
+    echo "error: Swift and Kotlin decoded the relay-host room record differently" >&2
+    exit 1
+}
+
 # Cross-island relay core (ADR-081): bridgeAssignment + upstream record bytes and forwarder decisions.
 SWIFT_RELAY="$($SWIFT_BIN relay-fixture)"
 KOTLIN_RELAY="$(run_kotlin relay-fixture)"

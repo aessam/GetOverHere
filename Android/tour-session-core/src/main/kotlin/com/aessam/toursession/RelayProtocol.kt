@@ -99,8 +99,12 @@ class RelayUpstreamRecord(val farParticipantID: UUID, val lane: SessionLane, val
 /**
  * The bridge's per-session forwarding state: duplicate suppression across routes, a residence bound for
  * speech, and the latest control snapshot per kind for far guests that join later.
+ *
+ * Every frame is verified against the guide key pinned at admission before any state changes, so no admitted
+ * member can claim a frame identity first or poison the snapshot cache. A verification failure throws; the
+ * bridge treats it as a route fault and fails over (CrossIslandDesign D7).
  */
-class RelayForwarder {
+class RelayForwarder(private val verifier: GuideFrameVerifier) {
     enum class Decision { FORWARD, DUPLICATE, CONFLICT, EXPIRED }
 
     data class Identity(val sessionID: UUID, val senderID: UUID, val streamID: UUID, val sequence: Long)
@@ -109,8 +113,12 @@ class RelayForwarder {
     private val order = ArrayDeque<Identity>()
     private val snapshots = HashMap<SessionMessageKind, Pair<Long, ByteArray>>()
 
-    /** Decides what to do with one sealed frame, given when it arrived and when it is about to be forwarded. */
-    fun admit(envelope: SealedSessionEnvelope, frame: ByteArray, receivedAtMilliseconds: Long, nowMilliseconds: Long): Decision {
+    /**
+     * Decides what to do with one GOS1 guide frame, given when it arrived and when it is about to be forwarded.
+     * Throws when the signature, session or guide does not match the pinned guide.
+     */
+    fun admit(frame: ByteArray, receivedAtMilliseconds: Long, nowMilliseconds: Long): Decision {
+        val envelope = verifier.verify(frame)
         val identity = Identity(envelope.sessionId, envelope.senderId, envelope.streamId, envelope.sequence)
         val digest = MessageDigest.getInstance("SHA-256").digest(frame)
         seen[identity]?.let { return if (it.contentEquals(digest)) Decision.DUPLICATE else Decision.CONFLICT }
@@ -129,6 +137,11 @@ class RelayForwarder {
     /** Control state a far guest needs on join, replayed locally in sequence order (no bridge bytes). */
     val snapshotFrames: List<ByteArray>
         get() = snapshots.values.sortedWith { a, b -> java.lang.Long.compareUnsigned(a.first, b.first) }.map { it.second }
+
+    /** `kind:sequence` of the cached snapshots in replay order (fixtures and diagnostics). */
+    val snapshotSummary: List<String>
+        get() = snapshots.entries.sortedWith { a, b -> java.lang.Long.compareUnsigned(a.value.first, b.value.first) }
+            .map { "${it.key.wireName}:${java.lang.Long.toUnsignedString(it.value.first)}" }
 
     companion object {
         const val WINDOW_SIZE = 4_096
