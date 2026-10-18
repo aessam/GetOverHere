@@ -35,11 +35,9 @@ def main():
     c = client()
     started = time.monotonic()
     if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf"):
-        if args.command in ("create", "join"):
-            session = c.session(BUNDLE)
-        else:
-            c.app_activate(BUNDLE)  # never relaunch: that would end a live tour
-            session = c.session()
+        # Never relaunch: that ends a live tour and detaches a `devicectl --console` log capture.
+        c.app_activate(BUNDLE)
+        session = c.session()
     if args.command == "create":
         field = session(className="XCUIElementTypeTextField")
         if not field.exists:
