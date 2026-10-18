@@ -942,3 +942,9 @@ each request returns one 60 KiB chunk, with at most 2 in flight.
 - Context: ADR-029 kept platform Wi-Fi islands unbridged and excluded a guest mesh. The user selected a chain: iOS guests on Apple peer-to-peer ⇄ one iOS node ⇄ Bluetooth ⇄ one Android node ⇄ Android guests on Android peer-to-peer, so every guest gets every frame and asset some node holds.
 - Decision: allow a bounded relay. Current session only; guide frames stay GOS1-signed end to end (ADR-038) and are verified at each hop; relays never re-sign or decrypt more than the sealed GOH2 frame needs; bounded hop count; duplicate suppression by session/stream/sequence identity (ADR-029); assets are served by any node holding a SHA-256 the authenticated manifest names. No store-and-forward beyond the live session, no guest-originated audio.
 - Status: design accepted; implementation and physical gate in the next phase with a second iPhone and a Pixel 11 (three or more phones). Behind an explicit experimental flag until that gate passes.
+
+## ADR-082 — Room record advertises the prepared tour pack (2026-10-18)
+- Context: ADR-080 DSCN-2 (user): the join list should show "Tour ready" before joining when the guest already holds the guide's pack.
+- Decision: `BluetoothRoomRecord` flag bit 4 means a `TourPackAdvert` (16-byte pack ID + big-endian u64 manifest version) follows the name. The record keeps its 439-byte limit, so with an advert the name is at most 376 bytes. Both cores, pinned fixture `bluetooth-pack-fixture`, cross-decoded in `scripts/verify_tour_session.sh`.
+- Readiness is still decided by the session manifest's hashes; the advert only drives the badge.
+- Compatibility: builds before this change reject flag 4, so they do not list a guide that advertises a pack. Rooms without a pack are byte-identical to before. Acceptable while all users run the same beta build.

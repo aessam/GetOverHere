@@ -105,6 +105,18 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Room record with a tour pack advert (ADR-080 DSCN-2): identical bytes, cross-decoded.
+SWIFT_PACK_RECORD="$($SWIFT_BIN bluetooth-pack-fixture)"
+KOTLIN_PACK_RECORD="$(run_kotlin bluetooth-pack-fixture)"
+[[ -n "$SWIFT_PACK_RECORD" && "$SWIFT_PACK_RECORD" == "$KOTLIN_PACK_RECORD" ]] || {
+    echo "error: Swift and Kotlin encoded different pack room records" >&2
+    exit 1
+}
+[[ "$($SWIFT_BIN decode-bluetooth-record "$KOTLIN_PACK_RECORD")" == "$(run_kotlin decode-bluetooth-record "$SWIFT_PACK_RECORD")" ]] || {
+    echo "error: Swift and Kotlin decoded the pack room record differently" >&2
+    exit 1
+}
+
 # Tour pack container GOHP v1 (ADR-080): identical bytes, and each core reads the other's pack.
 SWIFT_PACK_HEX="$($SWIFT_BIN pack-fixture)"
 KOTLIN_PACK_HEX="$(run_kotlin pack-fixture)"

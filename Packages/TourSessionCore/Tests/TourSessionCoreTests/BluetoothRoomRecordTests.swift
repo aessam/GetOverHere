@@ -23,6 +23,32 @@ struct BluetoothRoomRecordTests {
         let maximum = BluetoothRoomRecord(roomID: room, guideID: guide, name: String(repeating: "x", count: 400), isAndroid: false, isLocked: false)
         #expect(try BluetoothRoomRecord.decode(maximum.encode()) == maximum)
     }
+    @Test("A tour pack advert follows the name, is pinned, and stays within 439 bytes (ADR-080)")
+    func packAdvert() throws {
+        let room = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!
+        let guide = UUID(uuidString: "FFEEDDCC-BBAA-9988-7766-554433221100")!
+        let pack = TourPackAdvert(packID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!,
+                                  manifestVersion: 0x0102030405060708)
+        let record = BluetoothRoomRecord(roomID: room, guideID: guide, name: "Tour", isAndroid: false, isLocked: true,
+                                         admissionVersion: 2, pack: pack)
+        #expect(try record.encode().lowercaseHex == "474f52320600112233445566778899aabbccddeeffffeeddccbbaa998877665544332211000004546f75726f1c5c6a0000400080000000000000a10102030405060708")
+        #expect(try BluetoothRoomRecord.decode(record.encode()) == record)
+        // 39 + 376 + 24 = 439: the longest name that still fits with an advert.
+        let longest = BluetoothRoomRecord(roomID: room, guideID: guide, name: String(repeating: "x", count: 376),
+                                          isAndroid: true, isLocked: false, pack: pack)
+        #expect(try BluetoothRoomRecord.decode(longest.encode()) == longest)
+        #expect(throws: (any Error).self) {
+            try BluetoothRoomRecord(roomID: room, guideID: guide, name: String(repeating: "x", count: 377),
+                                    isAndroid: true, isLocked: false, pack: pack).encode()
+        }
+        let bytes = try record.encode()
+        for count in 0 ..< bytes.count {
+            #expect(throws: (any Error).self) { try BluetoothRoomRecord.decode(bytes.prefix(count)) }
+        }
+        var noAdvert = bytes; noAdvert[4] &= ~4 // flag cleared: the 24 trailing bytes become a bad name length
+        #expect(throws: (any Error).self) { try BluetoothRoomRecord.decode(noAdvert) }
+    }
+
     @Test func malformedRecordsFailClosed() throws {
         let value = BluetoothRoomRecord(roomID: UUID(), guideID: UUID(), name: "Tour", isAndroid: false, isLocked: false)
         let bytes = try value.encode()

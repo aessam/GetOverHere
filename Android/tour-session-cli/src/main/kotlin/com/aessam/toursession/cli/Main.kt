@@ -51,6 +51,18 @@ fun main(arguments: Array<String>) {
             "bluetooth-v2-fixture" -> println(BluetoothRoomRecord(
                 UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"),
                 UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100"), "Tour", true, true, 2).encode().lowercaseHex())
+            "bluetooth-pack-fixture" -> println(BluetoothRoomRecord(
+                UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"),
+                UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100"), "Tour", false, true, 2,
+                com.aessam.toursession.TourPackAdvert(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a1"), 0x0102030405060708L),
+            ).encode().lowercaseHex())
+            "decode-bluetooth-record" -> {
+                if (arguments.size != 2) fail("decode-bluetooth-record requires one hex argument")
+                val record = BluetoothRoomRecord.decode(arguments[1].hexToByteArray())
+                println(listOf(record.roomID.toString(), record.guideID.toString(), record.name,
+                    "${record.isAndroid}", "${record.isLocked}", "${record.admissionVersion}",
+                    record.pack?.let { "${it.packID}/${java.lang.Long.toUnsignedString(it.manifestVersion)}" } ?: "none").joinToString("|"))
+            }
             "bluetooth-lanes-fixture" -> println(BluetoothLanePSMs(128, 129, 256, 65535).encode().lowercaseHex())
             "room-v2-guide", "room-v2-guest" -> {
                 require(arguments.size == 4) {
