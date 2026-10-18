@@ -30,6 +30,7 @@ struct ChannelSidebar: View {
                     service.findNearbyTours()
                 }
                 .accessibilityIdentifier("findNearbyTours")
+                .keyboardShortcut("f", modifiers: .command)
                 .disabled(service.companionModeActive)
                 Text("Keep Bluetooth and Wi-Fi enabled. No Internet connection is needed. Rooms are open unless the guide locks them.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -50,6 +51,7 @@ struct ChannelSidebar: View {
                     ProgressView(service.joinStage?.rawValue ?? "Joining tour…")
                         .accessibilityIdentifier("roomJoinProgress")
                     Button("Cancel Join", role: .cancel) { service.cancelJoin() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             if service.activeChannelID == nil, service.connectionState == .failed,
@@ -65,7 +67,7 @@ struct ChannelSidebar: View {
                 emptyState
             } else {
                 Section("Nearby Tours") {
-                    ForEach(service.channels) { channel in
+                    ForEach(Array(service.channels.enumerated()), id: \.element.id) { index, channel in
                         Button {
                             guard service.activeChannelID != channel.id else { return }
                             guard service.canJoin(channel) else {
@@ -82,6 +84,7 @@ struct ChannelSidebar: View {
                             channelRow(channel)
                         }
                         .buttonStyle(.plain)
+                        .numberedShortcut(index)
                         .disabled(service.activeChannelID == nil && service.connectionState == .connecting)
                     }
                 }
@@ -106,6 +109,7 @@ struct ChannelSidebar: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                 }
+                .keyboardShortcut("n", modifiers: .command)
                 .disabled(service.companionModeActive)
             }
         }
@@ -129,12 +133,14 @@ struct ChannelSidebar: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { pendingJoinChannel = nil }
+                            .keyboardShortcut(.cancelAction)
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Join") {
                             service.joinChannel(channel, tourCode: joinCode)
                             pendingJoinChannel = nil
                         }
+                        .keyboardShortcut(.defaultAction)
                         .disabled((channel.roomAdmissionVersion ?? 0) > 0
                             ? !RoomAccessPolicy.isValidCode(joinCode)
                             : SessionCredential.normalize(joinCode).count != SessionCredential.shortCodeLength)

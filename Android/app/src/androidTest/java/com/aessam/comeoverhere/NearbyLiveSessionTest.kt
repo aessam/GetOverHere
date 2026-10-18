@@ -55,6 +55,8 @@ class NearbyLiveSessionTest {
         assumeTrue("Native BLE sockets require Android10+", Build.VERSION.SDK_INT >= 29)
         assumeTrue("Physical microphone/radio required", !Build.FINGERPRINT.contains("generic"))
         val name = requireNotNull(arguments.getString("nearbyRoomName"))
+        // Endurance: seconds to keep the session after the 5 s cadence smoke (0 = smoke only).
+        val holdSeconds = arguments.getString("nearbyHoldSeconds")?.toLong() ?: 0L
         val app = instrumentation.targetContext.applicationContext as ComeOverHereApp
         val service = app.channelService
         val activity = ActivityScenario.launch(MainActivity::class.java)
@@ -87,7 +89,7 @@ class NearbyLiveSessionTest {
                 await("guest audio-ready report", 90, service) { service.audioReadyGuestCount.value == 1 }
                 if (normalUI) compose.onNodeWithText("Pointer").performClick()
                 else instrumentation.runOnMainSync { service.setVisualFocus(TourVisualMode.POINTER) }
-                SystemClock.sleep(10_000)
+                SystemClock.sleep(maxOf(10_000L, holdSeconds * 1_000L))
                 assertEquals(AudioRuntimeState.RUNNING, service.audioRuntimeState.value)
             } else {
                 if (normalUI) compose.onNodeWithTag("findNearbyTours").performClick()
@@ -131,6 +133,30 @@ class NearbyLiveSessionTest {
                 // 16 kHz mono PCM16 is 32,000 bytes/s: require 80% of five nominal seconds.
                 // This is a cadence smoke test, not an acoustic or latency acceptance test.
                 assertTrue("Live PCM cadence below the five-second smoke threshold", deliveredBytes >= 128_000L)
+                if (holdSeconds > 0) {
+                    // Every 10 s window must add renderer bytes; screen-off/locked windows are recorded,
+                    // not excused. The capture gate defaults to 0, so a quiet room still sends frames.
+                    val power = instrumentation.targetContext.getSystemService(android.os.PowerManager::class.java)
+                    var previous = app.audioEngine.acceptedPlaybackByteCount
+                    var total = 0L
+                    val stalled = mutableListOf<Long>()
+                    for (window in 1..(holdSeconds / 10)) {
+                        SystemClock.sleep(10_000)
+                        val current = app.audioEngine.acceptedPlaybackByteCount
+                        val delta = current - previous
+                        previous = current
+                        total += delta
+                        var route: SessionTransportRoute? = null
+                        instrumentation.runOnMainSync { route = service.resolvedGuestRoute?.transport }
+                        Log.i("NearbyLive", "Endurance t=${window * 10}s delta=$delta route=$route " +
+                            "connection=${service.connectionState.value} audio=${service.audioRuntimeState.value} " +
+                            "interactive=${power.isInteractive}")
+                        if (delta == 0L) stalled += window * 10
+                    }
+                    Log.i("NearbyLive", "Endurance summary: seconds=$holdSeconds totalPCMBytes=$total stalledWindowsAt=$stalled")
+                    assertTrue("Renderer stalled in 10 s windows ending at $stalled s", stalled.isEmpty())
+                    assertTrue("Endurance PCM below 80% of nominal", total >= holdSeconds * 32_000L * 8 / 10)
+                }
             }
         } finally {
             try {

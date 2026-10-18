@@ -78,9 +78,18 @@ final class GetOverHereUITests: XCTestCase {
             let ready = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '1 audio ready'")).firstMatch
             XCTAssertTrue(ready.waitForExistence(timeout: 90), app.debugDescription)
             app.segmentedControls.buttons["Pointer"].tap()
-            let end = XCTNSPredicateExpectation(predicate: NSPredicate(value: false), object: app)
-            end.isInverted = true
-            XCTAssertEqual(XCTWaiter.wait(for: [end], timeout: 12), .completed)
+            // Endurance runs hold the room longer. A no-op tap on the room title every 20 s keeps the
+            // idle timer from locking the guide; the guest side measures continuity.
+            var remaining = TimeInterval(environment["GOH_NORMAL_UI_HOLD_SECONDS"] ?? "") ?? 12
+            while remaining > 0 {
+                let slice = min(20, remaining)
+                let end = XCTNSPredicateExpectation(predicate: NSPredicate(value: false), object: app)
+                end.isInverted = true
+                XCTAssertEqual(XCTWaiter.wait(for: [end], timeout: slice), .completed)
+                remaining -= slice
+                XCTAssertTrue(app.buttons["End Tour"].exists, "The guide's tour ended during the hold")
+                if remaining > 0 { app.staticTexts[name].firstMatch.tap() }
+            }
         } else {
             XCTAssertEqual(role, "guest")
             XCTAssertTrue(app.buttons["findNearbyTours"].waitForExistence(timeout: 10))
@@ -97,6 +106,38 @@ final class GetOverHereUITests: XCTestCase {
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: pointer)
             XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
         }
+    }
+
+    /// Physical lock tests only: sets Settings > Display & Brightness > Auto-Lock to `GOH_AUTOLOCK`
+    /// (for example "30 seconds" or "Never") and prints the previous value so the caller can restore it.
+    @MainActor
+    func testPhysicalSetAutoLock() throws {
+        guard let target = ProcessInfo.processInfo.environment["GOH_AUTOLOCK"] else {
+            throw XCTSkip("Explicit physical lock test only")
+        }
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        let display = settings.staticTexts["Display & Brightness"]
+        for _ in 0..<6 where !display.isHittable { settings.swipeUp() }
+        XCTAssertTrue(display.waitForExistence(timeout: 10), settings.debugDescription)
+        display.tap()
+        let autoLock = settings.cells.containing(.staticText, identifier: "Auto-Lock").firstMatch
+        for _ in 0..<4 where !autoLock.isHittable { settings.swipeUp() }
+        XCTAssertTrue(autoLock.waitForExistence(timeout: 10), settings.debugDescription)
+        let previous = autoLock.staticTexts.allElementsBoundByIndex.map(\.label).filter { $0 != "Auto-Lock" }.joined(separator: " ")
+        print("GOH_AUTOLOCK_PREVIOUS=\(previous)")
+        let note = XCTAttachment(string: previous)
+        note.name = "Auto-Lock before change"
+        note.lifetime = .keepAlways
+        add(note)
+        autoLock.tap()
+        let option = settings.staticTexts[target]
+        XCTAssertTrue(option.waitForExistence(timeout: 10), settings.debugDescription)
+        option.tap()
+        settings.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(settings.cells.containing(.staticText, identifier: target).firstMatch.waitForExistence(timeout: 10),
+                      "Auto-Lock did not change to \(target)")
+        settings.terminate()
     }
 
     @MainActor

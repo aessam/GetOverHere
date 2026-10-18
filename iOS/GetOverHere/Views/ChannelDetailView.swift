@@ -140,6 +140,7 @@ struct ChannelDetailView: View {
                 Button("End Tour", systemImage: "xmark.circle.fill", role: .destructive) {
                     service.leaveChannel()
                 }
+                .keyboardShortcut("e", modifiers: .command)
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
             }
@@ -178,6 +179,7 @@ struct ChannelDetailView: View {
                     Button("Previous", systemImage: "chevron.left") {
                         service.previousSlide()
                     }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
                     .disabled(!presentation.canGoPrevious)
 
                     Button {
@@ -193,6 +195,7 @@ struct ChannelDetailView: View {
                     Button("Next", systemImage: "chevron.right") {
                         service.nextSlide()
                     }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
                     .labelStyle(.titleAndIcon)
                     .disabled(!presentation.canGoNext)
                 }
@@ -289,6 +292,7 @@ struct ChannelDetailView: View {
                 Label("Add Slides", systemImage: "photo.badge.plus")
             }
             .buttonStyle(.bordered)
+            .keyboardShortcut("i", modifiers: [.command, .shift])
             Button {
                 isPDFImporterPresented = true
             } label: {
@@ -296,6 +300,7 @@ struct ChannelDetailView: View {
             }
             .buttonStyle(.bordered)
             .accessibilityIdentifier("importPDF")
+            .keyboardShortcut("i", modifiers: .command)
             // Attached to this button: a second importer on the same view as the map importer is ignored.
             .fileImporter(isPresented: $isPDFImporterPresented, allowedContentTypes: [.pdf],
                           allowsMultipleSelection: false) { result in
@@ -385,6 +390,7 @@ struct ChannelDetailView: View {
                 } label: {
                     Label(service.listenerOutput.title, systemImage: service.listenerOutput.systemImage)
                 }
+                .keyboardShortcut("o", modifiers: .command)
                 .buttonStyle(.borderedProminent)
 
                 Spacer()
@@ -392,6 +398,7 @@ struct ChannelDetailView: View {
                 Button("Leave", systemImage: "arrow.left.circle") {
                     service.leaveChannel()
                 }
+                .keyboardShortcut("l", modifiers: .command)
                 .buttonStyle(.bordered)
             }
             .padding()
@@ -487,6 +494,7 @@ struct ChannelDetailView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("retryTourAudio")
+                .keyboardShortcut("r", modifiers: .command)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal)
@@ -501,6 +509,15 @@ struct ChannelDetailView: View {
             }
         }
         .pickerStyle(.segmented)
+        // ⌘1/⌘2/⌘3 select Slides/Map/Pointer; segmented pickers take no per-segment shortcuts.
+        .background {
+            ForEach(Array(TourFeature.allCases.enumerated()), id: \.offset) { index, feature in
+                Button(feature.title) { selectedFeature = feature }
+                    .numberedShortcut(index)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     @ViewBuilder
@@ -694,6 +711,7 @@ struct ChannelDetailView: View {
                 Button("Point Guests This Way", systemImage: "location.north.circle.fill") {
                     service.shareCurrentBearing()
                 }
+                .keyboardShortcut("p", modifiers: .command)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
             } else if service.localGuidanceService.headingAccuracyDegrees.map({ $0 < 0 }) == true {
@@ -709,6 +727,7 @@ struct ChannelDetailView: View {
                 Button("Stop Pointer", systemImage: "stop.circle", role: .destructive) {
                     service.clearBearing()
                 }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
                 .buttonStyle(.bordered)
             }
             Text("Only the selected bearing angle is shared. Device location and guest compass readings stay local.")
@@ -892,6 +911,18 @@ private struct SlideThumbnail: View {
         .overlay {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
+        }
+    }
+}
+
+extension View {
+    /// ⌘1…⌘9 for the item at `index`, so a hardware keyboard (ReCont BLE HID) can act without the pointer.
+    @ViewBuilder
+    func numberedShortcut(_ index: Int) -> some View {
+        if index < 9 {
+            keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+        } else {
+            self
         }
     }
 }

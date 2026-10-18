@@ -17,6 +17,7 @@ def main():
     parser.add_argument("android")
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--ios-role", choices=["guide", "guest"], required=True)
+    parser.add_argument("--hold-seconds", type=int, default=0, help="Endurance: keep the session this long after the smoke checks")
     args = parser.parse_args()
     adb = str(Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk"))) / "platform-tools/adb")
     root = Path(__file__).resolve().parent.parent
@@ -28,7 +29,9 @@ def main():
     for configuration in manifest["TestConfigurations"]:
         for target in configuration["TestTargets"]:
             if target.get("BlueprintName") == "GetOverHereUITests":
-                target.setdefault("EnvironmentVariables", {}).update({"GOH_NORMAL_UI_ROLE": args.ios_role, "GOH_NORMAL_UI_ROOM": name})
+                target.setdefault("EnvironmentVariables", {}).update({"GOH_NORMAL_UI_ROLE": args.ios_role, "GOH_NORMAL_UI_ROOM": name,
+                    # The iPhone guide outlasts the Android guest's monitor (join + smoke + hold).
+                    "GOH_NORMAL_UI_HOLD_SECONDS": str(args.hold_seconds + 60 if args.hold_seconds else 12)})
     for apk in ("apk/debug/app-debug.apk", "apk/androidTest/debug/app-debug-androidTest.apk"):
         subprocess.run([adb, "-s", args.android, "install", "-r", str(root / "Android/app/build/outputs" / apk)], check=True)
     descriptor, temporary = tempfile.mkstemp(prefix="normal-ui-", suffix=".xctestrun", dir=args.manifest.parent)
@@ -43,10 +46,10 @@ def main():
             processes.append(ios)
             android = subprocess.Popen([adb, "-s", args.android, "shell", "am", "instrument", "-w", "-r",
                 "-e", "class", "com.aessam.comeoverhere.NearbyLiveSessionTest", "-e", "nearbyUI", "true",
-                "-e", "nearbyRole", "guest" if args.ios_role == "guide" else "guide", "-e", "nearbyRoomName", name,
+                "-e", "nearbyRole", "guest" if args.ios_role == "guide" else "guide", "-e", "nearbyRoomName", name, "-e", "nearbyHoldSeconds", str(args.hold_seconds),
                 "com.aessam.comeoverhere.test/androidx.test.runner.AndroidJUnitRunner"], stdout=android_log, stderr=subprocess.STDOUT)
             processes.append(android)
-            deadline = time.monotonic() + 240
+            deadline = time.monotonic() + 240 + 2 * args.hold_seconds
             statuses = [process.wait(timeout=max(1, deadline - time.monotonic())) for process in processes]
         summary = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(artifacts / "ios.xcresult")], capture_output=True, text=True, check=True)
         (artifacts / "summary.json").write_text(summary.stdout)

@@ -70,12 +70,14 @@ struct CreateChannelSheet: View {
                         coordinator.newChannelName = ""
                         dismiss()
                     }
+                    .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         coordinator.createChannel()
                         dismiss()
                     }
+                    .keyboardShortcut(.defaultAction)
                     .disabled(coordinator.newChannelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
