@@ -1,6 +1,12 @@
 package com.aessam.comeoverhere
 
 import android.os.Bundle
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.core.content.IntentCompat
+import android.net.Uri
+import android.content.Intent
 import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -26,9 +32,25 @@ class MainActivity : ComponentActivity() {
         (application as ComeOverHereApp).channelService.setDiscoveryForeground(false)
         super.onStop()
     }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        importSharedTourPack(intent)
+    }
+
+    /** A `.gohtour` opened from Files/Mail (VIEW) or shared to the app (SEND), ADR-080. */
+    private fun importSharedTourPack(intent: Intent?) {
+        val uri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else -> null
+        } ?: return
+        (application as ComeOverHereApp).importTourPack(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
+        if (savedInstanceState == null) importSharedTourPack(intent)
         val channelService = (application as ComeOverHereApp).channelService
 
         setContent {
@@ -38,6 +60,15 @@ class MainActivity : ComponentActivity() {
                 var showGateway by remember { mutableStateOf(false) }
                 val gateway = (application as ComeOverHereApp).gateway
                 val gatewayState by gateway.status.collectAsState()
+                val app = application as ComeOverHereApp
+                val packMessage by app.packImportMessage.collectAsState()
+                packMessage?.let { message ->
+                    AlertDialog(
+                        onDismissRequest = { app.packImportMessage.value = null },
+                        confirmButton = { TextButton(onClick = { app.packImportMessage.value = null }) { Text("OK") } },
+                        text = { Text(message) },
+                    )
+                }
                 if (showGateway || gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.COMPANION) {
                     com.aessam.comeoverhere.ui.GatewayScreen(gateway, onBack = { showGateway = false })
                 } else if (showWiFiAwareLab && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
