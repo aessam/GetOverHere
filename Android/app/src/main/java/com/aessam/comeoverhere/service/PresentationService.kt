@@ -81,6 +81,9 @@ class TourControlService(
     /** Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
 
+    /** Guest: join through an island bridge (ADR-081 P3); takes effect at the next join. */
+    fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) = transport.setRelayRoute(route)
+
     /** Sends the guide-signed `bridgeAssignment` when the bridge, its standbys or its lease change (ADR-081 D2). */
     @Synchronized
     private fun planBridge() {

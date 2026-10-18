@@ -244,6 +244,12 @@ class TourAssetTransferService(
         transport.startGuest()
     }
 
+    /** Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream). */
+    fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
+
+    /** Guest: join through an island bridge (ADR-081 P3); takes effect at the next join. */
+    fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) = transport.setRelayRoute(route)
+
     /** A complete cached file for a hash in the current manifest, or null (ADR-081 bridge asset lane). */
     fun readyFile(sha256: String): File? {
         val descriptor = manifest?.assets?.firstOrNull { it.sha256 == sha256 } ?: return null

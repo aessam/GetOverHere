@@ -202,6 +202,10 @@ interface SessionAssetTransport {
     fun startGuide()
     fun startGuest()
     fun send(kind: SessionMessageKind, payload: ByteArray, participantID: UUID?)
+    /** Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream). */
+    fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
+    /** Guest: authenticate this lane to an island bridge (ADR-081 P3). */
+    fun setRelayRoute(route: RelayRoute?) {}
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
     fun clearSession()

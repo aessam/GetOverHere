@@ -226,11 +226,13 @@ class ChannelService(
             verifier, record, factory(), assetFile = assetTransferService::readyFile)
         relayIsland = island
         tourControlService.setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.CONTROL, frame) }
+        assetTransferService.setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.ASSET, frame) }
         coordinator.selectAudioPlane().setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.REALTIME, frame) }
     }
 
     private fun stopRelayIsland() {
         tourControlService.setUpstreamFrameTap(null)
+        assetTransferService.setUpstreamFrameTap(null)
         coordinator.activeAudioPlane?.setUpstreamFrameTap(null)
         relayIsland?.close()
         relayIsland = null

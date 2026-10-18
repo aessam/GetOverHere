@@ -94,7 +94,11 @@ class RelayLaneServer(
                     hub.attach(lane, writer)
                     try { consumeUpstream(socket, peer) } finally { hub.detach(lane, writer); writer.close() }
                 }
-                SessionLane.ASSET -> serveAssets(socket, sealer, stream, peer)
+                SessionLane.ASSET -> {
+                    val writer = SocketChildWriter(socket, lane)
+                    hub.attach(lane, writer)
+                    try { serveAssets(socket, sealer, stream, peer, writer) } finally { hub.detach(lane, writer); writer.close() }
+                }
             }
         } catch (error: Exception) {
             if (error !is EOFException) Log.e(TAG, "Relay $lane peer ended (${error.javaClass.simpleName}: ${error.message})")
@@ -142,9 +146,8 @@ class RelayLaneServer(
         }
     }
 
-    private fun serveAssets(socket: Socket, sealer: SessionFrameSealer, stream: UUID, peer: UUID) {
+    private fun serveAssets(socket: Socket, sealer: SessionFrameSealer, stream: UUID, peer: UUID, writer: RelayChildWriter) {
         val input = socket.getInputStream()
-        val output = socket.getOutputStream()
         val opener = SessionFrameOpener(credential)
         var sequence = 1L
         while (running.get()) {
@@ -162,7 +165,10 @@ class RelayLaneServer(
             RandomAccessFile(file, "r").use { it.seek(wanted.offset); it.readFully(bytes) }
             sequence += 1
             val chunk = AssetChunkPayload(wanted.sha256, wanted.offset, length, bytes)
-            writeFrame(output, sealer.seal(envelope(SessionMessageKind.ASSET_CHUNK, sequence, chunk.encode()), stream).encode())
+            // One writer per socket: chunks and relayed manifests never interleave mid-frame.
+            if (!writer.enqueue(sealer.seal(envelope(SessionMessageKind.ASSET_CHUNK, sequence, chunk.encode()), stream).encode())) {
+                throw IllegalStateException("island asset peer is not reading")
+            }
         }
     }
 
@@ -181,7 +187,7 @@ class RelayLaneServer(
             socket = socket,
             generation = 0,
             label = "relay-$lane-peer-writer",
-            capacity = if (lane == SessionLane.CONTROL) 64 else 8,
+            capacity = when (lane) { SessionLane.CONTROL -> 64; SessionLane.ASSET -> 16; SessionLane.REALTIME -> 8 },
             overflowPolicy = SocketFrameOverflowPolicy.DISCONNECT,
             sendTimeoutMillis = 2_000,
         ) { _, _ ->

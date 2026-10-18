@@ -1,12 +1,21 @@
 package com.aessam.comeoverhere
 
+import com.aessam.comeoverhere.core.LocalSessionAssetTransport
 import com.aessam.comeoverhere.core.LocalSessionControlTransport
+import com.aessam.comeoverhere.core.SessionAssetEvent
 import com.aessam.comeoverhere.core.RelayHub
 import com.aessam.comeoverhere.core.RelayLaneServer
 import com.aessam.comeoverhere.core.RelayRoute
 import com.aessam.comeoverhere.core.SessionControlEvent
 import com.aessam.comeoverhere.core.SessionGuideAuthentication
+import com.aessam.toursession.AssetChunkPayload
+import com.aessam.toursession.AssetRequestPayload
 import com.aessam.toursession.AudioReadinessPayload
+import com.aessam.toursession.TourAssetDescriptor
+import com.aessam.toursession.TourAssetKind
+import com.aessam.toursession.TourPackManifestPayload
+import com.aessam.toursession.lowercaseHex
+import java.security.MessageDigest
 import com.aessam.toursession.AudioReadinessStatus
 import com.aessam.toursession.BridgeAssignmentPayload
 import com.aessam.toursession.GuideFrameSigner
@@ -22,6 +31,7 @@ import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -99,5 +109,46 @@ class RelayFarGuestTest {
         val event = next()
         assertTrue("expected a failure, got $event", event is SessionControlEvent.Failed)
         assertTrue(events.none { it == SessionControlEvent.Connected })
+    }
+
+    @Test fun farGuestGetsGuideManifestAndBridgeChunksOnTheAssetLane() {
+        val bytes = ByteArray(70_000) { (it % 251).toByte() }
+        val hash = MessageDigest.getInstance("SHA-256").digest(bytes).lowercaseHex()
+        val file = java.io.File.createTempFile("relay-asset", ".bin").apply { writeBytes(bytes); deleteOnExit() }
+        val assetServer = RelayLaneServer(SessionLane.ASSET, credential, session, guideID, bridgeID, hub, { if (it == hash) file else null })
+        val assetGuest = LocalSessionAssetTransport(port = assetServer.port)
+        val assetEvents = LinkedBlockingQueue<SessionAssetEvent>()
+        try {
+            assign(1)
+            val manifest = TourPackManifestPayload(UUID.randomUUID(), 1, "Tour",
+                listOf(TourAssetDescriptor("slide", TourAssetKind.SLIDE, hash, bytes.size.toLong(), 0, "image/jpeg")))
+            hub.onUpstreamFrame(SessionLane.ASSET, guideFrame(SessionMessageKind.TOUR_PACK_MANIFEST, manifest.encode()), 0, 0)
+            val me = UUID.randomUUID()
+            assetGuest.configureGuideAuthentication(SessionGuideAuthentication.Guest(GuideFrameVerifier(signer.publicKey, session, guideID)))
+            assetGuest.configureSession(session, me, "Far guest", ParticipantPlatform.ANDROID, credential)
+            assetGuest.hostIP = "127.0.0.1"
+            assetGuest.setRelayRoute(RelayRoute(RelayHostAdvert(bridgeID, 1), guideID))
+            assetGuest.setEventHandler { assetEvents += it }
+            assetGuest.startGuest()
+            fun nextAsset(): SessionEnvelope {
+                while (true) {
+                    val event = requireNotNull(assetEvents.poll(5, TimeUnit.SECONDS)) { "no asset event" }
+                    if (event is SessionAssetEvent.EnvelopeReceived) return event.envelope
+                    if (event is SessionAssetEvent.Failed) error(event.message)
+                }
+            }
+            val relayedManifest = nextAsset()
+            assertEquals(SessionMessageKind.TOUR_PACK_MANIFEST, relayedManifest.kind)
+            assertEquals(guideID, relayedManifest.senderId)
+            val received = java.io.ByteArrayOutputStream()
+            while (received.size() < bytes.size) {
+                assetGuest.send(SessionMessageKind.ASSET_REQUEST, AssetRequestPayload(hash, received.size().toLong()).encode(), null)
+                val chunk = nextAsset()
+                assertEquals(SessionMessageKind.ASSET_CHUNK, chunk.kind)
+                assertEquals("chunks come from the bridge cache, sealed by the bridge", bridgeID, chunk.senderId)
+                received.write(AssetChunkPayload.decode(chunk.payload).bytes)
+            }
+            assertArrayEquals(bytes, received.toByteArray())
+        } finally { assetGuest.stop(); assetServer.close(); file.delete() }
     }
 }

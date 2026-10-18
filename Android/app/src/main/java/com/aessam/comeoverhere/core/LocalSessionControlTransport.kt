@@ -177,6 +177,7 @@ private class LocalAuthenticatedSessionTransport(
         active.set(true)
         val runEventHandler = eventHandler
         val runSocketFactory = guestSocketFactory
+        val runRelayRoute = relayRoute
         fun emit(event: SessionControlEvent) { if (isRunActive(epoch)) runEventHandler?.invoke(event) }
         daemonThread("session-control-guide") {
             var openedSocket: Socket? = null
@@ -191,7 +192,7 @@ private class LocalAuthenticatedSessionTransport(
                 val output = socket.getOutputStream()
 
                 socket.soTimeout = 5_000
-                val guideID = authenticateGuide(socket, output, configured)
+                val guideID = authenticateGuide(socket, output, configured, runRelayRoute)
                 socket.soTimeout = 0
                 val writer = BoundedSocketFrameWriter(
                     socket = socket,
@@ -211,13 +212,21 @@ private class LocalAuthenticatedSessionTransport(
                 emit(SessionControlEvent.Connected)
 
                 val input = socket.getInputStream()
+                val bridge = if (applicationLane == SessionLane.ASSET) runRelayRoute?.host?.hostID else null
                 while (isRunActive(epoch)) {
                     val raw = readFrame(input, MAXIMUM_FRAME_SIZE)
-                    val envelope = openFrame(raw, inboundOpener, configured.authentication) ?: continue
-                    upstreamFrameTap?.invoke(raw)
+                    // A relayed asset lane also carries the bridge's own sealed chunks (W6): they are not guide-signed,
+                    // and the transfer service accepts them only for hashes in the guide-signed manifest.
+                    val fromBridge = bridge != null && !isGuideSigned(raw)
+                    val envelope = (if (fromBridge) openFrame(raw, inboundOpener) else openFrame(raw, inboundOpener, configured.authentication))
+                        ?: continue
+                    if (!fromBridge) upstreamFrameTap?.invoke(raw)
+                    if (fromBridge && envelope.kind != SessionMessageKind.ASSET_CHUNK) {
+                        throw IllegalArgumentException("bridge sent ${envelope.kind.wireName} on the relayed asset lane")
+                    }
                     if (
                         envelope.sessionId != configured.sessionID ||
-                        envelope.senderId != guideID ||
+                        envelope.senderId != (if (fromBridge) bridge else guideID) ||
                         envelope.lane != applicationLane ||
                         envelope.kind == SessionMessageKind.HELLO ||
                         envelope.kind == SessionMessageKind.AUTH_CHALLENGE ||
@@ -588,8 +597,9 @@ private class LocalAuthenticatedSessionTransport(
         socket: Socket,
         output: OutputStream,
         configured: Configuration,
+        route: RelayRoute?,
     ): UUID {
-        relayRoute?.let { route ->
+        route?.let { route ->
             val verifier = (configured.authentication as? SessionGuideAuthentication.Guest)?.verifier
                 ?: error("Admitted guide identity is not configured")
             RelayLaneClient.handshake(socket.getInputStream(), output, route, applicationLane, configured.credential,
@@ -699,6 +709,10 @@ private class LocalAuthenticatedSessionTransport(
 
     private companion object {
         const val MAXIMUM_FRAME_SIZE = 1_048_576
+        private val GUIDE_SIGNED_MAGIC = "GOS1".toByteArray(Charsets.US_ASCII)
+
+        fun isGuideSigned(frame: ByteArray): Boolean =
+            frame.size >= GUIDE_SIGNED_MAGIC.size && GUIDE_SIGNED_MAGIC.indices.all { frame[it] == GUIDE_SIGNED_MAGIC[it] }
         const val HELLO_MAXIMUM_SIZE = 65_536
         const val MAXIMUM_PENDING_HANDSHAKES = 32
 
@@ -820,6 +834,8 @@ class LocalSessionAssetTransport(
         transport.send(kind, payload, participantID)
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
+    override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { transport.upstreamFrameTap = tap }
+    override fun setRelayRoute(route: RelayRoute?) { transport.relayRoute = route }
     override fun stop() = transport.stop()
     override fun clearSession() = transport.clearSession()
 }

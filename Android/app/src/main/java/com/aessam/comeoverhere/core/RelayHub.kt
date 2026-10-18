@@ -46,6 +46,8 @@ class RelayHub(
     private var dropped = 0L
 
     /** The guide-signed assignment frame naming this bridge; carried in every relay welcome (ADR-083 QST-8). */
+    /** Newest guide-signed tour manifest; replayed to island asset peers so they know which hashes to request. */
+    private var manifestFrame: ByteArray? = null
     @get:Synchronized var assignmentFrame: ByteArray? = null
         private set
     @get:Synchronized var assignment: BridgeAssignmentPayload? = null
@@ -78,6 +80,11 @@ class RelayHub(
                     onRouteFault(lane, "guide ${envelope.lane} frame arrived on the $lane lane")
                     return
                 }
+                if (envelope.lane == SessionLane.ASSET) {
+                    // Chunks answer the bridge's own requests; island peers get chunks from the bridge cache instead.
+                    if (envelope.kind != SessionMessageKind.TOUR_PACK_MANIFEST) return
+                    manifestFrame = frame.copyOf()
+                }
                 forwarded++
                 if (envelope.kind == SessionMessageKind.BRIDGE_ASSIGNMENT) observeAssignment(envelope, frame)
                 fanOut(envelope.lane, frame)
@@ -88,10 +95,13 @@ class RelayHub(
     /** Registers an island peer after its relay lane handshake; control peers get the cached state first. */
     @Synchronized
     fun attach(lane: SessionLane, writer: RelayChildWriter) {
-        if (lane == SessionLane.CONTROL) {
-            for (frame in forwarder.snapshotFrames) {
-                if (!writer.enqueue(frame)) { writer.close(); dropped++; return }
-            }
+        val replay = when (lane) {
+            SessionLane.CONTROL -> forwarder.snapshotFrames
+            SessionLane.ASSET -> listOfNotNull(manifestFrame)
+            SessionLane.REALTIME -> emptyList()
+        }
+        for (frame in replay) {
+            if (!writer.enqueue(frame)) { writer.close(); dropped++; return }
         }
         children.getOrPut(lane) { mutableListOf() } += writer
     }
