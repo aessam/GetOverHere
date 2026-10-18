@@ -59,6 +59,41 @@ class PresentationServiceTest {
         service.stop()
     }
 
+    @Test fun guideCountsIslandReadinessOnlyThroughTheCurrentBridge() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val sessionID = UUID.randomUUID()
+        val credential = presentationCredential(sessionID)
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
+        service.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, credential)
+        service.startGuide(UUID.randomUUID(), emptyList())
+        fun join(id: UUID, relay: Boolean) = transport.emit(SessionControlEvent.GuestJoined(
+            com.aessam.toursession.ParticipantSession(id, id.toString(), "G", com.aessam.toursession.SessionRole.GUEST,
+                ParticipantPlatform.IOS, if (relay) com.aessam.toursession.SessionCapability.RELAY_HOST.bit else 0L)))
+        val bridge = UUID.randomUUID(); val other = UUID.randomUUID(); val far = UUID.randomUUID()
+        join(bridge, relay = true); join(other, relay = false)
+        val farSealer = com.aessam.toursession.SessionFrameSealer(credential); val farStream = UUID.randomUUID()
+        var farSequence = 0L
+        fun farFrame(kind: SessionMessageKind, payload: ByteArray) = farSealer.seal(SessionEnvelope(lane = SessionLane.CONTROL,
+            kind = kind, sequence = ++farSequence, sessionId = sessionID, senderId = far, payload = payload), farStream).encode()
+        fun carry(by: UUID, frame: ByteArray) = transport.emit(SessionControlEvent.EnvelopeReceived(SessionEnvelope(
+            lane = SessionLane.CONTROL, kind = SessionMessageKind.RELAY_UPSTREAM, sequence = farSequence, sessionId = sessionID,
+            senderId = by, payload = com.aessam.toursession.RelayUpstreamRecord(far, SessionLane.CONTROL, frame).encode())))
+        val playing = com.aessam.toursession.AudioReadinessPayload(com.aessam.toursession.AudioReadinessStatus.PLAYING, 1u).encode()
+        carry(other, farFrame(SessionMessageKind.AUDIO_STATUS, playing))
+        assertEquals("only the assigned bridge carries island reports", 0, service.audioReadyGuestCount.value)
+        carry(bridge, farFrame(SessionMessageKind.AUDIO_STATUS, playing))
+        assertEquals(1, service.audioReadyGuestCount.value)
+        carry(bridge, farFrame(SessionMessageKind.LEAVE, ByteArray(0)))
+        assertEquals(0, service.audioReadyGuestCount.value)
+        carry(bridge, farFrame(SessionMessageKind.AUDIO_STATUS,
+            com.aessam.toursession.AudioReadinessPayload(com.aessam.toursession.AudioReadinessStatus.PLAYING, 2u).encode()))
+        assertEquals(1, service.audioReadyGuestCount.value)
+        transport.emit(SessionControlEvent.GuestDisconnected(bridge))
+        assertEquals("island reports end with their bridge", 0, service.audioReadyGuestCount.value)
+        service.stop()
+    }
+
     @Test fun guestKeepsNewestBridgeAssignment() {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)

@@ -50,6 +50,9 @@ final class TourControlService {
     private(set) var connectedGuestCount = 0
     private(set) var audioReadyGuestCount = 0
     @ObservationIgnored private var guestAudioReports: [UUID: AudioReadinessPayload] = [:]
+    /// Island guests' advisory reports carried by a bridge (ADR-081 W5, DSCN-3), keyed by far guest.
+    @ObservationIgnored private var islandAudioReports: [UUID: (bridge: UUID, report: AudioReadinessPayload)] = [:]
+    @ObservationIgnored private var relayUpstreamOpener: SessionFrameOpener?
     @ObservationIgnored private var localAudioReport = AudioReadinessPayload(status: .waiting, revision: 0)
     @ObservationIgnored private var guestControlConnected = false
 
@@ -121,6 +124,7 @@ final class TourControlService {
     ) {
         stop()
         self.sessionID = sessionID
+        relayUpstreamOpener = SessionFrameOpener(credential: credential)
         transport.configureSession(
             sessionID: sessionID,
             participantID: participantID,
@@ -180,6 +184,33 @@ final class TourControlService {
         }
     }
 
+    private func recountAudioReady() {
+        let bridge = bridgeAssignment?.bridgeID
+        audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count +
+            islandAudioReports.values.filter { $0.bridge == bridge && $0.report.status == .playing }.count
+    }
+
+    /// W5: an island guest's sealed audio status or leave, carried by the current bridge (ADR-081, DSCN-3).
+    private func acceptRelayUpstream(_ payload: Data, bridge: UUID) throws {
+        let record = try RelayUpstreamRecord.decode(payload)
+        guard record.lane == .control, let opener = relayUpstreamOpener else { return }
+        guard case let .opened(inner) = try opener.open(SealedSessionEnvelope.decode(record.frame)),
+              inner.sessionID == sessionID, inner.senderID == record.farParticipantID, inner.senderID != bridge,
+              !connectedGuestIDs.contains(inner.senderID) else { return }
+        switch inner.kind {
+        case .audioStatus:
+            let report = try AudioReadinessPayload.decode(inner.payload)
+            if let previous = islandAudioReports[inner.senderID], previous.bridge == bridge,
+               report.revision <= previous.report.revision { return }
+            islandAudioReports[inner.senderID] = (bridge, report)
+        case .leave:
+            islandAudioReports.removeValue(forKey: inner.senderID)
+        default:
+            return
+        }
+        recountAudioReady()
+    }
+
     /// Sends the guide-signed `bridgeAssignment` when the bridge, its standbys or its lease change (ADR-081 D2).
     private func planBridge() {
         guard role == .guide, var authority = bridgeAuthority else { return }
@@ -188,6 +219,7 @@ final class TourControlService {
                                           nowMilliseconds: Self.nowMilliseconds())
             bridgeAuthority = authority
             bridgeAssignment = authority.current
+            recountAudioReady() // island reports count only while their bridge holds the assignment
             if let next { transport.send(kind: .bridgeAssignment, payload: next.encode()) }
         } catch {
             report(error)
@@ -328,6 +360,7 @@ final class TourControlService {
         transport.stop()
         guestControlConnected = false
         guestAudioReports.removeAll()
+        islandAudioReports.removeAll()
         audioReadyGuestCount = 0
         role = nil
         sessionID = nil
@@ -409,7 +442,7 @@ final class TourControlService {
             // Set semantics: a re-registering participant arrives as disconnect + join and counts once.
             connectedGuestIDs.insert(participant.participantID)
             guestAudioReports.removeValue(forKey: participant.participantID)
-            audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
+            recountAudioReady()
             connectedGuestCount = connectedGuestIDs.count
             do {
                 if let snapshot {
@@ -436,13 +469,20 @@ final class TourControlService {
             if let current = bridgeAssignment, current == before { transport.send(kind: .bridgeAssignment, payload: current.encode()) }
         case let .envelopeReceived(envelope):
             guard envelope.sessionID == sessionID else { return }
+            if role == .guide, envelope.kind == .relayUpstream {
+                // Only the assigned bridge carries island frames; they are advisory counts, never authority.
+                guard let bridge = bridgeAssignment?.bridgeID, envelope.senderID == bridge,
+                      connectedGuestIDs.contains(bridge) else { return }
+                do { try acceptRelayUpstream(envelope.payload, bridge: bridge) } catch { self.report(error) }
+                return
+            }
             if role == .guide, envelope.kind == .audioStatus {
                 guard connectedGuestIDs.contains(envelope.senderID) else { return }
                 do {
                     let report = try AudioReadinessPayload.decode(envelope.payload)
                     if let previous = guestAudioReports[envelope.senderID], report.revision <= previous.revision { return }
                     guestAudioReports[envelope.senderID] = report
-                    audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
+                    recountAudioReady()
                 } catch { self.report(error) }
                 return
             }
@@ -485,7 +525,7 @@ final class TourControlService {
             if bridgeCandidates.removeValue(forKey: participantID) != nil { planBridge() }
             connectedGuestIDs.remove(participantID)
             guestAudioReports.removeValue(forKey: participantID)
-            audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count
+            recountAudioReady()
             connectedGuestCount = connectedGuestIDs.count
         case let .versionMismatch(remoteMajor, localMajor):
             let message = Self.versionMismatchMessage(remoteMajor: remoteMajor, localMajor: localMajor)

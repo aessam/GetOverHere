@@ -48,7 +48,8 @@ class RelayFarGuestTest {
     private var sequence = 0L
     private val hub = RelayHub(bridgeID, GuideFrameVerifier(signer.publicKey, session, guideID), credential,
         onRouteFault = { _, reason -> error("route fault: $reason") }, onIslandRevoked = {})
-    private val server = RelayLaneServer(SessionLane.CONTROL, credential, session, guideID, bridgeID, hub)
+    private val forwarded = LinkedBlockingQueue<com.aessam.toursession.RelayUpstreamRecord>()
+    private val server = RelayLaneServer(SessionLane.CONTROL, credential, session, guideID, bridgeID, hub, onUpstream = { forwarded += it })
     private val guest = LocalSessionControlTransport(port = server.port)
     private val events = LinkedBlockingQueue<SessionControlEvent>()
 
@@ -97,6 +98,12 @@ class RelayFarGuestTest {
         val deadline = System.currentTimeMillis() + 5_000
         while (server.upstreamFrames < 1 && System.currentTimeMillis() < deadline) Thread.sleep(20)
         assertEquals(1L, server.upstreamFrames)
+        val record = requireNotNull(forwarded.poll(5, TimeUnit.SECONDS)) { "W5 record not forwarded" }
+        assertEquals(SessionLane.CONTROL, record.lane)
+        val inner = (com.aessam.toursession.SessionFrameOpener(credential).open(com.aessam.toursession.SealedSessionEnvelope.decode(record.frame))
+            as com.aessam.toursession.SessionFrameOpenResult.Opened).envelope
+        assertEquals(SessionMessageKind.AUDIO_STATUS, inner.kind)
+        assertEquals("the record names the guest that sealed the frame", inner.senderId, record.farParticipantID)
         hub.onUpstreamFrame(SessionLane.CONTROL, guideFrame(SessionMessageKind.TARGET_SNAPSHOT), 0, 0)
         val live = nextEnvelope()
         assertEquals(SessionMessageKind.TARGET_SNAPSHOT, live.kind)

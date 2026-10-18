@@ -21,6 +21,8 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
     case audioStatus = 0x24
     /// ADR-081: the guide's signed choice of the single cross-platform bridge.
     case bridgeAssignment = 0x25
+    /// ADR-081 W5: the bridge carries an island guest's advisory frame (a `RelayUpstreamRecord`) to the guide.
+    case relayUpstream = 0x26
     case assetManifest = 0x30
     case assetChunk = 0x31
     case tourPackManifest = 0x32
@@ -32,7 +34,7 @@ public enum SessionMessageKind: UInt8, CaseIterable, Sendable {
         case .audioFrame, .audioBatch:
             .realtime
         case .hello, .welcome, .heartbeat, .leave, .authChallenge, .presentationSnapshot, .bearingSnapshot,
-             .targetSnapshot, .visualFocusSnapshot, .audioStatus, .bridgeAssignment:
+             .targetSnapshot, .visualFocusSnapshot, .audioStatus, .bridgeAssignment, .relayUpstream:
             .control
         case .assetManifest, .assetChunk, .tourPackManifest, .assetRequest, .assetStatus:
             .asset

@@ -35,6 +35,8 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
     AUDIO_STATUS(0x24, SessionLane.CONTROL),
     /** ADR-081: the guide's signed choice of the single cross-platform bridge. */
     BRIDGE_ASSIGNMENT(0x25, SessionLane.CONTROL),
+    /** ADR-081 W5: the bridge carries an island guest's advisory frame (a [RelayUpstreamRecord]) to the guide. */
+    RELAY_UPSTREAM(0x26, SessionLane.CONTROL),
     ASSET_MANIFEST(0x30, SessionLane.ASSET),
     ASSET_CHUNK(0x31, SessionLane.ASSET),
     TOUR_PACK_MANIFEST(0x32, SessionLane.ASSET),
@@ -56,6 +58,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
             VISUAL_FOCUS_SNAPSHOT -> "visualFocusSnapshot"
             AUDIO_STATUS -> "audioStatus"
             BRIDGE_ASSIGNMENT -> "bridgeAssignment"
+            RELAY_UPSTREAM -> "relayUpstream"
             ASSET_MANIFEST -> "assetManifest"
             ASSET_CHUNK -> "assetChunk"
             TOUR_PACK_MANIFEST -> "tourPackManifest"

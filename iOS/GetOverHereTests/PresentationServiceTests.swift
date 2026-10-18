@@ -30,7 +30,50 @@ struct PresentationServiceTests {
         service.stop()
     }
 
-    @Test("The guide assigns the first relay-capable other-platform guest as bridge and fails over (ADR-081 P2)")
+    @Test("The guide counts island readiness only through the current bridge (ADR-081 W5)")
+    @MainActor
+    func guideCountsIslandReadinessOnlyThroughTheCurrentBridge() async throws {
+        let transport = RecordingControlTransport()
+        let service = TourControlService(transport: transport)
+        let sessionID = UUID()
+        let credential = try presentationCredential(sessionID)
+        service.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guide", platform: .iOS,
+                                 credential: credential)
+        try service.startGuide(deckID: UUID(), slides: [])
+        func join(_ id: UUID, relay: Bool) async {
+            await transport.emit(.guestJoined(ParticipantSession(participantID: id, connectionID: id.uuidString, displayName: "G",
+                role: .guest, platform: .android, capabilities: relay ? SessionCapabilities.relayHost.rawValue : 0)))
+        }
+        let bridge = UUID(), other = UUID(), far = UUID(), farStream = UUID()
+        await join(bridge, relay: true)
+        await join(other, relay: false)
+        let farSealer = SessionFrameSealer(credential: credential)
+        var farSequence: UInt64 = 0
+        func farFrame(_ kind: SessionMessageKind, _ payload: Data) throws -> Data {
+            farSequence += 1
+            return try farSealer.seal(SessionEnvelope(lane: .control, kind: kind, sequence: farSequence, sessionID: sessionID,
+                                                      senderID: far, payload: payload), streamID: farStream).encode()
+        }
+        func carry(by sender: UUID, _ frame: Data) async throws {
+            let record = try RelayUpstreamRecord(farParticipantID: far, lane: .control, frame: frame)
+            await transport.emit(.envelopeReceived(try SessionEnvelope(lane: .control, kind: .relayUpstream, sequence: farSequence,
+                sessionID: sessionID, senderID: sender, payload: record.encode())))
+        }
+        let playing = AudioReadinessPayload(status: .playing, revision: 1).encode()
+        try await carry(by: other, farFrame(.audioStatus, playing))
+        #expect(service.audioReadyGuestCount == 0, "only the assigned bridge carries island reports")
+        try await carry(by: bridge, farFrame(.audioStatus, playing))
+        #expect(service.audioReadyGuestCount == 1)
+        try await carry(by: bridge, farFrame(.leave, Data()))
+        #expect(service.audioReadyGuestCount == 0)
+        try await carry(by: bridge, farFrame(.audioStatus, AudioReadinessPayload(status: .playing, revision: 2).encode()))
+        #expect(service.audioReadyGuestCount == 1)
+        await transport.emit(.guestDisconnected(participantID: bridge))
+        #expect(service.audioReadyGuestCount == 0, "island reports end with their bridge")
+        #expect(service.lastError == nil)
+        service.stop()
+    }
+
     @MainActor
     func guideAssignsBridge() async throws {
         let transport = RecordingControlTransport()

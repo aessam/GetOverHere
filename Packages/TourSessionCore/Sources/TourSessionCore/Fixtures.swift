@@ -124,6 +124,10 @@ public enum TourSessionFixtures {
         case .audioStatus:
             let status = try AudioReadinessPayload.decode(envelope.payload)
             fields += ["status=\(status.status.rawValue)", "revision=\(status.revision)"]
+        case .relayUpstream:
+            let record = try RelayUpstreamRecord.decode(envelope.payload)
+            fields += ["far=\(record.farParticipantID.uuidString.lowercased())", "upstreamLane=\(record.lane.rawValue)",
+                       "frameBytes=\(record.frame.count)"]
         case .bridgeAssignment:
             let assignment = try BridgeAssignmentPayload.decode(envelope.payload)
             fields += [

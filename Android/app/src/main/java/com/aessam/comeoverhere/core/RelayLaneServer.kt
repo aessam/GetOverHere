@@ -8,6 +8,7 @@ import com.aessam.toursession.HelloPayload
 import com.aessam.toursession.RelayHostAdvert
 import com.aessam.toursession.RelayLaneAuthenticator
 import com.aessam.toursession.RelayLaneContext
+import com.aessam.toursession.RelayUpstreamRecord
 import com.aessam.toursession.RelayWelcomePayload
 import com.aessam.toursession.SealedSessionEnvelope
 import com.aessam.toursession.SessionAuthenticator
@@ -51,6 +52,8 @@ class RelayLaneServer(
     private val hub: RelayHub,
     /** File holding the asset with this SHA-256, if the bridge has it (asset lane only). */
     private val assetFile: (String) -> File? = { null },
+    /** W5: an island peer's control-lane audio status or leave, to carry to the guide (advisory, DSCN-3). */
+    private val onUpstream: (RelayUpstreamRecord) -> Unit = {},
     private val bindAddress: InetAddress = InetAddress.getLoopbackAddress(),
     port: Int = 0,
 ) : AutoCloseable {
@@ -131,18 +134,24 @@ class RelayLaneServer(
     }
 
     /**
-     * Island peers' own frames on realtime/control (audio status, leave). They are advisory (DSCN-3) and are not yet
-     * forwarded upstream (W5); a leave or EOF ends the peer, anything not sealed by a member is a protocol error.
+     * Island peers' own frames on realtime/control. Control audio status and leave go to the guide as W5 records
+     * (advisory, DSCN-3); a leave or EOF ends the peer, anything not sealed by a member is a protocol error.
      */
     private fun consumeUpstream(socket: Socket, peer: UUID) {
         val input = socket.getInputStream()
         val opener = SessionFrameOpener(credential)
         while (running.get()) {
-            val envelope = (opener.open(SealedSessionEnvelope.decode(readFrame(input, HELLO_MAXIMUM))) as? SessionFrameOpenResult.Opened)?.envelope
+            val raw = readFrame(input, HELLO_MAXIMUM)
+            val envelope = (opener.open(SealedSessionEnvelope.decode(raw)) as? SessionFrameOpenResult.Opened)?.envelope
                 ?: continue
             if (envelope.sessionId != sessionID || envelope.senderId != peer) throw IllegalArgumentException("upstream frame from another participant")
-            if (envelope.kind == SessionMessageKind.LEAVE) return
             upstreamCount.incrementAndGet()
+            if (lane == SessionLane.CONTROL && (envelope.kind == SessionMessageKind.AUDIO_STATUS || envelope.kind == SessionMessageKind.LEAVE)) {
+                try { onUpstream(RelayUpstreamRecord(peer, lane, raw)) } catch (error: Exception) {
+                    Log.e(TAG, "Relay upstream forward failed (${error.javaClass.simpleName}: ${error.message})")
+                }
+            }
+            if (envelope.kind == SessionMessageKind.LEAVE) return
         }
     }
 

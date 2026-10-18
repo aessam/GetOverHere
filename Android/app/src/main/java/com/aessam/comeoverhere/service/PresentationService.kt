@@ -81,6 +81,10 @@ class TourControlService(
     /** Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
 
+    /** Bridge: carry an island guest's advisory frame to the guide (W5). */
+    fun sendRelayUpstream(record: com.aessam.toursession.RelayUpstreamRecord) =
+        transport.send(SessionMessageKind.RELAY_UPSTREAM, record.encode())
+
     /** Guest: join through an island bridge (ADR-081 P3); takes effect at the next join. */
     fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) = transport.setRelayRoute(route)
 
@@ -92,6 +96,7 @@ class TourControlService(
         runCatching {
             val next = authority.plan(bridgeCandidates.values.toList(), System.currentTimeMillis())
             mutableBridgeAssignment.value = authority.current
+            synchronized(connectedGuestIDs) { updateAudioReadyCount() } // island reports follow the current bridge
             if (next != null) transport.send(SessionMessageKind.BRIDGE_ASSIGNMENT, next.encode())
         }.onFailure(::report)
     }
@@ -101,6 +106,9 @@ class TourControlService(
     val connectedGuestCount: StateFlow<Int> = mutableConnectedGuestCount.asStateFlow()
     private val connectedGuestIDs = mutableSetOf<UUID>()
     private val guestAudioReports = mutableMapOf<UUID, AudioReadinessPayload>()
+    /** Island guests' advisory reports carried by a bridge (ADR-081 W5, DSCN-3): far guest → (bridge, report). */
+    private val islandAudioReports = mutableMapOf<UUID, Pair<UUID, AudioReadinessPayload>>()
+    @Volatile private var relayUpstreamOpener: com.aessam.toursession.SessionFrameOpener? = null
     private val mutableAudioReadyGuestCount = MutableStateFlow(0)
     val audioReadyGuestCount = mutableAudioReadyGuestCount.asStateFlow()
 
@@ -150,6 +158,7 @@ class TourControlService(
         stop()
         synchronized(this) {
             this.sessionID = sessionID
+            relayUpstreamOpener = com.aessam.toursession.SessionFrameOpener(credential)
             installTransportHandler()
         }
         transport.configureSession(sessionID, participantID, displayName, platform, credential)
@@ -317,6 +326,7 @@ class TourControlService(
             synchronized(connectedGuestIDs) {
                 connectedGuestIDs.clear()
                 guestAudioReports.clear()
+                islandAudioReports.clear()
                 mutableAudioReadyGuestCount.value = 0
                 mutableConnectedGuestCount.value = 0
             }
@@ -345,9 +355,10 @@ class TourControlService(
 
     /** Called only under the membership lock, after an authenticated control-lane report. */
     private fun updateAudioReadyCount() {
+        val bridge = mutableBridgeAssignment.value?.bridgeID
         mutableAudioReadyGuestCount.value = guestAudioReports.count { (id, report) ->
             id in connectedGuestIDs && report.status == AudioReadinessStatus.PLAYING
-        }
+        } + islandAudioReports.values.count { (via, report) -> via == bridge && report.status == AudioReadinessStatus.PLAYING }
     }
 
     private fun acceptAudioReport(envelope: com.aessam.toursession.SessionEnvelope) {
@@ -357,6 +368,33 @@ class TourControlService(
             val previous = guestAudioReports[envelope.senderId]
             if (previous != null && incoming.revision <= previous.revision) return
             guestAudioReports[envelope.senderId] = incoming
+            updateAudioReadyCount()
+        }
+    }
+
+    /** W5: an island guest's sealed audio status or leave, carried by the current bridge (ADR-081, DSCN-3). */
+    private fun acceptRelayUpstream(envelope: com.aessam.toursession.SessionEnvelope) {
+        synchronized(connectedGuestIDs) {
+            val bridge = mutableBridgeAssignment.value?.bridgeID
+            // Only the assigned bridge carries island frames; they are advisory counts, never authority.
+            if (envelope.sessionId != sessionID || bridge == null || envelope.senderId != bridge || bridge !in connectedGuestIDs) return
+            val record = com.aessam.toursession.RelayUpstreamRecord.decode(envelope.payload)
+            val opener = relayUpstreamOpener ?: return
+            if (record.lane != com.aessam.toursession.SessionLane.CONTROL) return
+            val inner = (opener.open(com.aessam.toursession.SealedSessionEnvelope.decode(record.frame))
+                as? com.aessam.toursession.SessionFrameOpenResult.Opened)?.envelope ?: return
+            if (inner.sessionId != sessionID || inner.senderId != record.farParticipantID || inner.senderId == bridge ||
+                inner.senderId in connectedGuestIDs) return
+            when (inner.kind) {
+                SessionMessageKind.AUDIO_STATUS -> {
+                    val incoming = AudioReadinessPayload.decode(inner.payload)
+                    val previous = islandAudioReports[inner.senderId]
+                    if (previous != null && previous.first == bridge && incoming.revision <= previous.second.revision) return
+                    islandAudioReports[inner.senderId] = bridge to incoming
+                }
+                SessionMessageKind.LEAVE -> islandAudioReports.remove(inner.senderId)
+                else -> return
+            }
             updateAudioReadyCount()
         }
     }
@@ -448,6 +486,10 @@ class TourControlService(
             }
             is SessionControlEvent.EnvelopeReceived -> {
                 if (event.envelope.sessionId != sessionID) return
+                if (role == PresentationServiceRole.GUIDE && event.envelope.kind == SessionMessageKind.RELAY_UPSTREAM) {
+                    runCatching { acceptRelayUpstream(event.envelope) }.onFailure(::report)
+                    return
+                }
                 if (role == PresentationServiceRole.GUIDE && event.envelope.kind == SessionMessageKind.AUDIO_STATUS) {
                     runCatching { acceptAudioReport(event.envelope) }.onFailure(::report)
                     return

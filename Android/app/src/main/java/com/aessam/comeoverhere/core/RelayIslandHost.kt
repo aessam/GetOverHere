@@ -6,6 +6,7 @@ import com.aessam.toursession.BridgeAssignmentPayload
 import com.aessam.toursession.GatewayLane
 import com.aessam.toursession.GuideFrameVerifier
 import com.aessam.toursession.RelayHostAdvert
+import com.aessam.toursession.RelayUpstreamRecord
 import com.aessam.toursession.SessionCredential
 import com.aessam.toursession.SessionLane
 import java.io.File
@@ -37,6 +38,8 @@ class RelayIslandHost(
     private val upstreamRecord: BluetoothRoomRecord,
     private val advertiser: IslandAdvertiserInterface,
     private val assetFile: (String) -> File?,
+    /** W5: carries island guests' advisory frames to the guide on this guest's own control lane. */
+    private val forwardUpstream: (RelayUpstreamRecord) -> Unit = {},
     private val admissionPort: Int = GatewayLane.ADMISSION.localPort!!,
     private val now: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
@@ -73,7 +76,7 @@ class RelayIslandHost(
         if (servers.isEmpty()) {
             try {
                 listOf(SessionLane.REALTIME, SessionLane.CONTROL, SessionLane.ASSET).forEach { lane ->
-                    servers[lane] = RelayLaneServer(lane, credential, sessionID, guideID, bridgeID, hub, assetFile)
+                    servers[lane] = RelayLaneServer(lane, credential, sessionID, guideID, bridgeID, hub, assetFile, forwardUpstream)
                 }
             } catch (error: Exception) {
                 Log.e(TAG, "Relay island listeners failed (${error.javaClass.simpleName}: ${error.message})")

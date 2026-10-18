@@ -2263,3 +2263,7 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 ### 2026-10-18 13:05 — Relay P3 steps 1–2 (JVM only)
 - Far-guest relay handshake (control/realtime/asset) and bridge-served assets: `RelayFarGuestTest` 3/3 over loopback against a real `RelayLaneServer` + `RelayHub` (manifest relayed guide-signed, 70,000-byte asset served as bridge-sealed chunks, stale bridge generation never connects).
 - `./gradlew :app:testDebugUnitTest`: first run 237/239 — `SignedNativeSessionTest` failed twice with "Address already in use" / "Cannot open room admission port 63263"; two `--rerun-tasks` runs 239/239. Flake: that test picks a free port and binds it later, so another test's ephemeral socket can take it. Not fixed here.
+
+### 2026-10-18 13:03 — W5 relayUpstream (both cores, both guides, Android bridge)
+- New kind `relayUpstream` 0x26 (control). The Android bridge wraps island guests' sealed audioStatus/leave in `RelayUpstreamRecord`; the guide (iOS and Android) opens the inner frame with the session credential and counts it as advisory readiness only while its sender is the current bridge.
+- `GOH_IOS_DESTINATION='platform=iOS Simulator,id=5D72BABA-9416-4B7A-ABAA-B0F2628E84EE' scripts/verify_tour_session.sh`: "Tour session verification passed", exit 0 (Swift/Kotlin parity, Android unit 241, core 106, iOS simulator tests).

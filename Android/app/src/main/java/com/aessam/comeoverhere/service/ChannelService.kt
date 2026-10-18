@@ -224,7 +224,8 @@ class ChannelService(
         val record = com.aessam.toursession.BluetoothRoomRecord(UUID.fromString(channel.id), guideID, channel.name,
             isAndroid = false, isLocked = channel.isRoomLocked, admissionVersion = channel.roomAdmissionVersion ?: 2)
         val island = com.aessam.comeoverhere.core.RelayIslandHost(UUID.fromString(localPeerID), sessionID, guideID, credential,
-            verifier, record, factory(), assetFile = assetTransferService::readyFile)
+            verifier, record, factory(), assetFile = assetTransferService::readyFile,
+            forwardUpstream = tourControlService::sendRelayUpstream)
         relayIsland = island
         tourControlService.setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.CONTROL, frame) }
         assetTransferService.setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.ASSET, frame) }

@@ -26,6 +26,8 @@ struct RelayProtocolTests {
         #expect(throws: (any Error).self) { try BridgeAssignmentPayload.decode(value.encode().dropLast()) }
         #expect(SessionMessageKind.bridgeAssignment.requiredLane == .control)
         #expect(SessionCapabilities.relayHost.rawValue == 1 << 5)
+        #expect(SessionMessageKind.relayUpstream.requiredLane == .control)
+        #expect(SessionMessageKind.relayUpstream.rawValue == 0x26)
     }
 
     @Test func upstreamRecordRoundtripAndRejections() throws {

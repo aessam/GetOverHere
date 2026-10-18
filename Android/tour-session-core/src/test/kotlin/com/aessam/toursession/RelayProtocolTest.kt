@@ -24,6 +24,8 @@ class RelayProtocolTest {
         assertThrows(Exception::class.java) { BridgeAssignmentPayload.decode(value.encode().copyOf(value.encode().size - 1)) }
         assertEquals(SessionLane.CONTROL, SessionMessageKind.BRIDGE_ASSIGNMENT.requiredLane)
         assertEquals(1L shl 5, SessionCapability.RELAY_HOST.bit)
+        assertEquals(SessionLane.CONTROL, SessionMessageKind.RELAY_UPSTREAM.requiredLane)
+        assertEquals(0x26, SessionMessageKind.RELAY_UPSTREAM.rawValue)
     }
 
     @Test fun upstreamRecordRoundtripAndRejections() {

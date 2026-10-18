@@ -124,6 +124,10 @@ object TourSessionFixtures {
                 val status = AudioReadinessPayload.decode(envelope.payload)
                 fields += listOf("status=${status.status.rawValue}", "revision=${status.revision}")
             }
+            SessionMessageKind.RELAY_UPSTREAM -> {
+                val record = RelayUpstreamRecord.decode(envelope.payload)
+                fields += listOf("far=${record.farParticipantID}", "upstreamLane=${record.lane.rawValue}", "frameBytes=${record.frame.size}")
+            }
             SessionMessageKind.BRIDGE_ASSIGNMENT -> {
                 val assignment = BridgeAssignmentPayload.decode(envelope.payload)
                 fields += listOf(
