@@ -2183,3 +2183,14 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
   tour `Awake-52f3bdb4` left idle 65 s → `locked()==False`; a new Pixel join → OK, 960,000 PCM B in 30 s,
   0 stalls, 218,717 radio B. Auto-Lock restored to Never (`ios_drive.py autolock Never`).
   iOS ChannelServiceLifecycleTests 41/41 including `liveGuideKeepsScreenAwake`.
+- PDF during speech, first try (`Wda-35ac2ffb`, stress-20.pdf = 20 pages of random rectangles, 339 KB):
+  after the import, slides flowed (262 KB in 10 s) and the guest's whole Bluetooth link dropped twice
+  (asset lane EOF after 118 KB / 154 KB, then all lanes EOF, "Session reconnect attempt 1"). Renderer stalled
+  at t=220–240 s → FAIL. Root cause FND-P5-2: the nearby bridges classified batched audio (0x11) as
+  non-droppable, so the congested realtime queue threw (`NearbyRealtimeQueue.offer`) and closed the link.
+  Fix: both classifiers include `audioBatch`; tests extended (Android red on old code, green after).
+  Full gate `verify_tour_session.sh` → passed (finished 18:07:27).
+- PDF retest with the fix (`Pdf-436ccc5d`, import 18:05:44–56): no disconnects. During the transfer,
+  t=80–150 s, slides arrived at 390–542 KB per 10 s and audio held 271–285 kB PCM per 10 s (86–89% of
+  nominal). Audio returned to 320 kB once the slides finished (t=180 s). FND-P5-4: an unpaced slide
+  transfer costs ~11–14% of audio frames on Bluetooth.

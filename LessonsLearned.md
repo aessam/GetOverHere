@@ -649,3 +649,17 @@ launch in this session stalled and failed networking tests; the log is retained,
 not counted as a pass. The serial run exposed one old expiry assertion that
 needed to move outside the deliberate companion clock-skew window. Final gate
 and component evidence: `benchmarks/2026-09-15-security-review/README.md`.
+
+## 2026-10-17 — A new message kind silently broke congestion handling (FND-P5-2)
+
+**What happened:** ADR-075 added `audioBatch` (0x11). Both nearby bridges still classified "droppable
+speech" as `kind == .audioFrame` / byte `0x10`, so batched audio became must-deliver traffic. A 20-page
+PDF transfer congested the Bluetooth link. The realtime queue filled with frames it could not drop,
+threw, and closed the guest's link. Reconnects then looped on each slide burst. A 30-minute audio-only
+run had passed, because audio alone never filled the queue.
+**Root cause:** The call-site grep listed both files, but only the `switch` that failed to compile was
+updated. Equality checks against one enum case compile fine when a case is added.
+**Resolution:** Classify `audioFrame || audioBatch` on iOS, Android and the iOS Aware lab path. Add
+classifier tests per kind; the Android test fails on the old code.
+**Rule:** When adding an enum case, treat every `== .existingCase` site from the grep as a decision, not
+noise, and add a test that exercises the new case through each classifier.

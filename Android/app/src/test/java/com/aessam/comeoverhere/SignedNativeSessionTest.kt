@@ -171,6 +171,12 @@ class SignedNativeSessionTest {
         val signed = signer.sign(sealed).encode()
         assertTrue(isNearbyAudioFrame(signed))
         assertTrue(isNearbyAudioFrame(sealed.encode()))
+        // Batched Opus (ADR-075) must be droppable speech too, or congestion closes the guest (FND-P5-2).
+        val batch = SessionFrameSealer(SessionCredential.derive("23456789AB", room)).seal(
+            SessionEnvelope(lane = SessionLane.REALTIME, kind = SessionMessageKind.AUDIO_BATCH, sequence = 2,
+                sessionId = room, senderId = guideID, payload = ByteArray(4)), UUID.randomUUID())
+        assertTrue(isNearbyAudioFrame(signer.sign(batch).encode()))
+        assertTrue(isNearbyAudioFrame(batch.encode()))
         assertArrayEquals(sealed.encode(), verifier.decodeGuide(signed).encode())
         val forged = signed.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
         assertTrue(isNearbyAudioFrame(forged)) // Scheduler must not claim authentication.

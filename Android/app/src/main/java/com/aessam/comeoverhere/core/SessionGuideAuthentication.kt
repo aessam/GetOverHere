@@ -52,5 +52,7 @@ internal fun isNearbyAudioFrame(frame: ByteArray): Boolean {
         "Invalid nearby session frame"
     }
     require(frame[offset + 4] == 4.toByte()) { "Unsupported nearby session version" }
-    return frame[offset + 7].toInt() == 0x10
+    // Batched Opus (ADR-075, kind 0x11) is speech too: under congestion it must expire, never block control.
+    val kind = frame[offset + 7].toInt()
+    return kind == 0x10 || kind == 0x11
 }

@@ -1,5 +1,31 @@
 # GetOverHere — Next Session
 
+## October 17 — current state (main, see tags `checkpoint/2026-10-17-*`)
+
+Batched Opus (ADR-075) roughly halves on-air audio: measured over Bluetooth at 59 kbps guide → guest,
+0 B back. Pair iPhone 13 Pro + Pixel 7 (only devices available):
+- PASS both guide directions.
+- PASS a 30-min iPhone-guide endurance with the Android guest locked 10 min.
+- PASS: a connected guest keeps audio when the iPhone guide locks.
+- FIXED FND-P5-1: new Android guests cannot discover a locked iPhone guide, so the guide now stays
+  awake while live (ADR-076).
+
+iPhone automation: WebDriverAgent via `scripts/wda.sh start`, steps via
+`tools/.venv/bin/python scripts/ios_drive.py create|join|pointer|import-pdf|lock|unlock|autolock`
+(ADR-077). Android guest metrics come from `NearbyLiveSessionTest -e nearbyHoldSeconds N` (PCM and radio
+bytes per 10 s).
+
+Open:
+- PDF during speech (RSK-3).
+- Locked iPhone guest (`scripts/verify_locked_iphone_guest.py`).
+- Android-guide endurance.
+- Audibility and latency (no Mac audio allowed).
+- FND-8, FND-13 remainder.
+- DSCN-2 hotspot.
+- RSK-1 public review docs.
+
+Pixel `stay_on_while_plugged_in` was 0 before the runs; restore with `adb shell svc power stayon false`.
+
 ## October 4 — current plan: `WirelessMegaphonePlan.md`
 
 Execution plan for the Sept 21 direction (one cross-platform app, Bluetooth as

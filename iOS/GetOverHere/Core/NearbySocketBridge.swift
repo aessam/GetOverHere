@@ -416,7 +416,9 @@ final class NearbySocketBridge {
         } else {
             sealed = frame
         }
-        return try SealedSessionEnvelope.decode(sealed).kind == .audioFrame
+        // Batched Opus (ADR-075) is speech too: under congestion it must expire, never block control.
+        let kind = try SealedSessionEnvelope.decode(sealed).kind
+        return kind == .audioFrame || kind == .audioBatch
     }
 
     private static func copy(_ source: any NearbyByteConnection, _ destination: any NearbyByteConnection, timeout: UInt64?) async throws {

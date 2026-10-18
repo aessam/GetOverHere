@@ -361,7 +361,7 @@ struct NearbySocketBridgeTests {
     }
 
     @Test("Native queue classifies signed speech separately from signed handshake frames",
-          arguments: [SessionMessageKind.audioFrame, .authChallenge, .welcome])
+          arguments: [SessionMessageKind.audioFrame, .audioBatch, .authChallenge, .welcome])
     func signedRealtimeClassification(kind: SessionMessageKind) throws {
         let session = UUID()
         let guide = UUID()
@@ -371,8 +371,8 @@ struct NearbySocketBridgeTests {
         let sealed = try SessionFrameSealer(credential: credential).seal(envelope, streamID: UUID())
         let signer = GuideFrameSigner(sessionID: session, guideID: guide)
         let signed = try signer.sign(sealed).encode()
-        #expect(try NearbySocketBridge.realtimeFrameIsAudio(sealed.encode()) == (kind == .audioFrame))
-        #expect(try NearbySocketBridge.realtimeFrameIsAudio(signed) == (kind == .audioFrame))
+        #expect(try NearbySocketBridge.realtimeFrameIsAudio(sealed.encode()) == (kind == .audioFrame || kind == .audioBatch))
+        #expect(try NearbySocketBridge.realtimeFrameIsAudio(signed) == (kind == .audioFrame || kind == .audioBatch))
         for count in 0..<signed.count {
             #expect(throws: (any Error).self) { try NearbySocketBridge.realtimeFrameIsAudio(Data(signed.prefix(count))) }
         }
@@ -388,7 +388,7 @@ struct NearbySocketBridgeTests {
         // verifies the admitted guide key before AEAD and delivery.
         var invalidSignature = signed
         invalidSignature[invalidSignature.count - 1] ^= 1
-        #expect(try NearbySocketBridge.realtimeFrameIsAudio(invalidSignature) == (kind == .audioFrame))
+        #expect(try NearbySocketBridge.realtimeFrameIsAudio(invalidSignature) == (kind == .audioFrame || kind == .audioBatch))
         let verifier = try GuideFrameVerifier(pinnedPublicKey: signer.publicKey, sessionID: session, guideID: guide)
         #expect(throws: (any Error).self) { try verifier.verify(invalidSignature) }
     }

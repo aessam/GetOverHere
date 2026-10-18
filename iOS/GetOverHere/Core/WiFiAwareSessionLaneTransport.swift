@@ -660,7 +660,7 @@ final class WiFiAwareAudioPlane: AudioPlane {
         case let .guestDisconnected(_, connectionID):
             sessionEventHandler?(.disconnected(connectionID: connectionID))
         case let .envelopeReceived(envelope):
-            guard envelope.kind == .audioFrame, envelope.lane == .realtime else { return }
+            guard envelope.kind == .audioFrame || envelope.kind == .audioBatch, envelope.lane == .realtime else { return }
             sessionEventHandler?(.failed("Wi-Fi Aware encoded audio is not available in this build"))
         case let .versionMismatch(remoteMajor, localMajor):
             sessionEventHandler?(.versionMismatch(remoteMajor: remoteMajor, localMajor: localMajor))
