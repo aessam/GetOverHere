@@ -2208,3 +2208,10 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Result: 420 s, stalledWindowsAt=[], totalPCMBytes=11,428,864 / 13,440,000 (85.0%); radio realtimeFromRadio=2,904,251, reliableFromRadio=5,119,667, reliableToRadio=14,592.
 - Windows (10 s, PCM of 320,000): t=30/60 100% (no assets); t=80–350 70–89% while assetDown 135–218 kB/10 s; t=360–420 100% once assetDown=0.
 - Finding: loss tracks the 280 s slide transfer, not the 12 s import. FND-8's main-thread-capture hypothesis is not supported; the leading explanation is radio contention expiring audio in the guide bridge (150 ms residence, FND-P5-6). Counters `droppedCaptureBuffers` and `bridgeDroppedAudioFrames` added to the iOS debug status (e6d0595) to separate the two.
+
+### 2026-10-17 18:45 — Real-UI demo Demo-1845, both apps uninstrumented (ADR-079 build f322973)
+- Guide: iPhone 13 Pro, launched normally (`devicectl process launch`), driven by WDA (`ios_drive.py create`, `pointer`, `import-pdf stress-20c` at 18:46:26). Guest: Pixel 7 joined through the real UI (`scripts/android_ui_join.sh Demo-1845`). Phones on different subnets (192.168.3.x / 192.168.1.x); all lanes L2CAP PSM 192.
+- Audio: guest `received 200 audio frames; latest jitter result ACCEPTED`, AudioTrack state:started 16 kHz.
+- Slides: guide showed "1 connected · 1 audio ready · 1 ready" by 18:49 (< 3 min for the deck); 0 "Tour asset transfer failed", 0 late chunks, 0 reconnects in guest pid 26699. Show and Next on the guide displayed the same page on the Pixel within ~2 s.
+- Instrumented run Ui-efaf3163 (same build, /tmp/GetOverHereRealUI-YJMUK3): guide closed ASSET then CONTROL at t≈85 s (guest EOF after 32,940 B), two reconnects, slides never resumed (39.8 kB, 4 failures); audio back to 100% after t=110 s. FND-P5-3 reproduced; guide-side cause unknown.
+- `devicectl process launch --console` with OS_ACTIVITY_DT_MODE=1 made VPIO log `render err: -1` ~50/s from capture start and the next Pixel join failed ("No reachable nearby route could be prepared"). Not usable for audio runs.
