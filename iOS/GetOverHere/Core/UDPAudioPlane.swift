@@ -362,6 +362,9 @@ final class UDPAudioPlane: AudioPlane {
     /// Far guest (ADR-081 P4): authenticate to this island bridge instead of the guide; read at each listen start.
     @ObservationIgnored private var relayRoute: RelayRoute?
     func setRelayRoute(_ route: RelayRoute?) { relayRoute = route }
+    /// Guide (ADR-081 T5): who may connect directly; read at each broadcast start.
+    @ObservationIgnored private var directGuestAdmission: DirectGuestAdmission?
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) { directGuestAdmission = admission }
 
     /// Test accessors for socket-option and admission assertions (FND-4).
     var connectedClientDescriptors: [Int32] { connectedClients.map(\.writer.socket.fd) }
@@ -494,6 +497,7 @@ final class UDPAudioPlane: AudioPlane {
         let runCallbacks = callbacks.snapshot()
         activeCallbacks = runCallbacks
         let handshakeSlots = self.handshakeSlots
+        let directGuestAdmission = self.directGuestAdmission
         let participantSlots = SessionParticipantSlots()
         acceptQueue.async { [weak self] in
             while true {
@@ -533,7 +537,8 @@ final class UDPAudioPlane: AudioPlane {
                             guideCapabilities: localCapabilities,
                             authentication: authentication,
                             participantSlots: participantSlots,
-                            connectionID: connectionToken
+                            connectionID: connectionToken,
+                            admission: directGuestAdmission
                         )
                     }
                     handshakeSlots.release()
@@ -911,7 +916,8 @@ final class UDPAudioPlane: AudioPlane {
         guideCapabilities: SessionCapabilities,
         authentication: SessionGuideAuthentication,
         participantSlots: SessionParticipantSlots,
-        connectionID: UUID
+        connectionID: UUID,
+        admission: DirectGuestAdmission?
     ) throws -> (
         participantID: UUID,
         displayName: String,
@@ -976,6 +982,10 @@ final class UDPAudioPlane: AudioPlane {
         )
         guard SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof) else {
             throw AudioAuthenticationError.invalidChallenge
+        }
+        // The realtime hello carries codec bits only; relay capability is decided on the control lane.
+        if let admission, !admission.admits(participantID: envelope.senderID, platform: hello.platform, relayCapable: false) {
+            throw AudioAuthenticationError.directGuestRefused
         }
         let codec = try SessionAudioCodecNegotiation.preferredCodec(
             sender: guideCapabilities,
@@ -1122,12 +1132,15 @@ final class UDPAudioPlane: AudioPlane {
         case incompleteHandshake
         case invalidChallenge
         case invalidWelcome
+        /// ADR-081 T5: a further direct other-platform guest while a bridge is assigned.
+        case directGuestRefused
 
         var errorDescription: String? {
             switch self {
             case .incompleteHandshake: "guide did not complete authentication"
             case .invalidChallenge: "invalid guide authentication challenge"
             case .invalidWelcome: "guide tour-code proof was rejected"
+            case .directGuestRefused: "direct guests of this platform are full; join through the island bridge"
             }
         }
     }

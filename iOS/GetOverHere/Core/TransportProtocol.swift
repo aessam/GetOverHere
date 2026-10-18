@@ -270,6 +270,8 @@ protocol AudioPlane: AnyObject {
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
     func setRelayRoute(_ route: RelayRoute?)
+    /// Guide: who may connect directly (ADR-081 T5); read when the lane starts.
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?)
     var isActive: Bool { get }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
@@ -324,6 +326,7 @@ enum AudioPlaneStartError: LocalizedError, Equatable {
 
 extension AudioPlane {
     func setRelayRoute(_ route: RelayRoute?) {}
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {}
     func configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -354,6 +357,8 @@ protocol SessionControlTransport: AnyObject {
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
     func setRelayRoute(_ route: RelayRoute?)
+    /// Guide: who may connect directly (ADR-081 T5); read when the lane starts.
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     /// SessionCapabilities this guest advertises in its control hello (relayHost, ADR-081).
@@ -403,6 +408,8 @@ protocol SessionAssetTransport: AnyObject {
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
     func setRelayRoute(_ route: RelayRoute?)
+    /// Guide: who may connect directly (ADR-081 T5); read when the lane starts.
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
@@ -433,11 +440,13 @@ extension AudioPlane {
 
 extension SessionControlTransport {
     func setRelayRoute(_ route: RelayRoute?) {}
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {}
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
 }
 
 extension SessionAssetTransport {
     func setRelayRoute(_ route: RelayRoute?) {}
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {}
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
 }
 

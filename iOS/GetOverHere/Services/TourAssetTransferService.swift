@@ -232,6 +232,9 @@ final class TourAssetTransferService {
     /// Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream); read at the next join.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.setUpstreamFrameTap(tap) }
 
+    /// Guide (ADR-081 T5): the asset lane's direct-guest policy; read at the next guide start.
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) { transport.setDirectGuestAdmission(admission) }
+
     /// Guest: join through an island bridge (ADR-081 P4); read at the next join.
     func setRelayRoute(_ route: RelayRoute?) { transport.setRelayRoute(route) }
 

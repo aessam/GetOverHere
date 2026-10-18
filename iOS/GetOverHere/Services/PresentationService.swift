@@ -53,6 +53,7 @@ final class TourControlService {
     /// Island guests' advisory reports carried by a bridge (ADR-081 W5, DSCN-3), keyed by far guest.
     @ObservationIgnored private var islandAudioReports: [UUID: (bridge: UUID, report: AudioReadinessPayload)] = [:]
     @ObservationIgnored private var relayUpstreamOpener: SessionFrameOpener?
+    @ObservationIgnored private var directGuestAdmission: DirectGuestAdmission?
     @ObservationIgnored private var localAudioReport = AudioReadinessPayload(status: .waiting, revision: 0)
     @ObservationIgnored private var guestControlConnected = false
 
@@ -225,6 +226,7 @@ final class TourControlService {
             bridgeAuthority = authority
             bridgeAssignment = authority.current
             recountAudioReady() // island reports count only while their bridge holds the assignment
+            directGuestAdmission?.update(assignment: bridgeAssignment)
             if let next { transport.send(kind: .bridgeAssignment, payload: next.encode()) }
         } catch {
             report(error)
@@ -233,6 +235,13 @@ final class TourControlService {
 
     /// Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream); read at the next start.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.setUpstreamFrameTap(tap) }
+
+    /// Guide (ADR-081 T5): the lanes' direct-guest policy, kept in step with the bridge assignment.
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {
+        directGuestAdmission = admission
+        admission?.update(assignment: bridgeAssignment)
+        transport.setDirectGuestAdmission(admission)
+    }
 
     /// Guest: join through an island bridge (ADR-081 P4); read at the next start.
     func setRelayRoute(_ route: RelayRoute?) { transport.setRelayRoute(route) }

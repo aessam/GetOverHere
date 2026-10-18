@@ -453,6 +453,10 @@ final class ChannelService {
             // published until control, asset, audio, and microphone capture are all running.
             tourControlService.configureGuideAuthentication(.guide(signer))
             assetTransferService.configureGuideAuthentication(.guide(signer))
+            // ADR-081 T5: while a bridge is assigned, other-platform guests connect directly only as bridge or standby.
+            let admission = DirectGuestAdmission(guidePlatform: .iOS)
+            tourControlService.setDirectGuestAdmission(admission)
+            assetTransferService.setDirectGuestAdmission(admission)
             try tourControlService.startGuide(deckID: sessionID)
             try assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
 
@@ -475,6 +479,7 @@ final class ChannelService {
                 }
             }
             plane.configureGuideAuthentication(.guide(signer))
+            plane.setDirectGuestAdmission(admission)
             try plane.startBroadcasting(channelID: channel.id, quality: audioQuality)
             try startCapturing(plane: plane, channelID: channel.id)
             try roomAdmission.start(sessionID: sessionID, sessionCode: code, signer: signer)

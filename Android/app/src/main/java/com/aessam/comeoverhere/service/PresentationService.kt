@@ -84,6 +84,15 @@ class TourControlService(
     /** Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
 
+    @Volatile private var directGuestAdmission: com.aessam.comeoverhere.core.DirectGuestAdmission? = null
+
+    /** Guide (ADR-081 T5): the lanes' direct-guest policy, kept in step with the bridge assignment. */
+    fun setDirectGuestAdmission(admission: com.aessam.comeoverhere.core.DirectGuestAdmission?) {
+        directGuestAdmission = admission
+        admission?.update(mutableBridgeAssignment.value)
+        transport.setDirectGuestAdmission(admission)
+    }
+
     /** Bridge: carry an island guest's advisory frame to the guide (W5). */
     fun sendRelayUpstream(record: com.aessam.toursession.RelayUpstreamRecord) =
         transport.send(SessionMessageKind.RELAY_UPSTREAM, record.encode())
@@ -100,6 +109,7 @@ class TourControlService(
             val next = authority.plan(bridgeCandidates.values.toList(), System.currentTimeMillis())
             mutableBridgeAssignment.value = authority.current
             synchronized(connectedGuestIDs) { updateAudioReadyCount() } // island reports follow the current bridge
+            directGuestAdmission?.update(authority.current)
             if (next != null) transport.send(SessionMessageKind.BRIDGE_ASSIGNMENT, next.encode())
         }.onFailure(::report)
     }

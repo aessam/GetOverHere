@@ -543,11 +543,16 @@ class ChannelService(
             )
             // Every lane start is synchronous and throwing (ADR-046); nothing is committed or
             // published until control, asset, audio, and microphone capture are all running.
+            // ADR-081 T5: while a bridge is assigned, other-platform guests connect directly only as bridge or standby.
+            val admission = com.aessam.comeoverhere.core.DirectGuestAdmission(ParticipantPlatform.ANDROID)
+            tourControlService.setDirectGuestAdmission(admission)
+            assetTransferService.setDirectGuestAdmission(admission)
             tourControlService.startGuide(sessionID)
             assetTransferService.startGuideWithEmptyTourPack(emptyManifest)
 
             val plane = coordinator.selectAudioPlane()
             plane.configureGuideAuthentication(authentication)
+            plane.setDirectGuestAdmission(admission)
             participantRegistry = ParticipantRegistry()
             _listenerCount.value = 0
             _readyParticipantCount.value = 0

@@ -247,6 +247,10 @@ class TourAssetTransferService(
     /** Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
 
+    /** Guide (ADR-081 T5): the asset lane's direct-guest policy. */
+    fun setDirectGuestAdmission(admission: com.aessam.comeoverhere.core.DirectGuestAdmission?) =
+        transport.setDirectGuestAdmission(admission)
+
     /** Guest: join through an island bridge (ADR-081 P3); takes effect at the next join. */
     fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) = transport.setRelayRoute(route)
 

@@ -473,8 +473,9 @@ class LocalSessionTransportTest {
 
     @Test
     fun controlLaneReportsLegacyProtocolVersionExplicitly() {
-        val port = 50_032
-        val server = ServerSocket(port)
+        // An OS-chosen port: fixed ports in the ephemeral range collide with live connections (CoreDevice held 50032).
+        val server = ServerSocket(0)
+        val port = server.localPort
         val serverThread = Thread {
             server.accept().use { socket ->
                 DataOutputStream(socket.getOutputStream()).use { output ->

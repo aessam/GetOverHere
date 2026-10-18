@@ -153,6 +153,8 @@ private class LocalAuthenticatedSessionTransport(
     @Volatile var upstreamFrameTap: ((ByteArray) -> Unit)? = null
     /** Far guest (ADR-081 P3): authenticate to this island bridge instead of the guide; read at each start. */
     @Volatile var relayRoute: RelayRoute? = null
+    /** Guide (ADR-081 T5): who may connect directly. */
+    @Volatile var directGuestAdmission: DirectGuestAdmission? = null
 
     fun startGuest() {
         val configured = configuration
@@ -569,6 +571,11 @@ private class LocalAuthenticatedSessionTransport(
         if (!SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof)) {
             throw IllegalArgumentException("tour code proof was rejected")
         }
+        val relayCapable = applicationLane == SessionLane.CONTROL &&
+            hello.capabilities and com.aessam.toursession.SessionCapability.RELAY_HOST.bit != 0L
+        if (directGuestAdmission?.admits(envelope.senderId, hello.platform, relayCapable) == false) {
+            throw IllegalStateException("direct guests of this platform are full; join through the island bridge")
+        }
         reserveParticipant(envelope.senderId)
         val guideNonce = SessionAuthenticator.randomNonce()
         val guideProof = SessionAuthenticator.guideProof(
@@ -798,6 +805,7 @@ class LocalSessionControlTransport(
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { transport.upstreamFrameTap = tap }
+    override fun setDirectGuestAdmission(admission: DirectGuestAdmission?) { transport.directGuestAdmission = admission }
     override fun setRelayRoute(route: RelayRoute?) { transport.relayRoute = route }
     override fun stop() = transport.stop()
     override fun clearSession() = transport.clearSession()
@@ -835,6 +843,7 @@ class LocalSessionAssetTransport(
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { transport.upstreamFrameTap = tap }
+    override fun setDirectGuestAdmission(admission: DirectGuestAdmission?) { transport.directGuestAdmission = admission }
     override fun setRelayRoute(route: RelayRoute?) { transport.relayRoute = route }
     override fun stop() = transport.stop()
     override fun clearSession() = transport.clearSession()

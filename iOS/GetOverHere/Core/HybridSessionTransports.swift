@@ -49,6 +49,11 @@ final class HybridAudioPlane: AudioPlane {
         aware?.setRelayRoute(route)
     }
 
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {
+        local.setDirectGuestAdmission(admission)
+        aware?.setDirectGuestAdmission(admission)
+    }
+
     var isActive: Bool {
         switch role {
         case .guide:
@@ -212,6 +217,11 @@ final class HybridSessionControlTransport: SessionControlTransport {
     func setRelayRoute(_ route: RelayRoute?) {
         local.setRelayRoute(route)
         aware?.setRelayRoute(route)
+    }
+
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {
+        local.setDirectGuestAdmission(admission)
+        aware?.setDirectGuestAdmission(admission)
     }
 
     var isActive: Bool {
@@ -388,6 +398,11 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     func setRelayRoute(_ route: RelayRoute?) {
         local.setRelayRoute(route)
         aware?.setRelayRoute(route)
+    }
+
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) {
+        local.setDirectGuestAdmission(admission)
+        aware?.setDirectGuestAdmission(admission)
     }
 
     var isActive: Bool {

@@ -48,6 +48,8 @@ private final class LocalAuthenticatedSessionTransport {
     var upstreamFrameTap: UpstreamFrameTap?
     /// Far guest (ADR-081 P4): authenticate to this island bridge instead of the guide; read at each guest start.
     var relayRoute: RelayRoute?
+    /// Guide (ADR-081 T5): who may connect directly; read at each guide start.
+    var directGuestAdmission: DirectGuestAdmission?
 
     init(port: UInt16, applicationLane: SessionLane, authentication: SessionGuideAuthentication) {
         self.port = port
@@ -123,6 +125,7 @@ private final class LocalAuthenticatedSessionTransport {
         let listeningFD = serverFD
         let expectedApplicationLane = applicationLane
         let handshakeSlots = self.handshakeSlots
+        let directGuestAdmission = self.directGuestAdmission
         let participantSlots = SessionParticipantSlots()
         runGeneration &+= 1
         let generation = runGeneration
@@ -160,7 +163,8 @@ private final class LocalAuthenticatedSessionTransport {
                             requestedLane: expectedApplicationLane,
                             authentication: authentication,
                             participantSlots: participantSlots,
-                            connectionID: connectionToken
+                            connectionID: connectionToken,
+                            admission: directGuestAdmission
                         )
                     }
                     handshakeSlots.release()
@@ -650,6 +654,8 @@ private final class LocalAuthenticatedSessionTransport {
         /// The guide's sealed handshake frame failed AEAD authentication or its proof mismatched (DSCN-26).
         case credentialRejected
         case guideIdentityRejected
+        /// ADR-081 T5: a further direct other-platform guest while a bridge is assigned; it joins the island instead.
+        case directGuestRefused
 
         var errorDescription: String? {
             switch self {
@@ -659,6 +665,7 @@ private final class LocalAuthenticatedSessionTransport {
             case .invalidWelcome: "unexpected welcome envelope"
             case .credentialRejected: "the tour code was rejected by the guide"
             case .guideIdentityRejected: "the admitted guide identity could not be verified"
+            case .directGuestRefused: "direct guests of this platform are full; join through the island bridge"
             }
         }
     }
@@ -669,7 +676,8 @@ private final class LocalAuthenticatedSessionTransport {
         requestedLane: SessionLane,
         authentication: SessionGuideAuthentication,
         participantSlots: SessionParticipantSlots,
-        connectionID: UUID
+        connectionID: UUID,
+        admission: DirectGuestAdmission?
     ) throws -> (participantID: UUID, displayName: String, platform: ParticipantPlatform, capabilities: UInt32) {
         setReceiveTimeout(fd: fd, seconds: 5)
         defer { setReceiveTimeout(fd: fd, seconds: 0) }
@@ -721,6 +729,11 @@ private final class LocalAuthenticatedSessionTransport {
         )
         guard SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof) else {
             throw ControlTransportError.invalidWelcome
+        }
+        if let admission, !admission.admits(participantID: envelope.senderID, platform: hello.platform,
+                                            relayCapable: requestedLane == .control &&
+                                                hello.capabilities & SessionCapabilities.relayHost.rawValue != 0) {
+            throw ControlTransportError.directGuestRefused
         }
         try participantSlots.acquire(participantID: envelope.senderID, connectionID: connectionID)
         let guideNonce = SessionAuthenticator.randomNonce()
@@ -994,6 +1007,7 @@ final class LocalSessionControlTransport: SessionControlTransport {
         )
     }
 
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) { transport.directGuestAdmission = admission }
     func setRelayRoute(_ route: RelayRoute?) { transport.relayRoute = route }
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
 
@@ -1044,6 +1058,7 @@ final class LocalSessionAssetTransport: SessionAssetTransport {
         )
     }
 
+    func setDirectGuestAdmission(_ admission: DirectGuestAdmission?) { transport.directGuestAdmission = admission }
     func setRelayRoute(_ route: RelayRoute?) { transport.relayRoute = route }
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
 

@@ -731,6 +731,9 @@ class UDPAudioPlane(
     override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { upstreamFrameTap = tap }
     @Volatile private var relayRoute: RelayRoute? = null
     override fun setRelayRoute(route: RelayRoute?) { relayRoute = route }
+    /** Guide (ADR-081 T5): who may connect directly. */
+    @Volatile private var directGuestAdmission: DirectGuestAdmission? = null
+    override fun setDirectGuestAdmission(admission: DirectGuestAdmission?) { directGuestAdmission = admission }
 
     override fun startListening(channelID: String, onAudio: (ByteArray) -> Unit) {
         val configured = configuration
@@ -980,6 +983,10 @@ class UDPAudioPlane(
         )
         if (!SessionAuthenticator.securelyMatches(expectedProof, hello.credentialProof)) {
             throw IllegalArgumentException("tour code proof was rejected")
+        }
+        // The realtime hello carries codec bits only; relay capability is decided on the control lane.
+        if (directGuestAdmission?.admits(envelope.senderId, hello.platform, relayCapable = false) == false) {
+            throw IllegalStateException("direct guests of this platform are full; join through the island bridge")
         }
         val codec = SessionAudioCodecNegotiation.preferredCodec(
             guideCapabilities,

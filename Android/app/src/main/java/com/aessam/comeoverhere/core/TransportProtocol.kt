@@ -116,6 +116,8 @@ interface AudioPlane {
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
     /** Guest: authenticate this lane to an island bridge (ADR-081 P3); null for the guide itself. */
     fun setRelayRoute(route: RelayRoute?) {}
+    /** Guide: who may connect directly (ADR-081 T5). */
+    fun setDirectGuestAdmission(admission: DirectGuestAdmission?) {}
 }
 
 sealed class AudioSessionEvent {
@@ -170,6 +172,8 @@ interface SessionControlTransport {
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
     /** Guest: authenticate this lane to an island bridge (ADR-081 P3); null for the guide itself. */
     fun setRelayRoute(route: RelayRoute?) {}
+    /** Guide: who may connect directly (ADR-081 T5). */
+    fun setDirectGuestAdmission(admission: DirectGuestAdmission?) {}
     fun stop()
     fun clearSession()
 }
@@ -206,6 +210,8 @@ interface SessionAssetTransport {
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
     /** Guest: authenticate this lane to an island bridge (ADR-081 P3). */
     fun setRelayRoute(route: RelayRoute?) {}
+    /** Guide: who may connect directly (ADR-081 T5). */
+    fun setDirectGuestAdmission(admission: DirectGuestAdmission?) {}
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     fun stop()
     fun clearSession()
