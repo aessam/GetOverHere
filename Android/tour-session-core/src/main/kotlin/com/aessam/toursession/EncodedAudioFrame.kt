@@ -7,6 +7,8 @@ enum class SessionCapability(val bit: Long) {
     AAC_LC_DECODER(1L shl 3),
     /** The receiver accepts `audioBatch` envelopes. Opus is sent only in batches (ADR-075). */
     OPUS_BATCH_DECODER(1L shl 4),
+    /** The guest can host its platform island as the cross-platform bridge (ADR-081 W2). */
+    RELAY_HOST(1L shl 5),
 }
 
 enum class SessionAudioCodec(val rawValue: Int) {

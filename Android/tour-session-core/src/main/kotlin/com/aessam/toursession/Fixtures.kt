@@ -124,6 +124,16 @@ object TourSessionFixtures {
                 val status = AudioReadinessPayload.decode(envelope.payload)
                 fields += listOf("status=${status.status.rawValue}", "revision=${status.revision}")
             }
+            SessionMessageKind.BRIDGE_ASSIGNMENT -> {
+                val assignment = BridgeAssignmentPayload.decode(envelope.payload)
+                fields += listOf(
+                    "generation=${java.lang.Long.toUnsignedString(assignment.generation)}",
+                    "bridge=${assignment.bridgeID}",
+                    "bridgePlatform=${assignment.bridgePlatform.rawValue}",
+                    "leaseExpires=${java.lang.Long.toUnsignedString(assignment.leaseExpiresAtMilliseconds)}",
+                    "standbys=${assignment.standbyIDs.joinToString(",")}",
+                )
+            }
             SessionMessageKind.VISUAL_FOCUS_SNAPSHOT -> {
                 val focus = VisualFocusSnapshotPayload.decode(envelope.payload)
                 fields += listOf("stateVersion=${focus.stateVersion}", "mode=${focus.mode.rawValue}")
@@ -197,6 +207,42 @@ object TourSessionFixtures {
     }
 
     /** Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity. */
+    /** Relay core fixture (ADR-081): W1 and W5 bytes plus a scripted forwarder decision trace. */
+    fun relayFixture(): String {
+        val session = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")
+        val guide = UUID.fromString("ffeeddcc-bbaa-9988-7766-554433221100")
+        val stream = UUID.fromString("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
+        val assignment = BridgeAssignmentPayload(7, UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a1"),
+            ParticipantPlatform.ANDROID, 1_700_000_000_123L, listOf(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a2")))
+        val upstream = RelayUpstreamRecord(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000b1"), SessionLane.CONTROL,
+            byteArrayOf(0x47, 0x4F, 0x48, 0x32, 0x01))
+        fun frame(lane: SessionLane, kind: SessionMessageKind, sequence: Long, body: Int): Pair<SealedSessionEnvelope, ByteArray> {
+            val envelope = SealedSessionEnvelope(lane = lane, kind = kind, sequence = sequence, sessionId = session,
+                senderId = guide, streamId = stream, sealedPayload = ByteArray(16) { body.toByte() })
+            return envelope to envelope.encode()
+        }
+        val forwarder = RelayForwarder()
+        val steps = listOf(
+            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xA1), 0L, 10L),
+            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xA1), 0L, 10L),
+            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 1, 0xB2), 0L, 10L),
+            Triple(frame(SessionLane.REALTIME, SessionMessageKind.AUDIO_BATCH, 2, 0xA2), 0L, 51L),
+            Triple(frame(SessionLane.CONTROL, SessionMessageKind.PRESENTATION_SNAPSHOT, 5, 0xC5), 0L, 0L),
+            Triple(frame(SessionLane.CONTROL, SessionMessageKind.PRESENTATION_SNAPSHOT, 3, 0xC3), 0L, 0L),
+            Triple(frame(SessionLane.CONTROL, SessionMessageKind.BEARING_SNAPSHOT, 4, 0xD4), 0L, 0L),
+        )
+        val decisions = steps.map { (step, received, now) ->
+            forwarder.admit(step.first, step.second, received, now).name.lowercase()
+        }
+        val snapshots = forwarder.snapshotFrames.map { java.security.MessageDigest.getInstance("SHA-256").digest(it).lowercaseHex().take(16) }
+        return listOf(
+            "assignment=${assignment.encode().lowercaseHex()}",
+            "upstream=${upstream.encode().lowercaseHex()}",
+            "decisions=${decisions.joinToString(",")}",
+            "snapshots=${snapshots.joinToString(",")}",
+        ).joinToString("|")
+    }
+
     /** GOHP v1 fixture (ADR-080): four descriptors, three distinct files (two slides share bytes). */
     fun tourPackFixtureAssets(): List<ByteArray> = listOf(
         "GOH slide one".toByteArray(Charsets.UTF_8),

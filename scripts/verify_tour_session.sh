@@ -105,6 +105,18 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Cross-island relay core (ADR-081): bridgeAssignment + upstream record bytes and forwarder decisions.
+SWIFT_RELAY="$($SWIFT_BIN relay-fixture)"
+KOTLIN_RELAY="$(run_kotlin relay-fixture)"
+[[ -n "$SWIFT_RELAY" && "$SWIFT_RELAY" == "$KOTLIN_RELAY" ]] || {
+    echo "error: Swift and Kotlin relay core differs" >&2
+    exit 1
+}
+[[ "$SWIFT_RELAY" == *"decisions=forward,duplicate,conflict,expired,forward,forward,forward"* ]] || {
+    echo "error: relay forwarder decisions changed: $SWIFT_RELAY" >&2
+    exit 1
+}
+
 # Room record with a tour pack advert (ADR-080 DSCN-2): identical bytes, cross-decoded.
 SWIFT_PACK_RECORD="$($SWIFT_BIN bluetooth-pack-fixture)"
 KOTLIN_PACK_RECORD="$(run_kotlin bluetooth-pack-fixture)"

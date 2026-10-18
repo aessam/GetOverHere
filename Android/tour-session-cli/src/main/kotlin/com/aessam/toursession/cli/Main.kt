@@ -153,6 +153,7 @@ fun main(arguments: Array<String>) {
                 println(TourSessionFixtures.describeAudioFrame(arguments[1].hexToByteArray()))
             }
             "audio-fixture" -> println(TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex())
+            "relay-fixture" -> println(TourSessionFixtures.relayFixture())
             "pack-fixture" -> println(TourSessionFixtures.tourPackFixture().lowercaseHex())
             "inspect-pack" -> {
                 if (arguments.size != 2) fail("inspect-pack requires one hex argument")

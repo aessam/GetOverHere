@@ -124,6 +124,15 @@ public enum TourSessionFixtures {
         case .audioStatus:
             let status = try AudioReadinessPayload.decode(envelope.payload)
             fields += ["status=\(status.status.rawValue)", "revision=\(status.revision)"]
+        case .bridgeAssignment:
+            let assignment = try BridgeAssignmentPayload.decode(envelope.payload)
+            fields += [
+                "generation=\(assignment.generation)",
+                "bridge=\(assignment.bridgeID.uuidString.lowercased())",
+                "bridgePlatform=\(assignment.bridgePlatform.rawValue)",
+                "leaseExpires=\(assignment.leaseExpiresAtMilliseconds)",
+                "standbys=\(assignment.standbyIDs.map { $0.uuidString.lowercased() }.joined(separator: ","))",
+            ]
         case .assetManifest:
             let manifest = try AssetManifestPayload.decode(envelope.payload)
             let assets = manifest.assets.map {
@@ -190,6 +199,46 @@ public enum TourSessionFixtures {
     }
 
     /// Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity.
+    /// Relay core fixture (ADR-081): W1 and W5 bytes plus a scripted forwarder decision trace.
+    public static func relayFixture() throws -> String {
+        let session = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!
+        let guide = UUID(uuidString: "FFEEDDCC-BBAA-9988-7766-554433221100")!
+        let stream = UUID(uuidString: "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0")!
+        let assignment = try BridgeAssignmentPayload(
+            generation: 7, bridgeID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!, bridgePlatform: .android,
+            leaseExpiresAtMilliseconds: 1_700_000_000_123,
+            standbyIDs: [UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A2")!])
+        let upstream = try RelayUpstreamRecord(farParticipantID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000B1")!,
+                                               lane: .control, frame: Data([0x47, 0x4F, 0x48, 0x32, 0x01]))
+        func frame(_ lane: SessionLane, _ kind: SessionMessageKind, _ sequence: UInt64, _ body: UInt8) throws
+            -> (SealedSessionEnvelope, Data) {
+            let envelope = try SealedSessionEnvelope(lane: lane, kind: kind, sequence: sequence, sessionID: session,
+                                                     senderID: guide, streamID: stream,
+                                                     sealedPayload: Data(repeating: body, count: 16))
+            return (envelope, envelope.encode())
+        }
+        var forwarder = RelayForwarder()
+        let steps: [((SealedSessionEnvelope, Data), UInt64, UInt64)] = [
+            (try frame(.realtime, .audioBatch, 1, 0xA1), 0, 10),
+            (try frame(.realtime, .audioBatch, 1, 0xA1), 0, 10),
+            (try frame(.realtime, .audioBatch, 1, 0xB2), 0, 10),
+            (try frame(.realtime, .audioBatch, 2, 0xA2), 0, 51),
+            (try frame(.control, .presentationSnapshot, 5, 0xC5), 0, 0),
+            (try frame(.control, .presentationSnapshot, 3, 0xC3), 0, 0),
+            (try frame(.control, .bearingSnapshot, 4, 0xD4), 0, 0),
+        ]
+        let decisions = steps.map { step in
+            "\(forwarder.admit(step.0.0, frame: step.0.1, receivedAtMilliseconds: step.1, nowMilliseconds: step.2))"
+        }
+        let snapshots = forwarder.snapshotFrames.map { Data(CryptoKit.SHA256.hash(data: $0)).lowercaseHex.prefix(16) }
+        return [
+            "assignment=\(assignment.encode().lowercaseHex)",
+            "upstream=\(upstream.encode().lowercaseHex)",
+            "decisions=\(decisions.joined(separator: ","))",
+            "snapshots=\(snapshots.joined(separator: ","))",
+        ].joined(separator: "|")
+    }
+
     /// GOHP v1 fixture (ADR-080): four descriptors, three distinct files (two slides share bytes).
     public static func tourPackFixtureAssets() -> [Data] {
         [Data("GOH slide one".utf8), Data([0x00, 0x01, 0x02, 0xFF, 0xFE]), Data(#"{"version":8}"#.utf8)]

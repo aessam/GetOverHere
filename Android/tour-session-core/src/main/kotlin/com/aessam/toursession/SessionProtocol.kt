@@ -33,6 +33,8 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
     TARGET_SNAPSHOT(0x22, SessionLane.CONTROL),
     VISUAL_FOCUS_SNAPSHOT(0x23, SessionLane.CONTROL),
     AUDIO_STATUS(0x24, SessionLane.CONTROL),
+    /** ADR-081: the guide's signed choice of the single cross-platform bridge. */
+    BRIDGE_ASSIGNMENT(0x25, SessionLane.CONTROL),
     ASSET_MANIFEST(0x30, SessionLane.ASSET),
     ASSET_CHUNK(0x31, SessionLane.ASSET),
     TOUR_PACK_MANIFEST(0x32, SessionLane.ASSET),
@@ -53,6 +55,7 @@ enum class SessionMessageKind(val rawValue: Int, val requiredLane: SessionLane) 
             TARGET_SNAPSHOT -> "targetSnapshot"
             VISUAL_FOCUS_SNAPSHOT -> "visualFocusSnapshot"
             AUDIO_STATUS -> "audioStatus"
+            BRIDGE_ASSIGNMENT -> "bridgeAssignment"
             ASSET_MANIFEST -> "assetManifest"
             ASSET_CHUNK -> "assetChunk"
             TOUR_PACK_MANIFEST -> "tourPackManifest"

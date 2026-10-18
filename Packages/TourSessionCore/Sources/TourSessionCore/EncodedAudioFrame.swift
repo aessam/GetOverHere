@@ -13,6 +13,8 @@ public struct SessionCapabilities: OptionSet, Equatable, Sendable {
     public static let aacLCDecoder = SessionCapabilities(rawValue: 1 << 3)
     /// The receiver accepts `audioBatch` envelopes. Opus is sent only in batches (ADR-075).
     public static let opusBatchDecoder = SessionCapabilities(rawValue: 1 << 4)
+    /// The guest can host its platform island as the cross-platform bridge (ADR-081 W2).
+    public static let relayHost = SessionCapabilities(rawValue: 1 << 5)
 }
 
 public enum SessionAudioCodec: UInt8, CaseIterable, Sendable {
