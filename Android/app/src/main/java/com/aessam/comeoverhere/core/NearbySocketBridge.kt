@@ -91,7 +91,8 @@ class NearbySocketBridge(
                     val realtime = request.lane == NearbyLaneRequest.Lane.REALTIME
                     val framed = if (realtime) NearbyRealtimeConnection(remote, executor, timer) else remote
                     if (realtime && !register(id, framed, attempt)) return@launch
-                    pump(id, framed, local, realtime, drainAdmissionReply = request.lane == NearbyLaneRequest.Lane.ADMISSION)
+                    pump(id, framed, local, realtime, drainAdmissionReply = request.lane == NearbyLaneRequest.Lane.ADMISSION,
+                        radioFirst = true)
                 }
             } finally { deadline.cancel(false) }
         }
@@ -144,7 +145,7 @@ class NearbySocketBridge(
                                     val realtime = lane == NearbyLaneRequest.Lane.REALTIME
                                     val framed = if (realtime) NearbyRealtimeConnection(remote, executor, timer) else remote
                                     if (realtime && !register(id, framed, connectionAttempt)) return@launch
-                                    pump(id, local, framed, realtime)
+                                    pump(id, local, framed, realtime, radioFirst = false)
                                 } finally { deadline.cancel(false) }
                             }
                         } catch (error: Exception) {
@@ -215,12 +216,15 @@ class NearbySocketBridge(
         return true
     }
 
+    /** [radioFirst] says which side is the native radio connection; null (wired gateway) is not counted. */
     private fun pump(id: UUID, first: NearbyByteConnection, second: NearbyByteConnection, realtime: Boolean,
-                     drainAdmissionReply: Boolean = false) {
+                     drainAdmissionReply: Boolean = false, radioFirst: Boolean? = null) {
         val peerFinished = CountDownLatch(1)
+        val intoFirst = radioFirst?.let { NearbyTrafficCounters.counter(realtime, toRadio = it) }
+        val intoSecond = radioFirst?.let { NearbyTrafficCounters.counter(realtime, toRadio = !it) }
         executor.execute {
             try {
-                if (realtime) copyRealtime(id, second, first) else copy(id, second.input, first.output)
+                if (realtime) copyRealtime(id, second, first, intoFirst) else copy(id, second.input, first.output, intoFirst)
                 // Native close may discard queued writes. The admission server closes after
                 // its reply; let the guest receive it and close first. Bound abandoned peers.
                 if (drainAdmissionReply && !peerFinished.await(5, TimeUnit.SECONDS)) {
@@ -230,11 +234,12 @@ class NearbySocketBridge(
             catch (error: Exception) { if (connections.containsKey(id)) report(error) }
             finally { closeConnections(id) }
         }
-        try { if (realtime) copyRealtime(id, first, second) else copy(id, first.input, second.output) }
+        try { if (realtime) copyRealtime(id, first, second, intoSecond) else copy(id, first.input, second.output, intoSecond) }
         finally { peerFinished.countDown(); closeConnections(id) }
     }
 
-    private fun copyRealtime(id: UUID, source: NearbyByteConnection, destination: NearbyByteConnection) {
+    private fun copyRealtime(id: UUID, source: NearbyByteConnection, destination: NearbyByteConnection,
+                             written: java.util.concurrent.atomic.AtomicLong? = null) {
         val lock = Object()
         val backlog = NearbyRealtimeQueue(audioResidenceMilliseconds)
         var ended = false
@@ -269,6 +274,7 @@ class NearbySocketBridge(
                 val deadline = timer.schedule({ closeResource(destination) }, 1, TimeUnit.SECONDS)
                 try { destination.output.write(packet); destination.output.flush() }
                 finally { deadline.cancel(false) }
+                written?.addAndGet(packet.size.toLong())
             }
             synchronized(lock) { failure?.let { throw it } }
         } finally {
@@ -277,7 +283,8 @@ class NearbySocketBridge(
         }
     }
 
-    private fun copy(id: UUID, input: InputStream, output: OutputStream) {
+    private fun copy(id: UUID, input: InputStream, output: OutputStream,
+                     written: java.util.concurrent.atomic.AtomicLong? = null) {
         val bytes = ByteArray(16_384)
         var transferred = 0L
         while (!Thread.currentThread().isInterrupted) {
@@ -296,6 +303,7 @@ class NearbySocketBridge(
             try { output.write(bytes, 0, count); output.flush() }
             finally { deadline?.cancel(false) }
             transferred += count
+            written?.addAndGet(count.toLong())
         }
     }
 
@@ -311,4 +319,27 @@ class NearbySocketBridge(
         Log.w("NearbyLane", "Nearby connection failed (${error.javaClass.simpleName})")
         onError?.invoke(error.message ?: "Nearby connection failed")
     }
+}
+
+/**
+ * Process-wide bytes moved by the nearby bridge, per lane class and direction relative to the radio
+ * (including 4-byte frame length prefixes on the realtime lane). Diagnostics only; never reset.
+ */
+object NearbyTrafficCounters {
+    private val realtimeToRadio = java.util.concurrent.atomic.AtomicLong()
+    private val realtimeFromRadio = java.util.concurrent.atomic.AtomicLong()
+    private val reliableToRadio = java.util.concurrent.atomic.AtomicLong()
+    private val reliableFromRadio = java.util.concurrent.atomic.AtomicLong()
+
+    fun counter(realtime: Boolean, toRadio: Boolean) = when {
+        realtime && toRadio -> realtimeToRadio
+        realtime -> realtimeFromRadio
+        toRadio -> reliableToRadio
+        else -> reliableFromRadio
+    }
+
+    fun snapshot(): Map<String, Long> = mapOf(
+        "realtimeToRadio" to realtimeToRadio.get(), "realtimeFromRadio" to realtimeFromRadio.get(),
+        "reliableToRadio" to reliableToRadio.get(), "reliableFromRadio" to reliableFromRadio.get(),
+    )
 }

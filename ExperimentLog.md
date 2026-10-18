@@ -2144,3 +2144,27 @@ What this establishes: router-free iPhone↔Android Bluetooth join, authenticate
 guide-authoritative screen following, both guide directions, on this exact pair.
 Not established: audible speech quality, perceived delay, the locked-screen test (A5), endurance,
 PDF transfer during speech (RSK-3), or groups larger than 2.
+
+## 2026-10-17 (evening) — Phase 5 endurance attempts, lock behaviour, iPhone control tooling
+
+Pair: iPhone 13 Pro WorkTest001 + Pixel 7 (Android 17). Builds `befcc76`/`7255d84`.
+Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stayon usb`, to be restored.
+
+- Run A (`--hold-seconds 1800`, iPhone guide via XCUITest): t=0–1630 s were full rate
+  (~320,000 PCM B per 10 s over BLUETOOTH). Pixel screen off 16:31:19–16:41:19: `interactive=false`, full rate;
+  keyguard not recorded. At 16:48:00–08 the guest went RECONNECTING then FAILED.
+  ReCont (BLE HID) started advertising at 16:47:25 and paired with the guide iPhone at 16:48:12–23.
+  Most likely cause: the guide app was taken out of the foreground and the UI test ended the tour.
+  Not a clean endurance result; the run was stopped at the user's request.
+- Run B: the tour was created via ReCont, then the iPhone guide auto-locked (Auto-Lock 30 s).
+  The Pixel guest admitted over Bluetooth and its control/asset lanes connected ("authenticated GOH2
+  session joined" 16:54:41), but no audio frame arrived in 45 s → FAIL.
+  **FND-P5-1: a guest joining while the iPhone guide's screen is locked receives no audio.** It is open
+  whether locked iOS capture stops or only new-guest delivery fails. The user then set Auto-Lock to Never.
+- Run C: a tour created blind by keyboard shortcuts did not appear (no screenshot feedback; capture stalled).
+- Run D (XCUITest guide, Auto-Lock Never, `--hold-seconds 1800`) running at the time of writing. The Pixel
+  screen was off 17:15:32–17:25:33 with `isKeyguardShowing=true` before and after (a real lock); the monitor
+  saw no stall, reconnect or failure during the lock.
+- Tooling: ReCont was tried for iPhone control and rejected ("not maintainable"): long pointer moves miss by
+  40–120 px, drags register as taps, and the USB screen capture stalls. WebDriverAgent (BSD, appium-ios
+  monorepo `1f41c4c`) was chosen as the ready-made XCUITest command server; facebook-wda 1.5.4 is in `tools/.venv`.

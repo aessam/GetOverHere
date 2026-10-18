@@ -45,3 +45,6 @@ Packages/GatewayTLSFixture/.swiftpm/
 
 # Sanitized, bounded verification logs are evidence, not disposable build output.
 !benchmarks/2026-09-11-gateway-software/**/*.log
+# Third-party device automation (WebDriverAgent) and its local venv
+tools/wda/
+tools/.venv/

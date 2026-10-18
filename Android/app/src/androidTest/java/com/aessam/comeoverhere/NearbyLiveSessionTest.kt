@@ -138,6 +138,8 @@ class NearbyLiveSessionTest {
                     // not excused. The capture gate defaults to 0, so a quiet room still sends frames.
                     val power = instrumentation.targetContext.getSystemService(android.os.PowerManager::class.java)
                     var previous = app.audioEngine.acceptedPlaybackByteCount
+                    var previousTraffic = com.aessam.comeoverhere.core.NearbyTrafficCounters.snapshot()
+                    val startTraffic = previousTraffic
                     var total = 0L
                     val stalled = mutableListOf<Long>()
                     for (window in 1..(holdSeconds / 10)) {
@@ -148,12 +150,18 @@ class NearbyLiveSessionTest {
                         total += delta
                         var route: SessionTransportRoute? = null
                         instrumentation.runOnMainSync { route = service.resolvedGuestRoute?.transport }
-                        Log.i("NearbyLive", "Endurance t=${window * 10}s delta=$delta route=$route " +
+                        val traffic = com.aessam.comeoverhere.core.NearbyTrafficCounters.snapshot()
+                        val radio = traffic.mapValues { (key, value) -> value - (previousTraffic[key] ?: 0L) }
+                        previousTraffic = traffic
+                        Log.i("NearbyLive", "Endurance t=${window * 10}s delta=$delta route=$route radioBytes=$radio " +
                             "connection=${service.connectionState.value} audio=${service.audioRuntimeState.value} " +
                             "interactive=${power.isInteractive}")
                         if (delta == 0L) stalled += window * 10
                     }
-                    Log.i("NearbyLive", "Endurance summary: seconds=$holdSeconds totalPCMBytes=$total stalledWindowsAt=$stalled")
+                    val radioTotal = com.aessam.comeoverhere.core.NearbyTrafficCounters.snapshot()
+                        .mapValues { (key, value) -> value - (startTraffic[key] ?: 0L) }
+                    Log.i("NearbyLive", "Endurance summary: seconds=$holdSeconds totalPCMBytes=$total " +
+                        "radioBytes=$radioTotal stalledWindowsAt=$stalled")
                     assertTrue("Renderer stalled in 10 s windows ending at $stalled s", stalled.isEmpty())
                     assertTrue("Endurance PCM below 80% of nominal", total >= holdSeconds * 32_000L * 8 / 10)
                 }
