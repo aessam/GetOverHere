@@ -1,16 +1,17 @@
 # GetOverHere — Next Session
 
-## October 18 (13:00) — relay wiring: Android bridge and far guest in code, iPhone bridge next
+## October 18 (13:45) — relay code-complete in both directions; device matrix waits for hardware
 
-- P2 on device (tag `p6-relay-p2-device`): iPhone guide assigned the relay-capable Pixel 7 as bridge.
-- P1 step 3 on device (tag `p6-relay-p1-island`): the BLE-joined Pixel hosts an Aware island (own
-  `WiFiAwareRoomTransport`, loopback `RelayLaneServer`s on ephemeral ports, admission tunneled to the guide).
-- P3 steps 1–3 (JVM only, no second Android): far-guest relay handshake on all three lanes, relayed manifest +
-  bridge-served chunks, island route → `RelayRoute` on every lane; far guests never host. Android unit 240/240.
-- Open, in order: W5 advisory upstream counts to the guide; guide rejects a second cross-platform lane set (T5);
-  generation-step failover (today: island revoked → reconnect rediscovers); P4 iPhone bridge (AWDL island) and
-  iOS far guest; device matrix T1–T8 when the second iPhone and Pixel 11 arrive.
-- Known: `SignedNativeSessionTest` free-port race flakes under load; bridge island restarts on every guest reconnect.
+- Android bridge + far guest (P1/P3): tags `p6-relay-p1-island`, `p6-relay-p3-android`. iPhone bridge + far guest
+  (P4): tags `p6-relay-p4-assign`, `p6-relay-p4-island`, commit `45f082b`. W5 advisory readiness on both guides
+  (`d99e3c1`), capped at 8 per island, counted only through the current bridge.
+- On device with today's two phones: each platform's guide assigns the other as bridge; each bridge publishes its
+  island (Pixel: Aware publish ready; iPhone: `_goh-peer._tcp` instance appears/disappears with the tour).
+- Not yet proven: any far guest on device (needs the second iPhone and the Pixel 11) — run T1–T8 from
+  `CrossIslandDesign.md`; `scripts/android_ui_join.sh`, `scripts/ios_drive.py join`, relay toggles in Diagnostics.
+- Open decisions/work: QST-1 (T5: should the guide refuse more direct other-platform guests than bridge + 2
+  standbys?) — not implemented until answered; generation-step failover (today: island revoked → far guests
+  reconnect and rediscover); `SignedNativeSessionTest` free-port flake.
 
 ## October 18 (later) — relay core done; app wiring waits for the new phones
 
