@@ -133,12 +133,16 @@ Each step records PASS / FAIL / NOT RUN in `ExperimentLog.md`.
 - R4 Local Network permission denied or never prompted silently breaks the iOS island (TN3179).
 - R5 Share of Androids without Aware / below API 34 is unknown; they become BLE leaves.
 
+## Decisions (user, 2026-10-18)
+
+- DSCN-3 (was QST-1): far-guest readiness uses advisory counts relayed by the bridge; per-guest
+  authentication is not a prerequisite.
+- DSCN-4 (was QST-2): the Android island derives the Aware PSK from the media credential
+  (HKDF, label and roomID bound); the 6-digit PIN goes away for admitted guests. Wire change + fixtures in
+  both cores.
+
 ## Open questions
 
-- QST-1 Far-guest readiness: accept advisory counts relayed by the bridge, or add per-guest authentication
-  from the admission exchange first?
-- QST-2 Android island: derive the Aware PSK from the media credential (removes the 6-digit PIN; wire +
-  fixtures) or keep the PIN?
 - QST-3 Relay-aware admission deadline: two hops + up to 35 s Aware setup vs ADR-052's 5 s.
 - QST-4 If an island outgrows 8, allow a depth-3 same-platform sub-relay (core constant change)?
 - QST-5 Per-chunk hashes in the manifest to catch corrupt chunks before a whole-file refetch?
