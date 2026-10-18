@@ -11,6 +11,11 @@ public enum RelayProtocolError: Error, Equatable, Sendable {
     case frameTooLarge(Int)
     case truncated
     case trailingBytes(Int)
+    case relayProofMismatch
+    case wrongLane
+    case notBridgeAssignment
+    case assignmentNamesAnotherHost
+    case assignmentExpired
 }
 
 /// W1: the guide's signed choice of the single cross-platform bridge (control lane, kind 0x25).
@@ -187,5 +192,131 @@ public enum PeerAssetAcceptance {
         return chunk.totalLength == descriptor.byteLength && !chunk.bytes.isEmpty
             && chunk.offset < descriptor.byteLength
             && UInt64(chunk.bytes.count) <= descriptor.byteLength - chunk.offset
+    }
+}
+
+/// W4 (ADR-083): what both ends of a relay lane bind. The guest builds it from its own state: the host it chose
+/// (its record's `RelayHostAdvert`) and the session/guide it was admitted to. No peer-sent flag selects it.
+public struct RelayLaneContext: Equatable, Sendable {
+    public let sessionID: UUID
+    public let guideID: UUID
+    public let host: RelayHostAdvert
+    public let participantID: UUID
+    public let lane: SessionLane
+
+    public init(sessionID: UUID, guideID: UUID, host: RelayHostAdvert, participantID: UUID, lane: SessionLane) {
+        self.sessionID = sessionID; self.guideID = guideID; self.host = host
+        self.participantID = participantID; self.lane = lane
+    }
+
+    fileprivate func prefix(domain: String) -> BinaryWriter {
+        var writer = BinaryWriter()
+        writer.append(Data(domain.utf8))
+        writer.append(sessionID)
+        writer.append(guideID)
+        writer.append(host.hostID)
+        writer.append(host.bridgeGeneration)
+        writer.append(participantID)
+        writer.append(lane.rawValue)
+        return writer
+    }
+}
+
+/// W4 (ADR-083): the existing shared-key HMAC challenge/response under relay-only domain labels. Proves
+/// membership (the media credential), not the bridge's identity; content stays GOS1-verified end to end.
+public enum RelayLaneAuthenticator {
+    public static func guestProof(credential: SessionCredential, context: RelayLaneContext, challengeNonce: Data,
+                                  clientNonce: Data, role: SessionRole, platform: ParticipantPlatform,
+                                  capabilities: UInt32, displayName: String) throws -> Data {
+        try validate(challengeNonce, clientNonce)
+        var writer = context.prefix(domain: "GetOverHere/GOH2/guest-relay-auth/v1")
+        writer.append(challengeNonce)
+        writer.append(clientNonce)
+        writer.append(role.rawValue)
+        writer.append(platform.rawValue)
+        writer.append(capabilities)
+        try writer.append(displayName)
+        return SessionAuthenticator.hmac(key: credential.key, data: writer.data)
+    }
+
+    public static func bridgeProof(credential: SessionCredential, context: RelayLaneContext, challengeNonce: Data,
+                                   clientNonce: Data, bridgeNonce: Data) throws -> Data {
+        try validate(challengeNonce, clientNonce, bridgeNonce)
+        var writer = context.prefix(domain: "GetOverHere/GOH2/relay-auth/v1")
+        writer.append(challengeNonce)
+        writer.append(clientNonce)
+        writer.append(bridgeNonce)
+        return SessionAuthenticator.hmac(key: credential.key, data: writer.data)
+    }
+
+    private static func validate(_ nonces: Data...) throws {
+        for nonce in nonces where nonce.count != SessionAuthenticator.nonceSize {
+            throw SessionSecurityError.invalidNonceLength(nonce.count)
+        }
+    }
+}
+
+/// W4 (ADR-083, QST-8): the bridge's welcome on a relay lane. It carries the bridge's membership proof and the
+/// current guide-signed `bridgeAssignment` frame, which the guest verifies before it uses the lane.
+public struct RelayWelcomePayload: Equatable, Sendable {
+    public let lane: SessionLane
+    public let bridgeNonce: Data
+    public let proof: Data
+    /// The GOS1 `bridgeAssignment` frame exactly as the guide signed it.
+    public let assignmentFrame: Data
+
+    public init(lane: SessionLane, bridgeNonce: Data, proof: Data, assignmentFrame: Data) throws {
+        guard bridgeNonce.count == SessionAuthenticator.nonceSize else {
+            throw SessionSecurityError.invalidNonceLength(bridgeNonce.count)
+        }
+        guard proof.count == SessionAuthenticator.proofSize else { throw RelayProtocolError.relayProofMismatch }
+        guard assignmentFrame.count <= SignedGuideFrame.maximumSealedSize + 72 else {
+            throw RelayProtocolError.frameTooLarge(assignmentFrame.count)
+        }
+        self.lane = lane; self.bridgeNonce = bridgeNonce; self.proof = proof; self.assignmentFrame = assignmentFrame
+    }
+
+    public func encode() -> Data {
+        var writer = BinaryWriter(capacity: 53 + assignmentFrame.count)
+        writer.append(lane.rawValue)
+        writer.append(bridgeNonce)
+        writer.append(proof)
+        writer.append(UInt32(assignmentFrame.count))
+        writer.append(assignmentFrame)
+        return writer.data
+    }
+
+    public static func decode(_ data: Data) throws -> RelayWelcomePayload {
+        var reader = BinaryReader(data: data)
+        let rawLane = try reader.readUInt8()
+        guard let lane = SessionLane(rawValue: rawLane) else { throw RelayProtocolError.invalidLane(rawLane) }
+        let nonce = try reader.readData(count: SessionAuthenticator.nonceSize)
+        let proof = try reader.readData(count: SessionAuthenticator.proofSize)
+        let length = Int(try reader.readUInt32())
+        guard length <= SignedGuideFrame.maximumSealedSize + 72 else { throw RelayProtocolError.frameTooLarge(length) }
+        let frame = try reader.readData(count: length)
+        guard reader.remaining == 0 else { throw RelayProtocolError.trailingBytes(reader.remaining) }
+        return try RelayWelcomePayload(lane: lane, bridgeNonce: nonce, proof: proof, assignmentFrame: frame)
+    }
+
+    /// Guest side. Checks the bridge's proof, then the guide's GOS1 signature on the assignment, then that the
+    /// assignment names the host and generation the guest chose and is still leased. Returns the assignment.
+    public func verify(credential: SessionCredential, context: RelayLaneContext, challengeNonce: Data, clientNonce: Data,
+                       guide: GuideFrameVerifier, nowMilliseconds: UInt64) throws -> BridgeAssignmentPayload {
+        guard lane == context.lane else { throw RelayProtocolError.wrongLane }
+        let expected = try RelayLaneAuthenticator.bridgeProof(credential: credential, context: context,
+            challengeNonce: challengeNonce, clientNonce: clientNonce, bridgeNonce: bridgeNonce)
+        guard SessionAuthenticator.securelyMatches(expected, proof) else { throw RelayProtocolError.relayProofMismatch }
+        let sealed = try guide.verify(assignmentFrame)
+        guard sealed.kind == .bridgeAssignment,
+              case let .opened(envelope) = try SessionFrameOpener(credential: credential).open(sealed) else {
+            throw RelayProtocolError.notBridgeAssignment
+        }
+        let assignment = try BridgeAssignmentPayload.decode(envelope.payload)
+        guard assignment.bridgeID == context.host.hostID, assignment.generation == context.host.bridgeGeneration else {
+            throw RelayProtocolError.assignmentNamesAnotherHost
+        }
+        guard assignment.leaseExpiresAtMilliseconds > nowMilliseconds else { throw RelayProtocolError.assignmentExpired }
+        return assignment
     }
 }

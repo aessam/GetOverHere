@@ -1,7 +1,8 @@
 # Cross-island design: one Bluetooth bridge, platform-native P2P islands (ADR-081)
 
-Status: design, 2026-10-17. Synthesized from three read-only design passes (iOS island, Android island,
-bridge protocol). Nothing here is implemented. Unverified platform behavior is marked UNVERIFIED.
+Status: P0 core implemented 2026-10-18 in both cores (W1–W6, verified forwarder; ADR-083 handshake), byte-identical,
+gated by `scripts/verify_tour_session.sh` (`relay-fixture`, `bluetooth-relay-fixture`). App wiring (P1–P4) and the
+physical matrix wait for the second iPhone and Pixel 11. Unverified platform behavior is marked UNVERIFIED.
 
 ## Target
 

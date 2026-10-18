@@ -233,11 +233,27 @@ public enum TourSessionFixtures {
             "\(try forwarder.admit(step.0, receivedAtMilliseconds: step.1, nowMilliseconds: step.2))"
         }
         let snapshots = forwarder.snapshotSummary
+        // W4: deterministic proofs (fixed credential and nonces); the welcome uses placeholder frame bytes.
+        let credential = try SessionCredential.derive(shortCode: "23456789AB", sessionID: session)
+        let context = RelayLaneContext(sessionID: session, guideID: guide,
+            host: RelayHostAdvert(hostID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!, bridgeGeneration: 7),
+            participantID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000B1")!, lane: .control)
+        let challenge = Data(repeating: 0x11, count: 16), client = Data(repeating: 0x22, count: 16)
+        let bridgeNonce = Data(repeating: 0x33, count: 16)
+        let guestProof = try RelayLaneAuthenticator.guestProof(credential: credential, context: context, challengeNonce: challenge,
+            clientNonce: client, role: .guest, platform: .iOS, capabilities: 0x13, displayName: "Far guest")
+        let bridgeProof = try RelayLaneAuthenticator.bridgeProof(credential: credential, context: context,
+            challengeNonce: challenge, clientNonce: client, bridgeNonce: bridgeNonce)
+        let welcome = try RelayWelcomePayload(lane: .control, bridgeNonce: bridgeNonce, proof: bridgeProof,
+                                              assignmentFrame: Data([0x47, 0x4F, 0x53, 0x31]))
         return [
             "assignment=\(assignment.encode().lowercaseHex)",
             "upstream=\(upstream.encode().lowercaseHex)",
             "decisions=\(decisions.joined(separator: ","))",
             "snapshots=\(snapshots.joined(separator: ","))",
+            "guestProof=\(guestProof.lowercaseHex)",
+            "bridgeProof=\(bridgeProof.lowercaseHex)",
+            "welcome=\(welcome.encode().lowercaseHex)",
         ].joined(separator: "|")
     }
 

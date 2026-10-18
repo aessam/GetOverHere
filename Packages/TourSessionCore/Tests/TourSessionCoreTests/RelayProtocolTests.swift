@@ -5,7 +5,7 @@ import Testing
 @Suite("Cross-island relay core (ADR-081)")
 struct RelayProtocolTests {
     /// Pinned on both platforms (RelayProtocolTest.kt).
-    static let fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5"
+    static let fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5|guestProof=bcccd0792e4a8622103054af1b2b6276d2a898017f4e809b471419c4ee401ba0|bridgeProof=299bc53d580abcd51daacc95d9d643e92a725a260d7478913a63fbbb7c5de8b3|welcome=0233333333333333333333333333333333299bc53d580abcd51daacc95d9d643e92a725a260d7478913a63fbbb7c5de8b300000004474f5331"
 
     @Test func pinnedFixture() throws {
         #expect(try TourSessionFixtures.relayFixture() == Self.fixture)
@@ -99,5 +99,52 @@ struct RelayProtocolTests {
         #expect(!PeerAssetAcceptance.accepts(try chunk(file.sha256, 0, 1, total: file.byteLength + 1), manifest: manifest),
                 "a total length that disagrees with the manifest")
         #expect(!PeerAssetAcceptance.accepts(try chunk(file.sha256, 0, 0), manifest: manifest), "an empty chunk")
+    }
+
+    @Test("The relay welcome verifies proof, guide signature, host, generation and lease (W4, ADR-083)")
+    func relayWelcomeVerification() throws {
+        let guide = Guide()
+        let credential = try SessionCredential.derive(shortCode: "23456789AB", sessionID: guide.session)
+        let host = RelayHostAdvert(hostID: UUID(), bridgeGeneration: 3)
+        let context = RelayLaneContext(sessionID: guide.session, guideID: guide.id, host: host, participantID: UUID(), lane: .control)
+        let challenge = SessionAuthenticator.randomNonce(), client = SessionAuthenticator.randomNonce()
+        let bridgeNonce = SessionAuthenticator.randomNonce()
+        let sealer = SessionFrameSealer(credential: credential)
+        var sequence: UInt64 = 0
+        func assignmentFrame(bridge: UUID = host.hostID, generation: UInt64 = 3, expires: UInt64 = 10_000,
+                             kind: SessionMessageKind = .bridgeAssignment, signer: GuideFrameSigner? = nil) throws -> Data {
+            let payload = try BridgeAssignmentPayload(generation: generation, bridgeID: bridge, bridgePlatform: .android,
+                                                      leaseExpiresAtMilliseconds: expires, standbyIDs: []).encode()
+            sequence += 1 // the sealer requires increasing sequences per stream
+            let envelope = try SessionEnvelope(lane: .control, kind: kind, sequence: sequence,
+                                               sessionID: guide.session, senderID: guide.id, payload: payload)
+            return try (signer ?? guide.signer).sign(sealer.seal(envelope, streamID: guide.stream)).encode()
+        }
+        func welcome(_ frame: Data, proofCredential: SessionCredential? = nil, lane: SessionLane = .control) throws -> RelayWelcomePayload {
+            let proof = try RelayLaneAuthenticator.bridgeProof(credential: proofCredential ?? credential, context: context,
+                challengeNonce: challenge, clientNonce: client, bridgeNonce: bridgeNonce)
+            return try RelayWelcomePayload(lane: lane, bridgeNonce: bridgeNonce, proof: proof, assignmentFrame: frame)
+        }
+        func verify(_ value: RelayWelcomePayload) throws -> BridgeAssignmentPayload {
+            try RelayWelcomePayload.decode(value.encode()).verify(credential: credential, context: context, challengeNonce: challenge,
+                clientNonce: client, guide: try guide.verifier(), nowMilliseconds: 5_000)
+        }
+        #expect(try verify(welcome(assignmentFrame())).bridgeID == host.hostID)
+        let outsider = try SessionCredential.derive(shortCode: "ZZZZ9999AB", sessionID: guide.session)
+        #expect(throws: RelayProtocolError.relayProofMismatch) { try verify(welcome(assignmentFrame(), proofCredential: outsider)) }
+        #expect(throws: RelayProtocolError.wrongLane) { try verify(welcome(assignmentFrame(), lane: .asset)) }
+        #expect(throws: RelayProtocolError.assignmentNamesAnotherHost) { try verify(welcome(assignmentFrame(bridge: UUID()))) }
+        #expect(throws: RelayProtocolError.assignmentNamesAnotherHost) { try verify(welcome(assignmentFrame(generation: 4))) }
+        #expect(throws: RelayProtocolError.assignmentExpired) { try verify(welcome(assignmentFrame(expires: 5_000))) }
+        #expect(throws: RelayProtocolError.notBridgeAssignment) { try verify(welcome(assignmentFrame(kind: .heartbeat))) }
+        let member = GuideFrameSigner(sessionID: guide.session, guideID: guide.id)
+        #expect(throws: GuideSignatureError.self) { try verify(welcome(assignmentFrame(signer: member))) }
+
+        let direct = try SessionAuthenticator.guestProof(credential: credential, sessionID: guide.session, guideID: guide.id,
+            participantID: context.participantID, requestedLane: .control, challengeNonce: challenge, clientNonce: client,
+            role: .guest, platform: .iOS, capabilities: 0, displayName: "G")
+        let relay = try RelayLaneAuthenticator.guestProof(credential: credential, context: context, challengeNonce: challenge,
+            clientNonce: client, role: .guest, platform: .iOS, capabilities: 0, displayName: "G")
+        #expect(direct != relay, "relay proofs use their own domain and are never valid on a direct lane")
     }
 }

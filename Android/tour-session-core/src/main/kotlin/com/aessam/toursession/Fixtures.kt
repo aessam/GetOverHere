@@ -234,11 +234,24 @@ object TourSessionFixtures {
         )
         val decisions = steps.map { (frame, received, now) -> forwarder.admit(frame, received, now).name.lowercase() }
         val snapshots = forwarder.snapshotSummary
+        // W4: deterministic proofs (fixed credential and nonces); the welcome uses placeholder frame bytes.
+        val credential = SessionCredential.derive("23456789AB", session)
+        val context = RelayLaneContext(session, guide,
+            RelayHostAdvert(UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a1"), 7),
+            UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000b1"), SessionLane.CONTROL)
+        val challenge = ByteArray(16) { 0x11 }; val client = ByteArray(16) { 0x22 }; val bridgeNonce = ByteArray(16) { 0x33 }
+        val guestProof = RelayLaneAuthenticator.guestProof(credential, context, challenge, client, SessionRole.GUEST,
+            ParticipantPlatform.IOS, 0x13, "Far guest")
+        val bridgeProof = RelayLaneAuthenticator.bridgeProof(credential, context, challenge, client, bridgeNonce)
+        val welcome = RelayWelcomePayload(SessionLane.CONTROL, bridgeNonce, bridgeProof, byteArrayOf(0x47, 0x4F, 0x53, 0x31))
         return listOf(
             "assignment=${assignment.encode().lowercaseHex()}",
             "upstream=${upstream.encode().lowercaseHex()}",
             "decisions=${decisions.joinToString(",")}",
             "snapshots=${snapshots.joinToString(",")}",
+            "guestProof=${guestProof.lowercaseHex()}",
+            "bridgeProof=${bridgeProof.lowercaseHex()}",
+            "welcome=${welcome.encode().lowercaseHex()}",
         ).joinToString("|")
     }
 

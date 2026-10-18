@@ -218,4 +218,6 @@ Phase 6 (devices: iPhone 13 Pro, second iPhone, Pixel 7, Pixel 11):
    prepared tours + share + Go Live on iOS and Android, open shared packs on both, Tour ready badge on both.
    Device: guest ready 2 s (iPhone guide) / 3 s (Pixel guide) after joining vs 315 s cold.
    Scripts: `ios_drive.py prepare-tour|share-tour|golive-tour`, `android_prepare_tour.sh`.
-2. Cross-island relay (ADR-081, `CrossIslandDesign.md`): NOT STARTED; needs the second iPhone and the Pixel 11.
+2. Cross-island relay (ADR-081/083, `CrossIslandDesign.md`): P0 core DONE in both cores (W1 bridgeAssignment, W2 relayHost,
+   W3 room-record relay host, W4 relay lane handshake, W5 upstream record, W6 peer-asset acceptance, RelayForwarder that
+   verifies GOS1 before any state). App wiring P1–P4 and device gates T1–T8 need the second iPhone and the Pixel 11.

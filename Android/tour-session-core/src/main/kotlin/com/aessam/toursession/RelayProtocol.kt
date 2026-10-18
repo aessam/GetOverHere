@@ -165,3 +165,123 @@ object PeerAssetAcceptance {
             chunk.offset < descriptor.byteLength && chunk.bytes.size.toLong() <= descriptor.byteLength - chunk.offset
     }
 }
+
+/**
+ * W4 (ADR-083): what both ends of a relay lane bind. The guest builds it from its own state: the host it chose
+ * (its record's [RelayHostAdvert]) and the session/guide it was admitted to. No peer-sent flag selects it.
+ */
+data class RelayLaneContext(
+    val sessionID: UUID,
+    val guideID: UUID,
+    val host: RelayHostAdvert,
+    val participantID: UUID,
+    val lane: SessionLane,
+) {
+    internal fun prefix(domain: String): BinaryWriter = BinaryWriter().apply {
+        append(domain.toByteArray(Charsets.US_ASCII))
+        appendUuid(sessionID)
+        appendUuid(guideID)
+        appendUuid(host.hostID)
+        appendUInt64(host.bridgeGeneration)
+        appendUuid(participantID)
+        appendUInt8(lane.rawValue)
+    }
+}
+
+/**
+ * W4 (ADR-083): the existing shared-key HMAC challenge/response under relay-only domain labels. Proves membership
+ * (the media credential), not the bridge's identity; content stays GOS1-verified end to end.
+ */
+object RelayLaneAuthenticator {
+    fun guestProof(
+        credential: SessionCredential, context: RelayLaneContext, challengeNonce: ByteArray, clientNonce: ByteArray,
+        role: SessionRole, platform: ParticipantPlatform, capabilities: Long, displayName: String,
+    ): ByteArray {
+        validate(challengeNonce, clientNonce)
+        val writer = context.prefix("GetOverHere/GOH2/guest-relay-auth/v1")
+        writer.append(challengeNonce)
+        writer.append(clientNonce)
+        writer.appendUInt8(role.rawValue)
+        writer.appendUInt8(platform.rawValue)
+        writer.appendUInt32(capabilities)
+        writer.appendString(displayName)
+        return SessionAuthenticator.hmac(credential.key, writer.toByteArray())
+    }
+
+    fun bridgeProof(
+        credential: SessionCredential, context: RelayLaneContext, challengeNonce: ByteArray, clientNonce: ByteArray,
+        bridgeNonce: ByteArray,
+    ): ByteArray {
+        validate(challengeNonce, clientNonce, bridgeNonce)
+        val writer = context.prefix("GetOverHere/GOH2/relay-auth/v1")
+        writer.append(challengeNonce)
+        writer.append(clientNonce)
+        writer.append(bridgeNonce)
+        return SessionAuthenticator.hmac(credential.key, writer.toByteArray())
+    }
+
+    private fun validate(vararg nonces: ByteArray) {
+        nonces.forEach { if (it.size != SessionAuthenticator.NONCE_SIZE) throw RelayProtocolException("invalidNonceLength ${it.size}") }
+    }
+}
+
+/**
+ * W4 (ADR-083, QST-8): the bridge's welcome on a relay lane. It carries the bridge's membership proof and the
+ * current guide-signed `bridgeAssignment` frame, which the guest verifies before it uses the lane.
+ */
+class RelayWelcomePayload(val lane: SessionLane, val bridgeNonce: ByteArray, val proof: ByteArray, val assignmentFrame: ByteArray) {
+    init {
+        if (bridgeNonce.size != SessionAuthenticator.NONCE_SIZE) throw RelayProtocolException("invalidNonceLength ${bridgeNonce.size}")
+        if (proof.size != SessionAuthenticator.PROOF_SIZE) throw RelayProtocolException("relayProofMismatch")
+        if (assignmentFrame.size > SignedGuideFrame.MAXIMUM_SEALED_SIZE + 72) throw RelayProtocolException("frameTooLarge ${assignmentFrame.size}")
+    }
+
+    fun encode(): ByteArray {
+        val writer = BinaryWriter(53 + assignmentFrame.size)
+        writer.appendUInt8(lane.rawValue)
+        writer.append(bridgeNonce)
+        writer.append(proof)
+        writer.appendUInt32(assignmentFrame.size.toLong())
+        writer.append(assignmentFrame)
+        return writer.toByteArray()
+    }
+
+    /**
+     * Guest side. Checks the bridge's proof, then the guide's GOS1 signature on the assignment, then that the
+     * assignment names the host and generation the guest chose and is still leased. Returns the assignment.
+     */
+    fun verify(
+        credential: SessionCredential, context: RelayLaneContext, challengeNonce: ByteArray, clientNonce: ByteArray,
+        guide: GuideFrameVerifier, nowMilliseconds: Long,
+    ): BridgeAssignmentPayload {
+        if (lane != context.lane) throw RelayProtocolException("wrongLane")
+        val expected = RelayLaneAuthenticator.bridgeProof(credential, context, challengeNonce, clientNonce, bridgeNonce)
+        if (!SessionAuthenticator.securelyMatches(expected, proof)) throw RelayProtocolException("relayProofMismatch")
+        val sealed = guide.verify(assignmentFrame)
+        val opened = if (sealed.kind == SessionMessageKind.BRIDGE_ASSIGNMENT) SessionFrameOpener(credential).open(sealed) else null
+        if (opened !is SessionFrameOpenResult.Opened) throw RelayProtocolException("notBridgeAssignment")
+        val assignment = BridgeAssignmentPayload.decode(opened.envelope.payload)
+        if (assignment.bridgeID != context.host.hostID || assignment.generation != context.host.bridgeGeneration) {
+            throw RelayProtocolException("assignmentNamesAnotherHost")
+        }
+        if (java.lang.Long.compareUnsigned(assignment.leaseExpiresAtMilliseconds, nowMilliseconds) <= 0) {
+            throw RelayProtocolException("assignmentExpired")
+        }
+        return assignment
+    }
+
+    companion object {
+        fun decode(data: ByteArray): RelayWelcomePayload {
+            val reader = BinaryReader(data)
+            val rawLane = reader.readUInt8()
+            val lane = SessionLane.entries.firstOrNull { it.rawValue == rawLane } ?: throw RelayProtocolException("invalidLane $rawLane")
+            val nonce = reader.readBytes(SessionAuthenticator.NONCE_SIZE)
+            val proof = reader.readBytes(SessionAuthenticator.PROOF_SIZE)
+            val length = reader.readUInt32()
+            if (length > SignedGuideFrame.MAXIMUM_SEALED_SIZE + 72) throw RelayProtocolException("frameTooLarge $length")
+            val frame = reader.readBytes(length.toInt())
+            if (reader.remaining != 0) throw RelayProtocolException("trailingBytes ${reader.remaining}")
+            return RelayWelcomePayload(lane, nonce, proof, frame)
+        }
+    }
+}

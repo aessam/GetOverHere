@@ -8,7 +8,7 @@ import org.junit.Test
 
 /** Mirrors RelayProtocolTests.swift (ADR-081); the pinned fixture must stay identical on both platforms. */
 class RelayProtocolTest {
-    private val fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5"
+    private val fixture = "assignment=00000000000000076f1c5c6a0000400080000000000000a1020000018bcfe5687b016f1c5c6a0000400080000000000000a2|upstream=016f1c5c6a0000400080000000000000b10200000005474f483201|decisions=forward,duplicate,conflict,expired,forward,forward,forward|snapshots=bearingSnapshot:4,presentationSnapshot:5|guestProof=bcccd0792e4a8622103054af1b2b6276d2a898017f4e809b471419c4ee401ba0|bridgeProof=299bc53d580abcd51daacc95d9d643e92a725a260d7478913a63fbbb7c5de8b3|welcome=0233333333333333333333333333333333299bc53d580abcd51daacc95d9d643e92a725a260d7478913a63fbbb7c5de8b300000004474f5331"
 
     @Test fun pinnedFixture() = assertEquals(fixture, TourSessionFixtures.relayFixture())
 
@@ -82,5 +82,47 @@ class RelayProtocolTest {
         assertTrue(!PeerAssetAcceptance.accepts(chunk("a".repeat(64), 0, 1, total = 1), manifest))
         assertTrue(!PeerAssetAcceptance.accepts(chunk(file.sha256, 0, 1, total = file.byteLength + 1), manifest))
         assertTrue(!PeerAssetAcceptance.accepts(chunk(file.sha256, 0, 0), manifest))
+    }
+
+    /** Mirrors RelayProtocolTests.relayWelcomeVerification (W4, ADR-083). */
+    @Test fun relayWelcomeVerification() {
+        val guide = Guide()
+        val credential = SessionCredential.derive("23456789AB", guide.session)
+        val host = RelayHostAdvert(UUID.randomUUID(), 3)
+        val context = RelayLaneContext(guide.session, guide.id, host, UUID.randomUUID(), SessionLane.CONTROL)
+        val challenge = SessionAuthenticator.randomNonce(); val client = SessionAuthenticator.randomNonce()
+        val bridgeNonce = SessionAuthenticator.randomNonce()
+        val sealer = SessionFrameSealer(credential)
+        var sequence = 0L
+        fun assignmentFrame(bridge: UUID = host.hostID, generation: Long = 3, expires: Long = 10_000,
+                            kind: SessionMessageKind = SessionMessageKind.BRIDGE_ASSIGNMENT, signer: GuideFrameSigner = guide.signer): ByteArray {
+            val payload = BridgeAssignmentPayload(generation, bridge, ParticipantPlatform.ANDROID, expires, emptyList()).encode()
+            sequence += 1 // the sealer requires increasing sequences per stream
+            val envelope = SessionEnvelope(lane = SessionLane.CONTROL, kind = kind, sequence = sequence,
+                sessionId = guide.session, senderId = guide.id, payload = payload)
+            return signer.sign(sealer.seal(envelope, guide.stream)).encode()
+        }
+        fun welcome(frame: ByteArray, proofCredential: SessionCredential = credential, lane: SessionLane = SessionLane.CONTROL) =
+            RelayWelcomePayload(lane, bridgeNonce,
+                RelayLaneAuthenticator.bridgeProof(proofCredential, context, challenge, client, bridgeNonce), frame)
+        fun verify(value: RelayWelcomePayload) =
+            RelayWelcomePayload.decode(value.encode()).verify(credential, context, challenge, client, guide.verifier(), 5_000)
+        fun reason(block: () -> Unit) = assertThrows(RelayProtocolException::class.java) { block() }.message
+
+        assertEquals(host.hostID, verify(welcome(assignmentFrame())).bridgeID)
+        val outsider = SessionCredential.derive("ZZZZ9999AB", guide.session)
+        assertTrue(reason { verify(welcome(assignmentFrame(), proofCredential = outsider)) }!!.contains("relayProofMismatch"))
+        assertTrue(reason { verify(welcome(assignmentFrame(), lane = SessionLane.ASSET)) }!!.contains("wrongLane"))
+        assertTrue(reason { verify(welcome(assignmentFrame(bridge = UUID.randomUUID()))) }!!.contains("assignmentNamesAnotherHost"))
+        assertTrue(reason { verify(welcome(assignmentFrame(generation = 4))) }!!.contains("assignmentNamesAnotherHost"))
+        assertTrue(reason { verify(welcome(assignmentFrame(expires = 5_000))) }!!.contains("assignmentExpired"))
+        assertTrue(reason { verify(welcome(assignmentFrame(kind = SessionMessageKind.HEARTBEAT))) }!!.contains("notBridgeAssignment"))
+        val member = GuideFrameSigner(guide.session, guide.id)
+        assertThrows(Exception::class.java) { verify(welcome(assignmentFrame(signer = member))) }
+
+        val direct = SessionAuthenticator.guestProof(credential, guide.session, guide.id, context.participantID, SessionLane.CONTROL,
+            challenge, client, SessionRole.GUEST, ParticipantPlatform.IOS, 0, "G")
+        val relay = RelayLaneAuthenticator.guestProof(credential, context, challenge, client, SessionRole.GUEST, ParticipantPlatform.IOS, 0, "G")
+        assertTrue("relay proofs use their own domain", !direct.contentEquals(relay))
     }
 }
