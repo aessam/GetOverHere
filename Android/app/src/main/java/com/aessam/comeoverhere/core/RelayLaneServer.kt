@@ -30,6 +30,7 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The bridge's island listener for one lane (ADR-081 P1, ADR-083). An island peer connects, the bridge runs the
@@ -56,6 +57,9 @@ class RelayLaneServer(
     private val server = ServerSocket(port, 16, bindAddress)
     private val running = AtomicBoolean(true)
     val port: Int get() = server.localPort
+    /** Advisory frames island peers sent upstream (counted, not yet forwarded). */
+    private val upstreamCount = AtomicLong()
+    val upstreamFrames: Long get() = upstreamCount.get()
 
     init {
         Thread({ acceptLoop() }, "relay-$lane-accept").apply { isDaemon = true }.start()
@@ -88,8 +92,7 @@ class RelayLaneServer(
                 SessionLane.REALTIME, SessionLane.CONTROL -> {
                     val writer = SocketChildWriter(socket, lane)
                     hub.attach(lane, writer)
-                    // Island peers send nothing on these lanes except to leave; any read ends the peer.
-                    try { socket.getInputStream().read() } finally { hub.detach(lane, writer); writer.close() }
+                    try { consumeUpstream(socket, peer) } finally { hub.detach(lane, writer); writer.close() }
                 }
                 SessionLane.ASSET -> serveAssets(socket, sealer, stream, peer)
             }
@@ -123,6 +126,22 @@ class RelayLaneServer(
         return hello.senderId
     }
 
+    /**
+     * Island peers' own frames on realtime/control (audio status, leave). They are advisory (DSCN-3) and are not yet
+     * forwarded upstream (W5); a leave or EOF ends the peer, anything not sealed by a member is a protocol error.
+     */
+    private fun consumeUpstream(socket: Socket, peer: UUID) {
+        val input = socket.getInputStream()
+        val opener = SessionFrameOpener(credential)
+        while (running.get()) {
+            val envelope = (opener.open(SealedSessionEnvelope.decode(readFrame(input, HELLO_MAXIMUM))) as? SessionFrameOpenResult.Opened)?.envelope
+                ?: continue
+            if (envelope.sessionId != sessionID || envelope.senderId != peer) throw IllegalArgumentException("upstream frame from another participant")
+            if (envelope.kind == SessionMessageKind.LEAVE) return
+            upstreamCount.incrementAndGet()
+        }
+    }
+
     private fun serveAssets(socket: Socket, sealer: SessionFrameSealer, stream: UUID, peer: UUID) {
         val input = socket.getInputStream()
         val output = socket.getOutputStream()
@@ -131,7 +150,9 @@ class RelayLaneServer(
         while (running.get()) {
             val request = (opener.open(SealedSessionEnvelope.decode(readFrame(input, HELLO_MAXIMUM))) as? SessionFrameOpenResult.Opened)?.envelope
                 ?: continue
-            if (request.senderId != peer || request.kind != SessionMessageKind.ASSET_REQUEST) throw IllegalArgumentException("unexpected asset frame")
+            if (request.senderId != peer) throw IllegalArgumentException("asset frame from another participant")
+            if (request.kind == SessionMessageKind.ASSET_STATUS) { upstreamCount.incrementAndGet(); continue } // advisory (DSCN-3)
+            if (request.kind != SessionMessageKind.ASSET_REQUEST) throw IllegalArgumentException("unexpected asset frame")
             val wanted = AssetRequestPayload.decode(request.payload)
             val file = assetFile(wanted.sha256) ?: throw IllegalStateException("bridge does not hold ${wanted.sha256.take(12)}")
             val length = file.length()

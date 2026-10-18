@@ -114,6 +114,8 @@ interface AudioPlane {
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     /** Guest: receives each guide frame's raw GOS1 bytes after it opened (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
+    /** Guest: authenticate this lane to an island bridge (ADR-081 P3); null for the guide itself. */
+    fun setRelayRoute(route: RelayRoute?) {}
 }
 
 sealed class AudioSessionEvent {
@@ -166,6 +168,8 @@ interface SessionControlTransport {
     fun setGuestSocketFactory(factory: SocketFactory?) {}
     /** Guest: receives each guide frame's raw GOS1 bytes after it opened (ADR-081 bridge upstream). */
     fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
+    /** Guest: authenticate this lane to an island bridge (ADR-081 P3); null for the guide itself. */
+    fun setRelayRoute(route: RelayRoute?) {}
     fun stop()
     fun clearSession()
 }

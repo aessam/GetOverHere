@@ -151,6 +151,8 @@ private class LocalAuthenticatedSessionTransport(
     }
 
     @Volatile var upstreamFrameTap: ((ByteArray) -> Unit)? = null
+    /** Far guest (ADR-081 P3): authenticate to this island bridge instead of the guide; read at each start. */
+    @Volatile var relayRoute: RelayRoute? = null
 
     fun startGuest() {
         val configured = configuration
@@ -587,6 +589,14 @@ private class LocalAuthenticatedSessionTransport(
         output: OutputStream,
         configured: Configuration,
     ): UUID {
+        relayRoute?.let { route ->
+            val verifier = (configured.authentication as? SessionGuideAuthentication.Guest)?.verifier
+                ?: error("Admitted guide identity is not configured")
+            RelayLaneClient.handshake(socket.getInputStream(), output, route, applicationLane, configured.credential,
+                configured.sessionID, configured.participantID, configured.platform, helloCapabilities, configured.displayName,
+                verifier, { input -> readFrame(input, MAXIMUM_FRAME_SIZE) }, { stream, data -> writeFrame(stream, data) })
+            return route.guideID
+        }
         val guideOpener = SessionFrameOpener(configured.credential)
         // Only the AEAD failure is a credential rejection (DSCN-26); an EOF from readFrame stays a
         // transport failure and a malformed sealed frame stays a protocol failure.
@@ -774,6 +784,7 @@ class LocalSessionControlTransport(
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
     override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { transport.upstreamFrameTap = tap }
+    override fun setRelayRoute(route: RelayRoute?) { transport.relayRoute = route }
     override fun stop() = transport.stop()
     override fun clearSession() = transport.clearSession()
 }

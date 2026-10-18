@@ -729,6 +729,8 @@ class UDPAudioPlane(
 
     @Volatile private var upstreamFrameTap: ((ByteArray) -> Unit)? = null
     override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { upstreamFrameTap = tap }
+    @Volatile private var relayRoute: RelayRoute? = null
+    override fun setRelayRoute(route: RelayRoute?) { relayRoute = route }
 
     override fun startListening(channelID: String, onAudio: (ByteArray) -> Unit) {
         val configured = configuration
@@ -1014,6 +1016,14 @@ class UDPAudioPlane(
         configured: SessionConfiguration,
         guestCapabilities: Long,
     ): UUID {
+        relayRoute?.let { route ->
+            val verifier = (configured.authentication as? SessionGuideAuthentication.Guest)?.verifier
+                ?: error("Admitted guide identity is not configured")
+            RelayLaneClient.handshake(socket.getInputStream(), output, route, SessionLane.REALTIME, configured.credential,
+                configured.sessionID, configured.participantID, configured.platform, guestCapabilities, configured.displayName,
+                verifier, { input -> readFrame(input, maximumFrameSize) }, { stream, data -> writeFrame(stream, data) })
+            return route.guideID
+        }
         val guideOpener = SessionFrameOpener(configured.credential)
         val challengeEnvelope = openFrame(
             readFrame(socket.getInputStream(), 65_536),
