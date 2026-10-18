@@ -4,7 +4,7 @@
 # accessibility tree (scripts/android_ui_join.sh). After IMPORT_AT seconds of speech the guide imports PDF.
 # Gates: the guide reports the guest "1 ready" within READY_WITHIN seconds of the import, the guest logs
 # no session reconnect and no "Tour asset transfer failed", and guest audio keeps arriving to the end.
-# Usage: scripts/verify_real_ui_pdf.sh [PDF=stress-20c] [IMPORT_AT=30] [READY_WITHIN=300] [TAIL=60]
+# Usage: [PAGE_TURN_EVERY=60] scripts/verify_real_ui_pdf.sh [PDF=stress-20c] [IMPORT_AT=30] [READY_WITHIN=300] [TAIL=60]
 # Needs: scripts/wda.sh running, both apps installed, the PDF in the guide's Files "GetOverHere" folder.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,7 +40,22 @@ while (( $(date +%s) - started < READY_WITHIN )); do
 done
 echo "guide reports 1 ready after: ${ready_after:-never (>${READY_WITHIN}s)}" | tee -a "$OUT/guide.log"
 "$PY" "$ROOT/scripts/ios_drive.py" shot "$OUT/guide-after-transfer.png" >/dev/null 2>&1 || true
-guest_log; mid=$(frames); sleep "$TAIL"; guest_log; after=$(frames)
+guest_log; mid=$(frames)
+# Endurance tail: every 30 s the guest's audio frame count must rise; optional guide page turns.
+stalls=0; turns=0; last=$mid; elapsed=0; next_turn="${PAGE_TURN_EVERY:-0}"
+if (( ${PAGE_TURN_EVERY:-0} > 0 )); then "$PY" "$ROOT/scripts/ios_drive.py" tap Show >> "$OUT/guide.log" 2>&1 || true; fi
+while (( elapsed < TAIL )); do
+    sleep 30; elapsed=$(( elapsed + 30 ))
+    if (( ${PAGE_TURN_EVERY:-0} > 0 && elapsed >= next_turn )); then
+        "$PY" "$ROOT/scripts/ios_drive.py" tap Next >> "$OUT/guide.log" 2>&1 && turns=$(( turns + 1 )) || true
+        next_turn=$(( next_turn + PAGE_TURN_EVERY ))
+    fi
+    guest_log; now=$(frames)
+    if (( now <= last )); then stalls=$(( stalls + 1 )); echo "stall at tail t=${elapsed}s frames=$now" | tee -a "$OUT/guide.log"; fi
+    last=$now
+done
+after=$last
+echo "tail ${TAIL}s: stalls=$stalls pageTurns=$turns" | tee -a "$OUT/guide.log"
 "$ROOT/scripts/android_ui_join.sh" "$ROOM" "$SERIAL" "$OUT/guest-end.png" >/dev/null 2>&1 || true
 "$PY" "$ROOT/scripts/ios_drive.py" end > "$OUT/end.log" 2>&1 || echo "warning: guide end failed; see $OUT/end.log" >&2
 xcrun devicectl device copy from --device "$IOS" --domain-type appDataContainer \
@@ -51,7 +66,7 @@ reconnects=$(grep -c 'Session reconnect attempt' "$OUT/logcat.txt" || true)
 failures=$(grep -c 'Tour asset transfer failed' "$OUT/logcat.txt" || true)
 echo "audioFrames import=$before transferEnd=$mid end=$after reconnects=$reconnects assetFailures=$failures readyAfter=${ready_after:-never}"
 [[ -f "$OUT/guide-lane-events.log" ]] && grep -E 'writer failed|bridge failed' "$OUT/guide-lane-events.log" | tail -5 || true
-if [[ -n "$ready_after" && "$reconnects" == 0 && "$failures" == 0 && "$after" -gt "$mid" ]]; then
+if [[ -n "$ready_after" && "$reconnects" == 0 && "$failures" == 0 && "$after" -gt "$mid" && "$stalls" == 0 ]]; then
     echo "PASS: real-UI slides under speech; $OUT"
 else
     echo "FAIL: real-UI slides under speech; $OUT"; exit 1

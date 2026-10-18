@@ -13,17 +13,20 @@ awake() {  # cheap and idempotent: a dozing screen yields an empty accessibility
     "$ADB" -s "$SERIAL" shell wm dismiss-keyguard
 }
 
-center_of() {  # prints "x y" of the first accessibility node whose text or content-desc contains $1
+center_of() {  # prints "x y" of the node labelled exactly $1, else the first whose label contains it
     awake
     "$ADB" -s "$SERIAL" shell uiautomator dump /sdcard/goh-ui.xml >/dev/null
     "$ADB" -s "$SERIAL" shell cat /sdcard/goh-ui.xml | python3 -c '
 import re, sys
 needle = sys.argv[1]
-for node in re.findall(r"<node [^>]*>", sys.stdin.read()):
-    labels = re.findall(r"(?:text|content-desc)=\"([^\"]*)\"", node)
-    if any(needle in label for label in labels):
-        x1, y1, x2, y2 = map(int, re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node).groups())
-        print((x1 + x2) // 2, (y1 + y2) // 2); break' "$1"
+nodes = re.findall(r"<node [^>]*>", sys.stdin.read())
+labels = lambda node: re.findall(r"(?:text|content-desc)=\"([^\"]*)\"", node)
+# An exact label wins; substring only as a fallback ("Leave" -> "Leave Channel"). A substring-first match
+# tapped the dialog subtitle "Create a channel..." instead of the "Create" button.
+match = next((n for n in nodes if needle in labels(n)), None) or next((n for n in nodes if any(needle in l for l in labels(n))), None)
+if match:
+    x1, y1, x2, y2 = map(int, re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", match).groups())
+    print((x1 + x2) // 2, (y1 + y2) // 2)' "$1"
 }
 
 for _ in $(seq 1 30); do

@@ -2,7 +2,7 @@
 """Drive GetOverHere on a physical iPhone through WebDriverAgent (scripts/wda.sh start first).
 
 Run with tools/.venv/bin/python. Visible text is matched by `label`; accessibility identifiers by `name`. Every miss fails loudly.
-Commands: create NAME | end | join NAME | leave | pointer | import-pdf NAME | autolock VALUE | lock | unlock | home | shot PATH | source
+Commands: create NAME | end | join NAME | leave | pointer | import-pdf NAME | tap LABEL | autolock VALUE | lock | unlock | home | shot PATH | source
 """
 import argparse
 import subprocess
@@ -29,12 +29,12 @@ def need(element, description, timeout=20.0):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "import-pdf", "autolock", "lock", "unlock", "home", "shot", "source"])
+    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "import-pdf", "autolock", "lock", "unlock", "home", "shot", "source", "tap"])
     parser.add_argument("argument", nargs="?")
     args = parser.parse_args()
     c = client()
     started = time.monotonic()
-    if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf"):
+    if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf", "tap"):
         # Never relaunch: that ends a live tour and detaches a `devicectl --console` log capture.
         c.app_activate(BUNDLE)
         session = c.session()
@@ -96,6 +96,8 @@ def main():
         need(settings(label=args.argument), f"Auto-Lock option {args.argument}").tap()
         print(f"autolock now={args.argument!r} (record the old value yourself: the cell detail is not exposed)", flush=True)
         c.home()
+    elif args.command == "tap":
+        need(session(label=args.argument), f"{args.argument!r} button", timeout=5).tap()
     elif args.command == "lock":
         c.lock()
     elif args.command == "unlock":

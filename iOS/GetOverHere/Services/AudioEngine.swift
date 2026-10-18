@@ -151,18 +151,41 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
     }
 
     func updateOutput(_ output: ListenerOutput) throws {
+        // A live Earpiece/Speaker switch changes the category (.playAndRecord <-> .playback) and with it
+        // the I/O configuration. Doing that under a running engine failed with OSStatus -50 on device, so
+        // the engine stops around the change and restarts; queued speech is discarded (it is stale anyway).
+        let running = engine?.isRunning == true
+        if running {
+            player?.stop()
+            backlog.reset()
+            engine?.stop()
+        }
+        try configureSession(output)
+        if running, let engine, let player {
+            do { try engine.start() } catch {
+                throw AudioEngineError.audioSessionConfigurationFailed("engine restart: \(error.localizedDescription)")
+            }
+            player.play()
+        }
+    }
+
+    private func configureSession(_ output: ListenerOutput) throws {
         let session = AVAudioSession.sharedInstance()
+        var step = "category"
         do {
             if output == .privateAudio {
                 try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+                step = "route override"
                 try session.overrideOutputAudioPort(.none)
             } else {
-                try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothA2DP])
+                // A2DP is implicit for .playback (AVAudioSessionTypes.h), so no option is passed.
+                try session.setCategory(.playback, mode: .spokenAudio)
             }
+            step = "activation"
             try session.setActive(true)
             ownsAudioSession = true
         } catch {
-            throw AudioEngineError.audioSessionConfigurationFailed(error.localizedDescription)
+            throw AudioEngineError.audioSessionConfigurationFailed("\(step): \(error.localizedDescription)")
         }
     }
 
@@ -187,7 +210,18 @@ private final class NativeAudioPlaybackRuntime: AudioPlaybackRuntimeInterface {
     }
 
     func enqueue(_ buffer: AVAudioPCMBuffer) -> Bool {
-        guard let engine, engine.isRunning, let player, player.isPlaying else { return false }
+        guard let engine, let player else { return false }
+        if !engine.isRunning {
+            // A route/category change stops the engine and posts AVAudioEngineConfigurationChange; the
+            // owner's restart runs later on the main actor. A buffer arriving in that gap restarts it here
+            // instead of failing the whole tour audio ("renderer stopped accepting buffers").
+            do { try engine.start() } catch {
+                Logger.audio.error("Playback engine restart failed (\(String(describing: type(of: error))))")
+                return false
+            }
+            Logger.audio.info("Playback engine restarted on demand")
+        }
+        if !player.isPlaying { player.play() }
         let generation: UInt64
         switch backlog.admit() {
         case let .schedule(current):
@@ -287,6 +321,9 @@ final class AudioEngine: AudioEngineInterface {
     private var acceptedPlaybackBuffer = false
     /// Bytes accepted by the renderer in this playback run, not acoustic output.
     private(set) var acceptedPlaybackByteCount: UInt64 = 0
+    #if DEBUG
+    @ObservationIgnored private var playbackLogAt: ContinuousClock.Instant?
+    #endif
     private var observerGeneration: UInt64 = 0
     private var hasCaptureTap = false
     private var captureStream: AudioCaptureStream?
@@ -486,6 +523,15 @@ final class AudioEngine: AudioEngineInterface {
             return
         }
         acceptedPlaybackByteCount += UInt64(data.count)
+        #if DEBUG
+        // Locked-guest evidence: the debug network and WDA cannot read a locked phone, so the
+        // count lands in Documents/lane-events.log every 10 s; a stall shows as a gap.
+        let now = ContinuousClock.now
+        if playbackLogAt.map({ now - $0 >= .seconds(10) }) ?? true {
+            playbackLogAt = now
+            GuideLaneEvents.record("guest playback bytes=\(acceptedPlaybackByteCount)")
+        }
+        #endif
         if !acceptedPlaybackBuffer {
             acceptedPlaybackBuffer = true
             onRuntimeEvent?(.firstPlaybackBufferAccepted)
