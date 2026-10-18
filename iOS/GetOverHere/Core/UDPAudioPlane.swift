@@ -359,6 +359,9 @@ final class UDPAudioPlane: AudioPlane {
     /// Relay bridge tee of opened guide frames (ADR-081 P4); read at each listen start.
     @ObservationIgnored private var upstreamFrameTap: UpstreamFrameTap?
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { upstreamFrameTap = tap }
+    /// Far guest (ADR-081 P4): authenticate to this island bridge instead of the guide; read at each listen start.
+    @ObservationIgnored private var relayRoute: RelayRoute?
+    func setRelayRoute(_ route: RelayRoute?) { relayRoute = route }
 
     /// Test accessors for socket-option and admission assertions (FND-4).
     var connectedClientDescriptors: [Int32] { connectedClients.map(\.writer.socket.fd) }
@@ -608,6 +611,7 @@ final class UDPAudioPlane: AudioPlane {
             return
         }
         let upstreamFrameTap = self.upstreamFrameTap
+        let relayRoute = self.relayRoute
         let authentication = self.authentication
         do { try authentication.requireGuest() }
         catch {
@@ -695,7 +699,8 @@ final class UDPAudioPlane: AudioPlane {
                     fd: fd,
                     configuration: configuration,
                     guestCapabilities: localCapabilities,
-                    authentication: authentication
+                    authentication: authentication,
+                    relayRoute: relayRoute
                 )
             } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 runCallbacks.emitSession(.versionMismatch(
@@ -1015,13 +1020,22 @@ final class UDPAudioPlane: AudioPlane {
         fd: Int32,
         configuration: SessionConfiguration,
         guestCapabilities: SessionCapabilities,
-        authentication: SessionGuideAuthentication
+        authentication: SessionGuideAuthentication,
+        relayRoute: RelayRoute?
     ) throws -> UUID {
         var timeout = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         defer {
             timeout = timeval(tv_sec: 0, tv_usec: 0)
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        }
+        if let relayRoute {
+            guard case let .guest(verifier) = authentication else { throw AudioAuthenticationError.incompleteHandshake }
+            _ = try RelayLaneClient.handshake(fd: fd, route: relayRoute, lane: .realtime, credential: configuration.credential,
+                sessionID: configuration.sessionID, participantID: configuration.participantID, platform: configuration.platform,
+                capabilities: guestCapabilities.rawValue, displayName: configuration.displayName, verifier: verifier,
+                maximumFrameSize: 1_048_576)
+            return relayRoute.guideID
         }
         guard let challengeFrame = readFrame(fd: fd, maximumSize: 65_536) else {
             throw AudioAuthenticationError.incompleteHandshake

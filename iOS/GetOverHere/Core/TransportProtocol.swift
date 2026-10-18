@@ -268,6 +268,8 @@ enum PeerEvent: Sendable {
 protocol AudioPlane: AnyObject {
     /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
+    /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
+    func setRelayRoute(_ route: RelayRoute?)
     var isActive: Bool { get }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
@@ -321,6 +323,7 @@ enum AudioPlaneStartError: LocalizedError, Equatable {
 }
 
 extension AudioPlane {
+    func setRelayRoute(_ route: RelayRoute?) {}
     func configureSession(
         sessionID: UUID,
         participantID: UUID,
@@ -349,6 +352,8 @@ enum SessionControlEvent: Sendable {
 protocol SessionControlTransport: AnyObject {
     /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
+    /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
+    func setRelayRoute(_ route: RelayRoute?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     /// SessionCapabilities this guest advertises in its control hello (relayHost, ADR-081).
@@ -396,6 +401,8 @@ enum SessionAssetEvent: Sendable {
 protocol SessionAssetTransport: AnyObject {
     /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
+    /// Guest: authenticate this lane to an island bridge (ADR-081 P4); read when the lane starts.
+    func setRelayRoute(_ route: RelayRoute?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
@@ -425,10 +432,12 @@ extension AudioPlane {
 }
 
 extension SessionControlTransport {
+    func setRelayRoute(_ route: RelayRoute?) {}
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
 }
 
 extension SessionAssetTransport {
+    func setRelayRoute(_ route: RelayRoute?) {}
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
 }
 

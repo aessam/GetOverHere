@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import Observation
 import TourSessionCore
 
@@ -69,7 +70,14 @@ final class TourAssetTransferService {
     /// `init` default argument can read it.
     nonisolated static let inFlightDeadline: Duration = .seconds(15)
 
-    private(set) var manifest: TourPackManifestPayload?
+    private(set) var manifest: TourPackManifestPayload? {
+        didSet {
+            let hashes = Set(manifest?.assets.map(\.sha256) ?? [])
+            relayableHashes.withLock { $0 = hashes }
+        }
+    }
+    /// Hashes of the current guide-signed manifest; the only files a bridge serves to its island (ADR-081).
+    @ObservationIgnored private let relayableHashes = OSAllocatedUnfairLock<Set<String>>(initialState: [])
     private(set) var readyURLsByAssetID: [String: URL] = [:]
     private(set) var connectedParticipantIDs: Set<UUID> = []
     private(set) var readyParticipantIDs: Set<UUID> = []
@@ -224,10 +232,15 @@ final class TourAssetTransferService {
     /// Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream); read at the next join.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.setUpstreamFrameTap(tap) }
 
-    /// Bridge (ADR-081): files the island asset lane may serve; complete files are hash-verified at ingest.
+    /// Guest: join through an island bridge (ADR-081 P4); read at the next join.
+    func setRelayRoute(_ route: RelayRoute?) { transport.setRelayRoute(route) }
+
+    /// Bridge (ADR-081): files of the current manifest the island asset lane may serve; complete files are
+    /// hash-verified at ingest.
     var relayAssetLookup: @Sendable (String) -> URL? {
-        let cache = cache
-        return { cache.completedURL(sha256: $0) }
+        let cache = cache, allowed = relayableHashes
+        // Only this session's manifest: the cache also holds files from earlier tours.
+        return { hash in allowed.withLock { $0.contains(hash) } ? cache.completedURL(sha256: hash) : nil }
     }
 
     func joinTour(hostIP: String) {

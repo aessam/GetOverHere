@@ -234,6 +234,9 @@ final class TourControlService {
     /// Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream); read at the next start.
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.setUpstreamFrameTap(tap) }
 
+    /// Guest: join through an island bridge (ADR-081 P4); read at the next start.
+    func setRelayRoute(_ route: RelayRoute?) { transport.setRelayRoute(route) }
+
     /// Bridge: carry an island guest's advisory frame to the guide (W5).
     func sendRelayUpstream(_ record: RelayUpstreamRecord) {
         transport.send(kind: .relayUpstream, payload: record.encode())

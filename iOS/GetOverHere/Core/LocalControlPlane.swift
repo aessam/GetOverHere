@@ -179,7 +179,11 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
             do {
                 guard nearbyBridge.guestAdaptersReady, let nearbyGuestConnector else { throw NearbyConnectionError.closed }
                 try await verifyNearbyRecord(roomID: roomID, guideID: expectedGuideID, attempt: attempt, connect: nearbyGuestConnector)
-                return nearbyGuestRoute
+                // A bridge renews its generation; the lanes must present the current one (ADR-083).
+                let refreshed = NearbyGuestRoute(adapterHost: nearbyGuestRoute.adapterHost, transport: nearbyGuestRoute.transport,
+                    roomID: roomID, routeID: nearbyGuestRoute.routeID, relayHost: lastVerifiedRelayHost)
+                self.nearbyGuestRoute = refreshed
+                return refreshed
             } catch {
                 guard routeAttempt == attempt, !Task.isCancelled else { throw CancellationError() }
                 if error is RoomAdmissionV2Error { throw error }
@@ -228,12 +232,16 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         do { host = try await nearbyBridge.startGuest(roomID: roomID, laneConnect: connect) }
         catch { if routeAttempt == attempt { stopNearbyGuest() }; throw error }
         guard routeAttempt == attempt else { throw CancellationError() }
-        let route = NearbyGuestRoute(adapterHost: host, transport: transport, roomID: roomID, routeID: UUID())
+        let route = NearbyGuestRoute(adapterHost: host, transport: transport, roomID: roomID, routeID: UUID(),
+                                     relayHost: lastVerifiedRelayHost)
         nearbyGuestRoute = route
         nearbyGuestGuideID = expectedGuideID
         nearbyGuestConnector = connect
         return route
     }
+
+    /// The relay host of the record verified last, read just before a join (ADR-081).
+    private var lastVerifiedRelayHost: RelayHostAdvert?
 
     private func verifyNearbyRecord(roomID: UUID, guideID: UUID, attempt: UInt64,
         connect: NearbySocketBridge.LaneConnect) async throws {
@@ -241,6 +249,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         guard routeAttempt == attempt, !Task.isCancelled else { throw CancellationError() }
         guard record.roomID == roomID, record.guideID == guideID else { throw RoomAdmissionV2Error.wrongGuide }
         guard record.admissionVersion == 2 else { throw RoomAdmissionV2Error.incompatibleVersion }
+        lastVerifiedRelayHost = record.relayHost
     }
 
     func stopNearbyGuest() {

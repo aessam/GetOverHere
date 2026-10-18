@@ -8,14 +8,17 @@ nonisolated struct NearbyGuestRoute: Equatable, Sendable {
     let transport: SessionTransportRoute
     let roomID: UUID
     let routeID: UUID
+    /// Set when this room is an island hosted by a bridge (ADR-081): lanes authenticate to that bridge.
+    let relayHost: RelayHostAdvert?
 
-    init(adapterHost: String, transport: SessionTransportRoute, roomID: UUID, routeID: UUID) {
+    init(adapterHost: String, transport: SessionTransportRoute, roomID: UUID, routeID: UUID, relayHost: RelayHostAdvert? = nil) {
         precondition(adapterHost == "127.0.0.1")
         precondition(transport == .bluetooth || transport == .wifiAware || transport == .applePeer)
         self.adapterHost = adapterHost
         self.transport = transport
         self.roomID = roomID
         self.routeID = routeID
+        self.relayHost = relayHost
     }
 }
 

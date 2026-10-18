@@ -46,6 +46,8 @@ private final class LocalAuthenticatedSessionTransport {
     var helloCapabilities: UInt32 = 0
     /// Relay bridge tee of opened guide frames (ADR-081 P4); read at each guest start.
     var upstreamFrameTap: UpstreamFrameTap?
+    /// Far guest (ADR-081 P4): authenticate to this island bridge instead of the guide; read at each guest start.
+    var relayRoute: RelayRoute?
 
     init(port: UInt16, applicationLane: SessionLane, authentication: SessionGuideAuthentication) {
         self.port = port
@@ -257,6 +259,7 @@ private final class LocalAuthenticatedSessionTransport {
             return
         }
         let upstreamFrameTap = self.upstreamFrameTap
+        let relayRoute = self.relayRoute
         let authentication = self.authentication
         do { try authentication.requireGuest() }
         catch {
@@ -338,7 +341,8 @@ private final class LocalAuthenticatedSessionTransport {
                     requestedLane: expectedApplicationLane,
                     maximumFrameSize: maximumFrameSize,
                     authentication: authentication,
-                    capabilities: capabilities
+                    capabilities: capabilities,
+                    relayRoute: relayRoute
                 )
             } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 socket.close()
@@ -395,14 +399,20 @@ private final class LocalAuthenticatedSessionTransport {
             writerRegistration.wait()
             guard !socket.isCancelled else { return }
 
+            // A relayed asset lane also carries the bridge's own sealed chunks (W6): not guide-signed, accepted only as
+            // chunks, and the transfer service keeps its manifest-hash, length and SHA-256 checks.
+            let bridgeID = expectedApplicationLane == .asset ? relayRoute?.host.hostID : nil
             while let frame = Self.readFrame(fd: fd, maximumSize: maximumFrameSize) {
                 do {
-                    guard let envelope = try Self.openGuideFrame(frame, using: inboundOpener, authentication: authentication) else {
-                        continue
-                    }
-                    upstreamFrameTap?(frame)
-                    guard envelope.sessionID == configuration.sessionID,
-                          envelope.senderID == guideID,
+                    let fromBridge = bridgeID != nil && !RelayLaneClient.isGuideSigned(frame)
+                    let opened = fromBridge
+                        ? try Self.openBridgeFrame(frame, using: inboundOpener)
+                        : try Self.openGuideFrame(frame, using: inboundOpener, authentication: authentication)
+                    guard let envelope = opened else { continue }
+                    if !fromBridge { upstreamFrameTap?(frame) }
+                    guard !fromBridge || envelope.kind == .assetChunk,
+                          envelope.sessionID == configuration.sessionID,
+                          envelope.senderID == (fromBridge ? bridgeID : guideID),
                           envelope.lane == expectedApplicationLane,
                           envelope.kind != .hello,
                           envelope.kind != .authChallenge,
@@ -750,8 +760,17 @@ private final class LocalAuthenticatedSessionTransport {
         requestedLane: SessionLane,
         maximumFrameSize: Int,
         authentication: SessionGuideAuthentication,
-        capabilities: UInt32
+        capabilities: UInt32,
+        relayRoute: RelayRoute?
     ) throws -> UUID {
+        if let relayRoute {
+            guard case let .guest(verifier) = authentication else { throw ControlTransportError.invalidWelcome }
+            _ = try RelayLaneClient.handshake(fd: fd, route: relayRoute, lane: requestedLane, credential: configuration.credential,
+                sessionID: configuration.sessionID, participantID: configuration.participantID, platform: configuration.platform,
+                capabilities: capabilities, displayName: configuration.displayName, verifier: verifier,
+                maximumFrameSize: maximumFrameSize)
+            return relayRoute.guideID
+        }
         guard let challengeFrame = readFrame(fd: fd, maximumSize: maximumFrameSize) else {
             throw ControlTransportError.invalidWelcome
         }
@@ -862,6 +881,13 @@ private final class LocalAuthenticatedSessionTransport {
         }
     }
 
+    nonisolated private static func openBridgeFrame(_ frame: Data, using opener: SessionFrameOpener) throws -> SessionEnvelope? {
+        switch try opener.open(SealedSessionEnvelope.decode(frame)) {
+        case let .opened(envelope): return envelope
+        case .duplicate: return nil
+        }
+    }
+
     nonisolated private static func openGuideFrame(
         _ frame: Data,
         using opener: SessionFrameOpener,
@@ -968,6 +994,7 @@ final class LocalSessionControlTransport: SessionControlTransport {
         )
     }
 
+    func setRelayRoute(_ route: RelayRoute?) { transport.relayRoute = route }
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
 
     func setEventHandler(_ handler: (@Sendable (SessionControlEvent) -> Void)?) {
@@ -1017,6 +1044,7 @@ final class LocalSessionAssetTransport: SessionAssetTransport {
         )
     }
 
+    func setRelayRoute(_ route: RelayRoute?) { transport.relayRoute = route }
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
 
     func setEventHandler(_ handler: (@Sendable (SessionAssetEvent) -> Void)?) {

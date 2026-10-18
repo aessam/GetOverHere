@@ -249,7 +249,8 @@ final class ChannelService {
     private func startRelayIsland(channel: Channel, sessionID: UUID, credential: SessionCredential,
                                   authentication: SessionGuideAuthentication) {
         stopRelayIsland()
-        guard relayHostCapable, case let .guest(verifier) = authentication, let identity = guestGuidePin.identity,
+        guard relayHostCapable, guestRoute?.relayHost == nil, // a far guest never hosts (depth 2 maximum)
+              case let .guest(verifier) = authentication, let identity = guestGuidePin.identity,
               let roomID = UUID(uuidString: channel.id), let bridgeID = UUID(uuidString: coordinator.controlPlane.localPeer.id)
         else { return }
         // A bridge always serves the other platform's guide, so the island record names an Android guide.
@@ -1248,6 +1249,14 @@ final class ChannelService {
         tourControlService.configureGuideAuthentication(authentication)
         assetTransferService.configureGuideAuthentication(authentication)
         startRelayIsland(channel: channel, sessionID: sessionID, credential: credential, authentication: authentication)
+        // A far guest joined an island: every lane authenticates to the bridge and verifies guide frames as usual.
+        let relayRoute = guestRoute?.relayHost.flatMap { host in guestGuidePin.identity.map { RelayRoute(host: host, guideID: $0.guideID) } }
+        if let relayRoute {
+            Logger.transport.info("Joining through island bridge \(relayRoute.host.hostID) generation \(relayRoute.host.bridgeGeneration)")
+        }
+        tourControlService.setRelayRoute(relayRoute)
+        assetTransferService.setRelayRoute(relayRoute)
+        coordinator.selectAudioPlane().setRelayRoute(relayRoute)
         // ADR-078: slides share the Bluetooth link with live audio; pace them below the audio headroom.
         assetTransferService.setRequestRateLimit(guestRoute?.transport == .bluetooth ? Self.nearbyAssetBytesPerSecond : nil)
         tourControlService.startGuest(hostIP: hostIP)

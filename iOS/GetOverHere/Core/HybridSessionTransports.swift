@@ -44,6 +44,11 @@ final class HybridAudioPlane: AudioPlane {
         aware?.setUpstreamFrameTap(tap)
     }
 
+    func setRelayRoute(_ route: RelayRoute?) {
+        local.setRelayRoute(route)
+        aware?.setRelayRoute(route)
+    }
+
     var isActive: Bool {
         switch role {
         case .guide:
@@ -202,6 +207,11 @@ final class HybridSessionControlTransport: SessionControlTransport {
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {
         local.setUpstreamFrameTap(tap)
         aware?.setUpstreamFrameTap(tap)
+    }
+
+    func setRelayRoute(_ route: RelayRoute?) {
+        local.setRelayRoute(route)
+        aware?.setRelayRoute(route)
     }
 
     var isActive: Bool {
@@ -373,6 +383,11 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {
         local.setUpstreamFrameTap(tap)
         aware?.setUpstreamFrameTap(tap)
+    }
+
+    func setRelayRoute(_ route: RelayRoute?) {
+        local.setRelayRoute(route)
+        aware?.setRelayRoute(route)
     }
 
     var isActive: Bool {
