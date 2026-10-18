@@ -2284,3 +2284,9 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - T1–T8 (`CrossIslandDesign.md`): NOT RUN — needs the second iPhone and the Pixel 11. User decision: software is finished; the matrix runs when the hardware arrives.
 - Proven on the current two phones: both guides assign the other platform as bridge; both bridges publish their island (Pixel Aware publish ready; iPhone `_goh-peer._tcp` follows the tour lifecycle).
 - Proven in software only: far-guest handshake and lanes, bridge-served assets, W5 readiness, T5 refusal, failover without readmission. Final gate: "Tour session verification passed" (tag `p6-relay-t5`).
+
+### 2026-10-18 16:42 — Leftover relay P4 tour stopped
+- Found: Pixel 7 guide "PixelGuide" LIVE, "1 connected · 1 audio ready", `TourAudioForegroundService` createTime -3h31m; iPhone 13 Pro GetOverHere pid 900 still joined. Heap steady (~7.5 MB after GC).
+- Stopped: End Tour tapped through the Pixel accessibility tree (service count 0); `xcrun devicectl device process terminate --pid 900`; `dns-sd -B _goh-peer._tcp` shows no island.
+- Gate: `scripts/verify_tour_session.sh` → "Tour session verification passed".
+- Residue: Pixel list kept "Bridge-1228 · Connection needed" after refresh. Cause and fix in LessonsLearned (deferred discovery loss). Tests: Android `ChannelServiceLifecycleTest` 46/46 (new test fails without the fix: `reannounced=false expected:<false> but was:<true>`); iOS `ChannelServiceLifecycleTests` 43/43 including both arguments of the new test.

@@ -346,6 +346,21 @@ struct ChannelServiceLifecycleTests {
         #expect(h.controlPlane.nearbyStopCalls == stops)
     }
 
+    @Test("A room lost while joined leaves the list when the guest leaves, unless re-announced", arguments: [false, true])
+    @MainActor
+    func roomLostWhileJoinedLeavesTheList(reannounced: Bool) async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        let channel = try await discoverAndJoin(h)
+        try await connectGuest(h)
+        h.controlPlane.emit(.channelUnavailable(channelID: channel.id))
+        if reannounced { h.controlPlane.emit(.channelAnnounce(announce: announce(channel, audioHostIP: "10.0.0.1"))) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(h.service.channels.contains { $0.id == channel.id }, "an active room stays listed")
+        h.service.leaveChannel()
+        #expect(h.service.channels.contains { $0.id == channel.id } == reannounced)
+    }
+
     @Test("A far guest fails over to the next bridge without readmission (ADR-083)")
     @MainActor
     func farGuestFailsOverToTheNextBridgeWithoutReadmission() async throws {

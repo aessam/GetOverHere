@@ -669,3 +669,9 @@ noise, and add a test that exercises the new case through each classifier.
 - Root cause: the test owns process start, timing and rendering; it is not the product path.
 - Resolution: `scripts/verify_real_ui_pdf.sh` drives the Pixel through its accessibility tree and the iPhone through WDA, clears the guest asset cache (a warm SHA-256 cache made "ready" instant and hid the transfer), and pulls the guide's `lane-events.log` over USB. Two cold runs passed.
 - Decision: physical acceptance uses both real UIs only (user, 2026-10-17).
+
+## 2026-10-18 — Device-proof tour left running; a lost room stayed listed forever
+- What happened: after the relay P4 proof the Pixel 7 guide tour "PixelGuide" and its iPhone 13 Pro guest kept streaming for about 3.5 hours (foreground service `createTime=-3h31m`). After both ended, the Pixel still listed the earlier iPhone tour "Bridge-1228" as "Connection needed", through Refresh Nearby Tours.
+- Root cause (tour): no teardown step after the device run. Root cause (stale room): `handleDiscoveryUnavailable` ignores a loss for the active room (the data session stays authoritative), and a guest leave keeps the list entry. Bluetooth discovery reports a loss once (12 s expiry), so nothing ever removed it. Same code on iOS.
+- Resolution: both ChannelServices remember a loss deferred while active, cancel it on a re-announce, and apply it when the guest leaves. `roomLostWhileJoined…` tests on both platforms; the Android test fails without the fix.
+- Rule: every device run ends with End Tour on the guide and the guest app stopped, checked through the UI.

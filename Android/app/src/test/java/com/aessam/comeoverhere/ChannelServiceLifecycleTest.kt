@@ -281,6 +281,22 @@ class ChannelServiceLifecycleTest {
         } finally { h.close() }
     }
 
+    @Test fun roomLostWhileJoinedLeavesTheListWhenTheGuestLeaves() {
+        listOf(false, true).forEach { reannounced ->
+            val h = Harness()
+            try {
+                val room = h.discoverAndJoin()
+                h.connectGuest()
+                h.controlPlane.emit(BLECommand.ChannelUnavailable(room.id))
+                if (reannounced) h.controlPlane.emit(announce(room, "10.0.0.1"))
+                Thread.sleep(100)
+                assertTrue("an active room stays listed", h.service.channels.value.any { it.id == room.id })
+                h.service.leaveChannel()
+                assertEquals("reannounced=$reannounced", reannounced, h.service.channels.value.any { it.id == room.id })
+            } finally { h.close() }
+        }
+    }
+
     @Test fun farGuestFailsOverToTheNextBridgeWithoutReadmission() {
         val admission = RouteAdmission()
         val h = Harness(admissionOverride = admission)

@@ -200,6 +200,8 @@ final class ChannelService {
     private var listenTasks: [Task<Void, Never>] = []
     private var participantRegistry = ParticipantRegistry()
     private var guestCredential: SessionCredential?
+    /// A discovery loss deferred while the room was active; applied when the guest leaves unless re-announced.
+    private var discoveryLostWhileActive: String?
     private var guideSigner: GuideFrameSigner?
     private var guestGuidePin = SessionGuidePin()
     private var reconnectAttempt = 0
@@ -866,12 +868,14 @@ final class ChannelService {
             }
         } else {
             stopCurrentActivity()
+            if discoveryLostWhileActive == ch.id { channels.removeAll { $0.id == ch.id } }
             activeChannelID = nil
             listenState = .idle
             tourCode = nil
             connectionState = .idle
             guestCredential = nil
         }
+        discoveryLostWhileActive = nil
         Logger.channel.info("Left channel")
     }
 
@@ -1141,6 +1145,7 @@ final class ChannelService {
             for await (command, _) in self.coordinator.channelCommands {
                 switch command {
                 case .channelAnnounce(announce: let announce):
+                    if self.discoveryLostWhileActive == announce.channelID { self.discoveryLostWhileActive = nil }
                     let nearbyAvailable = UUID(uuidString: announce.channelID).map {
                         (self.coordinator.controlPlane as? any NearbyRouteControl)?.canConnectNearby(roomID: $0) == true
                     } ?? false
@@ -1550,6 +1555,7 @@ final class ChannelService {
     private func handleDiscoveryUnavailable(channelID: String) {
         guard activeChannelID != channelID else {
             Logger.channel.info("Active channel discovery became unavailable; data session remains authoritative")
+            discoveryLostWhileActive = channelID
             return
         }
         channels.removeAll { $0.id == channelID }

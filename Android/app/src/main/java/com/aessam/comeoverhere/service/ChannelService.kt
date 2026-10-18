@@ -324,6 +324,8 @@ class ChannelService(
     private var captureJob: Job? = null
     private var reconnectJob: Job? = null
     private var guestCredential: SessionCredential? = null
+    /** A discovery loss deferred while the room was active; applied when the guest leaves unless re-announced. */
+    private var discoveryLostWhileActive: String? = null
     private val guidePin = SessionGuidePin()
     private val mutableGuideKeyFingerprint = MutableStateFlow<String?>(null)
     override val guideKeyFingerprint = mutableGuideKeyFingerprint.asStateFlow()
@@ -919,12 +921,14 @@ class ChannelService(
             }
         } else {
             stopCurrentActivity()
+            if (discoveryLostWhileActive == ch.id) _channels.value = _channels.value.filter { it.id != ch.id }
             _activeChannelID.value = null
             _listenState.value = ListenState.IDLE
             _tourCode.value = null
             _connectionState.value = SessionConnectionState.IDLE
             guestCredential = null
         }
+        discoveryLostWhileActive = null
         Log.i(TAG, "Left channel")
     }
 
@@ -1207,6 +1211,7 @@ class ChannelService(
             coordinator.controlPlane.commands.collect { (command, _) ->
                 when (command) {
                     is BLECommand.ChannelAnnounce -> {
+                        if (discoveryLostWhileActive == command.channelID) discoveryLostWhileActive = null
                         val nearbyAvailable = try {
                             (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)
                                 ?.canConnectNearby(UUID.fromString(command.channelID)) == true
@@ -1598,6 +1603,7 @@ class ChannelService(
     private fun handleDiscoveryUnavailable(channelID: String) {
         if (_activeChannelID.value == channelID) {
             Log.i(TAG, "Active channel discovery became unavailable; data session remains authoritative")
+            discoveryLostWhileActive = channelID
             return
         }
         _channels.value = _channels.value.filter { it.id != channelID }
