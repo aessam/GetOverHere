@@ -2194,3 +2194,17 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
   t=80–150 s, slides arrived at 390–542 KB per 10 s and audio held 271–285 kB PCM per 10 s (86–89% of
   nominal). Audio returned to 320 kB once the slides finished (t=180 s). FND-P5-4: an unpaced slide
   transfer costs ~11–14% of audio frames on Bluetooth.
+- Paced run (ADR-078, `Pace-49730369`, stress-20b.pdf, programmatic guest, 260 s of windows): before the
+  import 100.0% PCM / 72.9 kB audio on air per 10 s; during the 20 transfer windows 95.7% PCM with
+  72.7 kB audio on air and 16.9 kB/s of slides (cap 20 kB/s). Audio bytes arrive intact; the remaining
+  ~4% is late frames. FND-P5-6: a 60 KiB chunk holds the link for about 1 s even at a low average rate.
+  Full gate with pacing → passed, iOS 213/0/4. Commit `ffbcc77`.
+- Harness note: in programmatic join mode the Pixel UI rendered only 2 frames (`gfxinfo`) and kept
+  showing the empty list while the session played; the screen is frozen by the test harness, not the app.
+  The next run joins through the real UI.
+
+### 2026-10-17 18:16 — Real-UI paced PDF run Ui-d88a98f1 (FND-8 re-diagnosis)
+- Guide: iPhone 13 Pro WorkTest001, real UI via WDA (`scripts/ios_drive.py create`, `import-pdf stress-20c` at ~t=60 s, 12 s). Guest: Pixel 7, `NearbyLiveSessionTest nearbyUI=true nearbyHoldSeconds=420`, Bluetooth, ADR-078 pacing 20,000 B/s.
+- Result: 420 s, stalledWindowsAt=[], totalPCMBytes=11,428,864 / 13,440,000 (85.0%); radio realtimeFromRadio=2,904,251, reliableFromRadio=5,119,667, reliableToRadio=14,592.
+- Windows (10 s, PCM of 320,000): t=30/60 100% (no assets); t=80–350 70–89% while assetDown 135–218 kB/10 s; t=360–420 100% once assetDown=0.
+- Finding: loss tracks the 280 s slide transfer, not the 12 s import. FND-8's main-thread-capture hypothesis is not supported; the leading explanation is radio contention expiring audio in the guide bridge (150 ms residence, FND-P5-6). Counters `droppedCaptureBuffers` and `bridgeDroppedAudioFrames` added to the iOS debug status (e6d0595) to separate the two.
