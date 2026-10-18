@@ -1,6 +1,10 @@
 package com.aessam.comeoverhere.ui
 
 import android.content.Intent
+import com.aessam.comeoverhere.core.BluetoothRoomDiscovery
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.Manifest
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -82,6 +86,31 @@ fun PreparedToursScreen(store: PreparedTourStore, channelService: ChannelService
         }
     }
 
+    // Going live needs the same gates as the create button: microphone, and Bluetooth so the guide advertises
+    // (ChannelService only advertises while Bluetooth discovery is enabled).
+    var pendingLive by remember { mutableStateOf<UUID?>(null) }
+    val livePermissions = remember {
+        (BluetoothRoomDiscovery.requiredPermissions().toList() + Manifest.permission.RECORD_AUDIO).distinct().toTypedArray()
+    }
+    fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    fun goLive(packID: UUID) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) {
+            errorMessage = "Microphone permission is needed to go live"
+            return
+        }
+        val bluetooth = BluetoothRoomDiscovery.requiredPermissions().all(::granted)
+        channelService.setBluetoothDiscoveryEnabled(bluetooth)
+        run {
+            channelService.createChannel(store.tour(packID).displayName, prepared = store.launch(packID))
+            if (!bluetooth) errorMessage = "Live without Bluetooth: nearby guests cannot discover this tour"
+            onBack()
+        }
+    }
+    val liveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        pendingLive?.let(::goLive)
+        pendingLive = null
+    }
+
     val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val packID = pdfTarget ?: return@rememberLauncherForActivityResult
         if (uri == null) return@rememberLauncherForActivityResult
@@ -133,10 +162,8 @@ fun PreparedToursScreen(store: PreparedTourStore, channelService: ChannelService
                             TextButton(onClick = { run { withContext(Dispatchers.IO) { store.remove(tour.packID) } } }) { Text("Delete") }
                             Spacer(Modifier.weight(1f))
                             Button(enabled = tour.assets.isNotEmpty() && activeChannelID == null, onClick = {
-                                run {
-                                    channelService.createChannel(tour.displayName, prepared = store.launch(tour.packID))
-                                    onBack()
-                                }
+                                if (livePermissions.all(::granted)) goLive(tour.packID)
+                                else { pendingLive = tour.packID; liveLauncher.launch(livePermissions) }
                             }) { Text("Go Live") }
                         }
                     }

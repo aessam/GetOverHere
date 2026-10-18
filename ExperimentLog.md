@@ -2241,3 +2241,10 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - iPhone `golive-tour` from the prepared tour; Pixel joined through the real UI (`android_ui_join.sh "Pack Demo"`): guide "1 ready" 2 s after join (cold transfer baseline 315/316 s), 1 connected · 1 audio ready, 0 asset failures, 0 reconnects. The Pixel decoded the Bluetooth record carrying the pack advert.
 - Bug found and fixed: opening a .gohtour from another app created a second MainActivity whose onStop turned discovery off (no scan after the import). MainActivity is now singleTask; the shared file arrives via onNewIntent, and discovery found the guide within 2 s after the import (one ActivityRecord).
 - Bug found and fixed (iOS Prepared Tours): dismissing the PDF picker cleared the target tour before the completion handler read it, so Add PDF silently did nothing; the target now lives in separate state and a missing target reports an error.
+
+### 2026-10-18 09:44–09:58 — Tour pack, Android guide → iPhone guest
+- Pixel 7 (build db5c53b + fixes): `scripts/android_prepare_tour.sh "Pixel Pack" stress-20c.pdf …` prepared 20 slides (version 2) through the real UI and exported 3,075,211 B (valid magic and trailer).
+- iPhone 13 Pro: pack copied into the app's Documents, opened from the Files app via WDA: "Tour ready: Pixel Pack (20 files)" after 6.6 s.
+- Bug: Go Live from the Android Tours screen skipped the nearby-permission step that enables Bluetooth discovery, so the guide never advertised (Android advertising last stopped 08:02; iPhone could not find the room in 90 s). Fixed: Go Live requests Bluetooth + microphone like the create button and enables Bluetooth discovery first. The iPhone then listed the room in 2 s.
+- Bug: iOS RoomDiscoveryIndex rebuilt each announce field by field and dropped tourPackID/tourPackVersion, so no badge. Fixed (test `keepsTourPackAdvert`).
+- Result: the iPhone room row read "Pixel Pack, Nearby connection available, Tour ready"; joined in 4.1 s; the Android guide showed "1 content ready" 3 s after join.

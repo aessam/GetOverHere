@@ -22,7 +22,8 @@ struct RoomDiscoveryIndex {
         let entry = BLECommand.ChannelAnnounce(channelID: key, channelName: value.channelName,
             createdBy: value.createdBy, audioQuality: value.audioQuality, wifiSSID: nil,
             audioHostIP: source == .lan ? value.audioHostIP : nil,
-            roomAdmissionVersion: value.roomAdmissionVersion, isRoomLocked: value.isRoomLocked)
+            roomAdmissionVersion: value.roomAdmissionVersion, isRoomLocked: value.isRoomLocked,
+            tourPackID: value.tourPackID, tourPackVersion: value.tourPackVersion)
         switch source {
         case .lan: lan[key] = (entry, peer)
         case .bluetooth: bluetooth[key] = (entry, peer)

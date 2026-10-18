@@ -5,6 +5,21 @@ import TourSessionCore
 
 @MainActor
 struct RoomDiscoveryIndexTests {
+    @Test("A Bluetooth room keeps its tour pack advert through the index (ADR-082)")
+    func keepsTourPackAdvert() throws {
+        var index = RoomDiscoveryIndex()
+        let peer = PeerInfo(displayName: "Guide")
+        let packID = UUID()
+        let value = BLECommand.ChannelAnnounce(channelID: UUID().uuidString, channelName: "Tour", createdBy: peer.id,
+            audioQuality: .standard, wifiSSID: nil, audioHostIP: nil, roomAdmissionVersion: 2, isRoomLocked: false,
+            tourPackID: packID.uuidString, tourPackVersion: 2)
+        let result = index.update(value, peer: peer, source: .bluetooth)
+        guard case let .channelAnnounce(selected) = try #require(result).0 else {
+            Issue.record("Expected a channel announce"); return
+        }
+        #expect(selected.tourPack == TourPackAdvert(packID: packID, manifestVersion: 2))
+    }
+
     @Test func threeSourcesFallBackWithoutInventingAnAddress() throws {
         var index = RoomDiscoveryIndex()
         let peer = PeerInfo(displayName: "Guide")
