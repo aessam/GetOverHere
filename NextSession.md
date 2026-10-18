@@ -8,7 +8,7 @@ live switches at ~32 kB/s). Remaining to accept Phase 5 (both stopped by the use
 1. `scripts/verify_locked_iphone_guest_ui.sh 600` (60 s smoke passed: pcmRatio 1.0 while locked, max gap 10 s).
 2. `PAGE_TURN_EVERY=60 scripts/verify_real_ui_pdf.sh stress-20c 30 400 1800`.
 Then rerun `scripts/verify_tour_session.sh` (iOS AudioEngine changed after the last gate) and tag `phase5-accepted`.
-Before device runs: `scripts/wda.sh start`, `adb shell svc power stayon usb`; restore with `svc power stayon false`.
+Before device runs: `scripts/wda.sh start`. The Pixel stays awake permanently (`svc power stayon true`, value 15, user choice 2026-10-18; it charges from the Mac as AC, so `usb` alone does not apply).
 
 ## October 17 (evening) — Phase 5 closed; Phase 6 next
 
@@ -42,7 +42,7 @@ Open:
 - DSCN-2 hotspot.
 - RSK-1 public review docs.
 
-Pixel `stay_on_while_plugged_in` was 0 before the runs; restore with `adb shell svc power stayon false`.
+Pixel `stay_on_while_plugged_in` is kept at 15 permanently (user choice 2026-10-18); do not restore it.
 
 ## October 4 — current plan: `WirelessMegaphonePlan.md`
 
