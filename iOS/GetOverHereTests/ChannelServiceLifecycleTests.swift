@@ -1,3 +1,4 @@
+import UIKit
 import CryptoKit
 import Foundation
 import Testing
@@ -451,6 +452,20 @@ struct ChannelServiceLifecycleTests {
         #expect(h.controlPlane.bluetoothMode == .advertising)
         h.service.discoveryForeground = true
         #expect(h.controlPlane.bluetoothMode == .advertising)
+    }
+
+    @Test("A live guide keeps the screen awake and restores the idle timer when the tour ends")
+    @MainActor
+    func liveGuideKeepsScreenAwake() async throws {
+        let h = try Harness()
+        defer { h.service.terminate(); h.close() }
+        let before = UIApplication.shared.isIdleTimerDisabled
+        h.service.createChannel(name: "Awake")
+        try await waitUntil("guide startup") { h.service.connectionState == .connected }
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        h.service.leaveChannel()
+        try await waitUntil("guide ended") { h.service.listenState == .idle }
+        #expect(UIApplication.shared.isIdleTimerDisabled == before)
     }
 
     @Test("room settings never reconfigure existing media lanes")

@@ -129,6 +129,13 @@ struct ChannelDetailView: View {
             .scrollDismissesKeyboard(.interactively)
             .accessibilityIdentifier("guideTourControls")
             Divider()
+            Text("New guests can join while this screen is on. Connected guests keep listening if you lock it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.top, 6)
+                .accessibilityIdentifier("guideScreenOnHint")
             HStack {
                 Label("\(service.connectedGuestCount) connected · \(service.tourControlService.audioReadyGuestCount) audio ready", systemImage: "person.2.fill")
                     .foregroundStyle(.secondary)

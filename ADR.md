@@ -862,3 +862,43 @@ target). A capture discontinuity drops at most one partial batch (< 60 ms).
 - A minor-version bump: rewrites every sealed fixture for no compatibility gain over a capability bit.
 - A per-destination batched/unbatched split: two plaintexts per `(stream, sequence)` identity is fatal.
 **Not established:** On-air kbps over real Bluetooth, perceived delay, and relay behaviour (Phase 5).
+
+## ADR-076 — Keep a live iPhone guide's screen awake (FND-P5-1)
+
+**Date:** 2026-10-17. **Evidence:** ExperimentLog 2026-10-17 evening.
+**Context:** On the iPhone 13 Pro + Pixel 7 pair:
+- A guide locked by WDA kept serving an already connected Pixel guest at full rate (t=150–300 s, 2.2 MB
+  over Bluetooth, 0 stalls).
+- With the guide still locked, a new Pixel join saw 0 room advertisements in 90 s.
+- Unlocked, the same join passed in under 45 s.
+- iOS documents that a backgrounded app's Bluetooth advertisement drops its local name and moves service
+  UUIDs to an Apple-only overflow area that Android scanners cannot read.
+- The default 30 s Auto-Lock therefore made a guide undiscoverable to late Android guests within 30 s.
+**Decision:** While `listenState == .broadcasting`, `ChannelService` holds an `IdleTimerOwnership`
+owner, so the guide does not auto-lock, and releases it on every exit. The guide screen states:
+"New guests can join while this screen is on. Connected guests keep listening if you lock it."
+**Alternatives rejected:**
+- Decoding iOS's background overflow advertisement on Android: undocumented private format, and the
+  user's rules forbid reverse-engineering internal APIs.
+- Documenting only: late joiners would fail silently after 30 s.
+**Consequences:** More guide battery use while broadcasting. A manual lock still blocks new Android joins
+(stated in the UI). An Android guide's locked behaviour is untested.
+
+## ADR-077 — WebDriverAgent as the iPhone automation server
+
+**Date:** 2026-10-17. **Context:**
+- XCUITest pays 30–60 s of startup per run.
+- ReCont (BLE HID + USB capture) was rejected: inaccurate pointer, stalled capture, and a Bluetooth link
+  on the phone under test.
+**Decision:** Use WebDriverAgent (appium-ios monorepo, BSD) standalone, launched by `scripts/wda.sh` over
+the CoreDevice USB tunnel. Drive it with `scripts/ios_drive.py` through facebook-wda in `tools/.venv`.
+Both live in git-ignored `tools/`.
+**Measured:** Per-step times on this pair:
+- create tour 2.4–12 s; pointer 2.6–6 s; lock/unlock 3 s.
+- Lock state is readable (`locked()`), which XCUITest cannot do.
+**Trade-offs:**
+- WDA uses some private XCTest APIs and may break on new Xcode versions; we consume it, we do not reverse-engineer it.
+- It needs a signing team.
+**Rejected:**
+- A custom XCUITest command server: about half a day to reproduce a subset of WDA.
+- ReCont.

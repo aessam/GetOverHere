@@ -85,7 +85,16 @@ final class ChannelService {
         tourFeatureError = nil
     }
 
-    private(set) var listenState: ListenState = .idle { didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery() } }
+    private(set) var listenState: ListenState = .idle {
+        didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery(); updateGuideKeepAwake() }
+    }
+    private let guideIdleTimerOwner = UUID()
+    /// FND-P5-1: a locked iPhone keeps serving connected guests, but iOS hides a background app's Bluetooth
+    /// advertisement from Android scanners, so new guests cannot find the room. Keep a live guide awake.
+    private func updateGuideKeepAwake() {
+        if listenState == .broadcasting { IdleTimerOwnership.acquire(guideIdleTimerOwner) }
+        else { IdleTimerOwnership.release(guideIdleTimerOwner) }
+    }
     var applePeerDiscoveryEnabled = false { didSet { updateApplePeerDiscovery() } }
     /// Guest route restriction (WirelessMegaphonePlan Phase 2). Restricted policies never use LAN.
     var routePolicy: AllowedTransportPolicy = .standard {

@@ -13,6 +13,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_goh-hub._tcp</string>
@@ -25,6 +27,8 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>WiFiAwareServices</key>
 	<dict>
 		<key>_goh-probe._udp</key>

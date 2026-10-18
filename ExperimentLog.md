@@ -2172,3 +2172,14 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
   totalPCMBytes=57626880 stalledWindowsAt=[]`, 180/180 windows at 316–320 kB per 10 s, route BLUETOOTH
   throughout, including the confirmed lock 17:15:32–17:25:33. iPhone guide held foreground (Auto-Lock Never).
   Bridge byte counters were not in this build; the next run measures radio bytes.
+- Byte-counted run (WDA guide `Wda-35ac2ffb`, Pixel guest 300 s, guide locked via WDA at t=150 s,
+  `locked()==True`): PASS, 9,604,480 PCM B, 0 stalls. Radio bytes: realtime guide→guest 2,217,699 B
+  (59.1 kbps); guest→guide 0 B; control/asset lanes 0 B after join (no presentation changes).
+  A connected guest is unaffected by the guide locking.
+- FND-P5-1 reproduced: guide still locked (`locked()==True`), new Pixel join → 0 "room metadata
+  received" in 90 s, FAIL. Control: `unlock` via WDA, same join → OK (1 test) in 44 s.
+  Root cause: iOS background advertising is invisible to Android scanners (ADR-076).
+- Fix (ADR-076) verified on device: build with guide keep-awake; Auto-Lock set to 30 seconds via WDA;
+  tour `Awake-52f3bdb4` left idle 65 s → `locked()==False`; a new Pixel join → OK, 960,000 PCM B in 30 s,
+  0 stalls, 218,717 radio B. Auto-Lock restored to Never (`ios_drive.py autolock Never`).
+  iOS ChannelServiceLifecycleTests 41/41 including `liveGuideKeepsScreenAwake`.
