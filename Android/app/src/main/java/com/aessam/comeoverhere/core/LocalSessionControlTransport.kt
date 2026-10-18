@@ -236,6 +236,12 @@ private class LocalAuthenticatedSessionTransport(
                 if (isRunActive(epoch)) {
                     emit(SessionControlEvent.CredentialRejected("Session: the tour code was rejected by the guide"))
                 }
+            } catch (error: java.io.EOFException) {
+                // FND-P5-5: once authenticated, the guide closing the lane is a disconnect (emitted in
+                // finally), not a failure, matching the iOS guest. Before authentication it still fails.
+                if (isRunActive(epoch) && !authenticated) {
+                    emit(SessionControlEvent.Failed("Session: guide connection failed: ${error.message}"))
+                }
             } catch (error: Exception) {
                 if (isRunActive(epoch)) {
                     emit(SessionControlEvent.Failed("Session: guide connection failed: ${error.message}"))

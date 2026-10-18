@@ -893,17 +893,10 @@ class LocalSessionTransportTest {
                 guide.stop()
                 guide.startGuide()
                 assertTrue("cycle $cycle: guest did not observe the guide restart", guestDisconnected.get().await(3, TimeUnit.SECONDS))
-                // The Kotlin guest reports the guide's close as a connection failure from its reader
-                // thread (EOFException) before the Disconnected: exactly one, always before.
+                // FND-P5-5: the guide's clean close of an authenticated lane is exactly one Disconnected,
+                // never a Failed (which surfaced as "Tour asset transfer failed" on a normal end).
                 val lossEvents = guestEvents.subList(restartIndex, guestEvents.size).toList()
-                assertEquals("cycle $cycle: $lossEvents", 2, lossEvents.size)
-                val loss = lossEvents[0]
-                assertTrue("cycle $cycle: $loss", loss is SessionControlEvent.Failed)
-                assertTrue(
-                    "cycle $cycle: $loss",
-                    (loss as SessionControlEvent.Failed).message.startsWith("Session: guide connection failed:"),
-                )
-                assertEquals("cycle $cycle", SessionControlEvent.Disconnected, lossEvents[1])
+                assertEquals("cycle $cycle: $lossEvents", listOf(SessionControlEvent.Disconnected), lossEvents)
 
                 val stopIndex = guestEvents.size
                 guestDisconnected.set(CountDownLatch(1))
