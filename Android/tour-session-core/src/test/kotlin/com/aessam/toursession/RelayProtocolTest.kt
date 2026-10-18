@@ -125,4 +125,7 @@ class RelayProtocolTest {
         val relay = RelayLaneAuthenticator.guestProof(credential, context, challenge, client, SessionRole.GUEST, ParticipantPlatform.IOS, 0, "G")
         assertTrue("relay proofs use their own domain", !direct.contentEquals(relay))
     }
+
+    /** Mirrors RelayProtocolTests.bridgeAuthority (P2). */
+    @Test fun bridgeAuthority() = assertEquals("iosOnly=none|androidNoRelay=none|firstBridge=g1:03:63000:|noChange=none|standbyJoins=g2:03:65000:04|renew=g2:03:100000:04|bridgeLeft=g3:04:101000:|nobody=none", TourSessionFixtures.bridgeAuthorityFixture())
 }

@@ -6,19 +6,23 @@ public struct ParticipantSession: Equatable, Sendable {
     public let displayName: String
     public let role: SessionRole
     public let platform: ParticipantPlatform
+    /// `SessionCapabilities` from the guest's control-lane hello (e.g. `relayHost`, ADR-081).
+    public let capabilities: UInt32
 
     public init(
         participantID: UUID,
         connectionID: String,
         displayName: String,
         role: SessionRole,
-        platform: ParticipantPlatform
+        platform: ParticipantPlatform,
+        capabilities: UInt32 = 0
     ) {
         self.participantID = participantID
         self.connectionID = connectionID
         self.displayName = displayName
         self.role = role
         self.platform = platform
+        self.capabilities = capabilities
     }
 }
 

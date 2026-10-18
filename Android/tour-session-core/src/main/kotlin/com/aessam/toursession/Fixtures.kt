@@ -207,6 +207,31 @@ object TourSessionFixtures {
     }
 
     /** Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity. */
+    /** Bridge authority fixture (ADR-081 P2): a scripted join/leave/renew sequence and the assignments it sends. */
+    fun bridgeAuthorityFixture(): String {
+        fun id(n: Int) = UUID.fromString("00000000-0000-4000-8000-%012d".format(n))
+        val relay = SessionCapability.RELAY_HOST.bit
+        val authority = BridgeAuthority(ParticipantPlatform.IOS)
+        val members = mutableListOf<BridgeCandidate>()
+        val log = mutableListOf<String>()
+        fun step(label: String, now: Long) {
+            val sent = authority.plan(members, now)
+            log += label + "=" + (sent?.let { a ->
+                "g${a.generation}:${a.bridgeID.toString().takeLast(2)}:${a.leaseExpiresAtMilliseconds}:" +
+                    a.standbyIDs.joinToString(",") { it.toString().takeLast(2) }
+            } ?: "none")
+        }
+        members += BridgeCandidate(id(1), ParticipantPlatform.IOS, relay, 1); step("iosOnly", 1_000)
+        members += BridgeCandidate(id(2), ParticipantPlatform.ANDROID, 0, 2); step("androidNoRelay", 2_000)
+        members += BridgeCandidate(id(3), ParticipantPlatform.ANDROID, relay, 3); step("firstBridge", 3_000)
+        step("noChange", 4_000)
+        members += BridgeCandidate(id(4), ParticipantPlatform.ANDROID, relay, 4); step("standbyJoins", 5_000)
+        step("renew", 40_000)
+        members.removeAll { it.participantID == id(3) }; step("bridgeLeft", 41_000)
+        members.removeAll { it.participantID == id(4) }; step("nobody", 42_000)
+        return log.joinToString("|")
+    }
+
     /** Relay core fixture (ADR-081): W1 and W5 bytes plus a scripted forwarder decision trace. */
     fun relayFixture(): String {
         val session = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff")

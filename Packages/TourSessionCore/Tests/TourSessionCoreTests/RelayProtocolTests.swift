@@ -147,4 +147,9 @@ struct RelayProtocolTests {
             clientNonce: client, role: .guest, platform: .iOS, capabilities: 0, displayName: "G")
         #expect(direct != relay, "relay proofs use their own domain and are never valid on a direct lane")
     }
+
+    @Test("The guide's bridge choice: eligibility, standbys, generation bumps and lease renewal (P2)")
+    func bridgeAuthority() throws {
+        #expect(try TourSessionFixtures.bridgeAuthorityFixture() == "iosOnly=none|androidNoRelay=none|firstBridge=g1:03:63000:|noChange=none|standbyJoins=g2:03:65000:04|renew=g2:03:100000:04|bridgeLeft=g3:04:101000:|nobody=none")
+    }
 }

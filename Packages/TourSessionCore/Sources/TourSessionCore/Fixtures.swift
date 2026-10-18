@@ -199,6 +199,37 @@ public enum TourSessionFixtures {
     }
 
     /// Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity.
+    /// Bridge authority fixture (ADR-081 P2): a scripted join/leave/renew sequence and the assignments it sends.
+    public static func bridgeAuthorityFixture() throws -> String {
+        func id(_ n: Int) -> UUID { UUID(uuidString: String(format: "00000000-0000-4000-8000-%012d", n))! }
+        let relay = SessionCapabilities.relayHost.rawValue
+        var authority = BridgeAuthority(guidePlatform: .iOS)
+        var members: [BridgeCandidate] = []
+        var log: [String] = []
+        func step(_ label: String, _ now: UInt64) throws {
+            let sent = try authority.plan(candidates: members, nowMilliseconds: now)
+            log.append(label + "=" + (sent.map { a in
+                "g\(a.generation):\(a.bridgeID.uuidString.suffix(2)):\(a.leaseExpiresAtMilliseconds):"
+                    + a.standbyIDs.map { String($0.uuidString.suffix(2)) }.joined(separator: ",")
+            } ?? "none"))
+        }
+        members.append(BridgeCandidate(participantID: id(1), platform: .iOS, capabilities: relay, joinOrder: 1))
+        try step("iosOnly", 1_000)
+        members.append(BridgeCandidate(participantID: id(2), platform: .android, capabilities: 0, joinOrder: 2))
+        try step("androidNoRelay", 2_000)
+        members.append(BridgeCandidate(participantID: id(3), platform: .android, capabilities: relay, joinOrder: 3))
+        try step("firstBridge", 3_000)
+        try step("noChange", 4_000)
+        members.append(BridgeCandidate(participantID: id(4), platform: .android, capabilities: relay, joinOrder: 4))
+        try step("standbyJoins", 5_000)
+        try step("renew", 40_000)
+        members.removeAll { $0.participantID == id(3) }
+        try step("bridgeLeft", 41_000)
+        members.removeAll { $0.participantID == id(4) }
+        try step("nobody", 42_000)
+        return log.joined(separator: "|")
+    }
+
     /// Relay core fixture (ADR-081): W1 and W5 bytes plus a scripted forwarder decision trace.
     public static func relayFixture() throws -> String {
         let session = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")!

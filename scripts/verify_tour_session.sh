@@ -117,6 +117,13 @@ KOTLIN_RELAY_RECORD="$(run_kotlin bluetooth-relay-fixture)"
     exit 1
 }
 
+# Bridge authority (ADR-081 P2): the guide's bridge choice is identical on both platforms.
+SWIFT_BRIDGE_AUTHORITY="$($SWIFT_BIN bridge-authority-fixture)"
+[[ "$SWIFT_BRIDGE_AUTHORITY" == 'iosOnly=none|androidNoRelay=none|firstBridge=g1:03:63000:|noChange=none|standbyJoins=g2:03:65000:04|renew=g2:03:100000:04|bridgeLeft=g3:04:101000:|nobody=none' && "$SWIFT_BRIDGE_AUTHORITY" == "$(run_kotlin bridge-authority-fixture)" ]] || {
+    echo "error: bridge authority differs or changed: $SWIFT_BRIDGE_AUTHORITY" >&2
+    exit 1
+}
+
 # Cross-island relay core (ADR-081): bridgeAssignment + upstream record bytes and forwarder decisions.
 SWIFT_RELAY="$($SWIFT_BIN relay-fixture)"
 KOTLIN_RELAY="$(run_kotlin relay-fixture)"

@@ -114,6 +114,8 @@ enum TourSessionCLI {
             print(try TourSessionFixtures.describeAudioFrame(Data(hex: arguments[1])))
         case "audio-fixture":
             print(try TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex)
+        case "bridge-authority-fixture":
+            print(try TourSessionFixtures.bridgeAuthorityFixture())
         case "relay-fixture":
             print(try TourSessionFixtures.relayFixture())
         case "pack-fixture":

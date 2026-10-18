@@ -8,6 +8,8 @@ data class ParticipantSession(
     val displayName: String,
     val role: SessionRole,
     val platform: ParticipantPlatform,
+    /** `SessionCapability` bits from the guest's control-lane hello (e.g. RELAY_HOST, ADR-081). */
+    val capabilities: Long = 0,
 )
 
 class ParticipantRegistry {

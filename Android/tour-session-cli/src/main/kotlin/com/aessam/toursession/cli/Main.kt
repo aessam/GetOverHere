@@ -160,6 +160,7 @@ fun main(arguments: Array<String>) {
                 println(TourSessionFixtures.describeAudioFrame(arguments[1].hexToByteArray()))
             }
             "audio-fixture" -> println(TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex())
+            "bridge-authority-fixture" -> println(TourSessionFixtures.bridgeAuthorityFixture())
             "relay-fixture" -> println(TourSessionFixtures.relayFixture())
             "pack-fixture" -> println(TourSessionFixtures.tourPackFixture().lowercaseHex())
             "inspect-pack" -> {
