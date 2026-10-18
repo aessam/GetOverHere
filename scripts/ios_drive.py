@@ -2,7 +2,7 @@
 """Drive GetOverHere on a physical iPhone through WebDriverAgent (scripts/wda.sh start first).
 
 Run with tools/.venv/bin/python. Visible text is matched by `label`; accessibility identifiers by `name`. Every miss fails loudly.
-Commands: create NAME | end | join NAME | leave | pointer | autolock VALUE | lock | unlock | home | shot PATH | source
+Commands: create NAME | end | join NAME | leave | pointer | import-pdf NAME | autolock VALUE | lock | unlock | home | shot PATH | source
 """
 import argparse
 import subprocess
@@ -29,13 +29,17 @@ def need(element, description, timeout=20.0):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "autolock", "lock", "unlock", "home", "shot", "source"])
+    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "import-pdf", "autolock", "lock", "unlock", "home", "shot", "source"])
     parser.add_argument("argument", nargs="?")
     args = parser.parse_args()
     c = client()
     started = time.monotonic()
-    if args.command in ("create", "join", "end", "leave", "pointer"):
-        session = c.session(BUNDLE) if args.command in ("create", "join") else c.session()
+    if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf"):
+        if args.command in ("create", "join"):
+            session = c.session(BUNDLE)
+        else:
+            c.app_activate(BUNDLE)  # never relaunch: that would end a live tour
+            session = c.session()
     if args.command == "create":
         field = session(className="XCUIElementTypeTextField")
         if not field.exists:
@@ -55,6 +59,20 @@ def main():
         need(session(label="LISTENING"), "LISTENING status", timeout=45)
     elif args.command == "pointer":
         need(session(label="Pointer", className="XCUIElementTypeButton"), "Pointer segment").tap()
+    elif args.command == "import-pdf":
+        # Guide only. The PDF must be in the app's Documents (Debug builds share it with Files).
+        need(session(label="Slides", className="XCUIElementTypeButton"), "Slides segment").tap()
+        if not session(label="Browse").exists:  # the picker may already be open from an earlier attempt
+            need(session(label="Import PDF"), "Import PDF").tap()
+        need(session(label="Browse"), "Files Browse tab").tap()
+        target = session(labelContains=f"{args.argument}, pdf")  # the file cell, not its title text
+        if not target.wait(timeout=3, raise_error=False):  # Browse resets to the Locations root
+            need(session(label="On My iPhone"), "On My iPhone").tap()
+            need(session(labelContains="GetOverHere,"), "GetOverHere folder").tap()
+        need(target, f"file {args.argument}").tap()
+        # "End Tour" stays visible behind the sheet; success is the picker closing.
+        if not session(label="Browse").wait_gone(timeout=30):
+            raise SystemExit("error: the document picker did not close after choosing the file")
     elif args.command == "end":
         need(session(label="End Tour"), "End Tour").tap()
     elif args.command == "leave":

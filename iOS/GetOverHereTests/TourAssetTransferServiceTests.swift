@@ -129,6 +129,30 @@ struct TourAssetTransferServiceTests {
         try await waitUntil("replacement ready report") { f.service.readyParticipantIDs.contains(member) }
     }
 
+    @Test("A Bluetooth rate limit spaces chunk requests; no limit does not delay them (ADR-078)")
+    @MainActor
+    func bluetoothRateLimitSpacesRequests() async throws {
+        let paced = try GuestFixture(sizes: ["a": 1_000, "b": 1_000])
+        defer { paced.close() }
+        paced.service.setRequestRateLimit(UInt64(TourAssetTransferService.chunkSize)) // one chunk per second
+        let clock = ContinuousClock()
+        let start = clock.now
+        try paced.deliverManifest()
+        try await paced.waitForRequestCount(1)
+        let first = start.duration(to: clock.now)
+        try await paced.waitForRequestCount(2)
+        let second = start.duration(to: clock.now)
+        #expect(first < .milliseconds(500), "first request is immediate: \(first)")
+        #expect(second - first >= .milliseconds(900), "second request waits for the rate: \(second - first)")
+
+        let unpaced = try GuestFixture(sizes: ["a": 1_000, "b": 1_000])
+        defer { unpaced.close() }
+        let unpacedStart = clock.now
+        try unpaced.deliverManifest()
+        try await unpaced.waitForRequestCount(2)
+        #expect(unpacedStart.duration(to: clock.now) < .milliseconds(500))
+    }
+
     @Test("Current and next slide take the first two slots even when snapshot precedes manifest")
     @MainActor
     func currentSlidePriorityPrecedesManifest() async throws {

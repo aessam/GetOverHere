@@ -302,6 +302,8 @@ class ChannelService(
         get() = activeChannel?.createdBy == coordinator.controlPlane.localPeer.id
 
     companion object {
+        /** About 160 kbps: leaves headroom for ~60 kbps batched audio on the slowest measured link (250 kbps). */
+        const val NEARBY_ASSET_BYTES_PER_SECOND = 20_000L
         private const val TAG = "ChannelService"
         const val SPEAKER_FEEDBACK_WARNING =
             "Speaker output can feed back into the guide's microphone. Use the earpiece or headphones near the guide."
@@ -1276,6 +1278,10 @@ class ChannelService(
         )
         tourControlService.setGuestSocketFactory(null)
         assetTransferService.setGuestSocketFactory(null)
+        // ADR-078: slides share the Bluetooth link with live audio; pace them below the audio headroom.
+        assetTransferService.setRequestRateLimit(
+            if (activeGuestRoute == SessionTransportRoute.BLUETOOTH) NEARBY_ASSET_BYTES_PER_SECOND else null,
+        )
         tourControlService.startGuest(hostIP)
         assetTransferService.joinTour(hostIP)
 

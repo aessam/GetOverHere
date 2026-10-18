@@ -89,6 +89,8 @@ final class ChannelService {
         didSet { updateBluetoothDiscovery(); updateAwareDiscovery(); updateApplePeerDiscovery(); updateGuideKeepAwake() }
     }
     private let guideIdleTimerOwner = UUID()
+    /// About 160 kbps: leaves headroom for ~60 kbps batched audio on the slowest measured link (250 kbps).
+    static let nearbyAssetBytesPerSecond: UInt64 = 20_000
     /// FND-P5-1: a locked iPhone keeps serving connected guests, but iOS hides a background app's Bluetooth
     /// advertisement from Android scanners, so new guests cannot find the room. Keep a live guide awake.
     private func updateGuideKeepAwake() {
@@ -1164,6 +1166,8 @@ final class ChannelService {
         )
         tourControlService.configureGuideAuthentication(authentication)
         assetTransferService.configureGuideAuthentication(authentication)
+        // ADR-078: slides share the Bluetooth link with live audio; pace them below the audio headroom.
+        assetTransferService.setRequestRateLimit(guestRoute?.transport == .bluetooth ? Self.nearbyAssetBytesPerSecond : nil)
         tourControlService.startGuest(hostIP: hostIP)
         assetTransferService.joinTour(hostIP: hostIP)
 

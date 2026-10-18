@@ -902,3 +902,25 @@ Both live in git-ignored `tools/`.
 **Rejected:**
 - A custom XCUITest command server: about half a day to reproduce a subset of WDA.
 - ReCont.
+
+## ADR-078 — Pace slide requests on Bluetooth routes
+
+**Date:** 2026-10-17. **Evidence:** ExperimentLog 2026-10-17 (PDF runs).
+**Context:** After FND-P5-2 was fixed, a 20-page stress PDF (about 5.1 MB of slides) still took 86–89% of
+the Bluetooth link from live audio while it transferred. The guest received 390–542 KB of slides per
+10 s; audio delivered 271–285 kB PCM per 10 s against 320 kB nominal. The guest drives the asset lane:
+each request returns one 60 KiB chunk, with at most 2 in flight.
+**Decision:**
+- A guest on a Bluetooth route spaces its chunk requests so slides average at most 20,000 B/s
+  (about 160 kbps). Implemented as `setRequestRateLimit` on both platforms; `ChannelService` sets it
+  from the active guest route.
+- Current-slide priority is unchanged.
+- Other routes (LAN, Wi-Fi Aware) are unlimited.
+**Alternatives rejected:**
+- Guide-side token buckets: the guide would need per-guest route state that the guest already has.
+- Transport-level priority: separate L2CAP channels are scheduled by the OS.
+- No pacing: speech gaps for minutes on every deck import.
+**Consequences:**
+- A 5 MB deck takes about 4–5 minutes to fully reach a Bluetooth guest, versus about 1.5 minutes unpaced.
+- The current slide still arrives first, within a few seconds.
+- The rate is a constant from the measured links (0.25–0.53 Mbps); adaptive pacing is not implemented.

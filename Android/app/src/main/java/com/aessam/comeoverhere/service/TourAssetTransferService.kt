@@ -573,8 +573,29 @@ class TourAssetTransferService(
         return true
     }
 
-    private fun sendRequest(hash: String, offset: Long, generation: Long) = synchronized(lifecycleLock) {
+    /**
+     * FND-P5-4: on a shared Bluetooth link an unpaced slide burst starved live audio (86% of nominal).
+     * When set, chunk requests are spaced so slides average at most this many bytes per second.
+     */
+    @Volatile private var requestBytesPerSecond: Long? = null
+    private var nextRequestAtMillis = 0L
+
+    fun setRequestRateLimit(bytesPerSecond: Long?) {
+        require(bytesPerSecond == null || bytesPerSecond > 0) { "Asset request rate must be positive" }
+        synchronized(lifecycleLock) { requestBytesPerSecond = bytesPerSecond; nextRequestAtMillis = 0L }
+    }
+
+    private fun sendRequest(hash: String, offset: Long, generation: Long): Unit = synchronized(lifecycleLock) {
         if (generation != transferGeneration || role != Role.GUEST) return@synchronized
+        requestBytesPerSecond?.let { rate ->
+            val now = System.nanoTime() / 1_000_000
+            val wait = nextRequestAtMillis - now
+            if (wait > 0) {
+                worker.schedule({ sendRequest(hash, offset, generation) }, wait, TimeUnit.MILLISECONDS)
+                return@synchronized
+            }
+            nextRequestAtMillis = now + CHUNK_SIZE * 1_000L / rate
+        }
         transport.send(
             SessionMessageKind.ASSET_REQUEST,
             AssetRequestPayload(hash, offset).encode(),

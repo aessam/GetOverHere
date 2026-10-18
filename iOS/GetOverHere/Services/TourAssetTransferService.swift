@@ -680,8 +680,32 @@ final class TourAssetTransferService {
         }
     }
 
+    /// FND-P5-4: on a shared Bluetooth link an unpaced slide burst starved live audio (86% of nominal).
+    /// When set, chunk requests are spaced so slides average at most this many bytes per second.
+    private var requestBytesPerSecond: UInt64?
+    private var nextRequestAt: ContinuousClock.Instant?
+
+    func setRequestRateLimit(_ bytesPerSecond: UInt64?) {
+        precondition(bytesPerSecond != 0, "Asset request rate must be positive")
+        requestBytesPerSecond = bytesPerSecond
+        nextRequestAt = nil
+    }
+
     private func sendRequest(hash: String, offset: UInt64) throws {
         guard role == .guest, inFlightHashes.contains(hash), transferTokens[hash] != nil else { return }
+        if let rate = requestBytesPerSecond {
+            let now = ContinuousClock.now
+            if let next = nextRequestAt, next > now {
+                let token = transferTokens[hash]
+                Task { [weak self] in
+                    do { try await Task.sleep(until: next) } catch { return } // cancelled with the service
+                    guard let self, self.role == .guest, self.transferTokens[hash] == token else { return }
+                    do { try self.sendRequest(hash: hash, offset: offset) } catch { self.report(error) }
+                }
+                return
+            }
+            nextRequestAt = now + .milliseconds(Int(UInt64(Self.chunkSize) * 1_000 / rate))
+        }
         let request = try AssetRequestPayload(sha256: hash, offset: offset)
         transport.send(kind: .assetRequest, payload: try request.encode(), to: nil)
         armInFlightDeadline(hash: hash)
