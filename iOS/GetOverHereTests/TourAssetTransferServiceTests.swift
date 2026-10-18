@@ -129,7 +129,7 @@ struct TourAssetTransferServiceTests {
         try await waitUntil("replacement ready report") { f.service.readyParticipantIDs.contains(member) }
     }
 
-    @Test("A Bluetooth rate limit spaces chunk requests; no limit does not delay them (ADR-078)")
+    @Test("A Bluetooth rate limit keeps one chunk in flight and spaces requests; no limit does not delay them (ADR-078)")
     @MainActor
     func bluetoothRateLimitSpacesRequests() async throws {
         let paced = try GuestFixture(sizes: ["a": 1_000, "b": 1_000])
@@ -140,6 +140,9 @@ struct TourAssetTransferServiceTests {
         try paced.deliverManifest()
         try await paced.waitForRequestCount(1)
         let first = start.duration(to: clock.now)
+        try await Task.sleep(for: .milliseconds(1_500))
+        #expect(paced.requests.count == 1, "one chunk in flight on Bluetooth")
+        try paced.deliverChunk(for: "a", offset: 0)
         try await paced.waitForRequestCount(2)
         let second = start.duration(to: clock.now)
         #expect(first < .milliseconds(500), "first request is immediate: \(first)")

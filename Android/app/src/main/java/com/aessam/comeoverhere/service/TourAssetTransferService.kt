@@ -460,7 +460,7 @@ class TourAssetTransferService(
 
     /** Starts requests until [MAX_IN_FLIGHT_REQUESTS] are outstanding; the slot is reserved before the cache call. */
     private fun pumpRequests(generation: Long = transferGeneration) {
-        while (inFlightHashes.size < MAX_IN_FLIGHT_REQUESTS) {
+        while (inFlightHashes.size < maxInFlightRequests()) {
             if (generation != transferGeneration || role != Role.GUEST) return
             val hash = pendingHashes.pollFirst() ?: return
             val descriptor = manifest?.assets?.firstOrNull { it.sha256 == hash }
@@ -579,6 +579,9 @@ class TourAssetTransferService(
      */
     @Volatile private var requestBytesPerSecond: Long? = null
     private var nextRequestAtMillis = 0L
+
+    /** A rate-limited (Bluetooth) guest keeps one chunk in flight, so expired requests never queue at the guide. */
+    private fun maxInFlightRequests() = if (requestBytesPerSecond != null) 1 else MAX_IN_FLIGHT_REQUESTS
 
     fun setRequestRateLimit(bytesPerSecond: Long?) {
         require(bytesPerSecond == null || bytesPerSecond > 0) { "Asset request rate must be positive" }

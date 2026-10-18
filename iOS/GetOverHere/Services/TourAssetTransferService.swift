@@ -543,7 +543,7 @@ final class TourAssetTransferService {
     /// Starts requests until `maxInFlightRequests` are outstanding. The slot is reserved before the
     /// cache await so a reentrant pump can never exceed the cap.
     private func pumpRequests() async {
-        while role == .guest, inFlightHashes.count < Self.maxInFlightRequests, !pendingHashes.isEmpty {
+        while role == .guest, inFlightHashes.count < maxInFlightRequests, !pendingHashes.isEmpty {
             updateAssetPriority()
             let hash = pendingHashes.removeFirst()
             guard let descriptor = manifest?.assets.first(where: { $0.sha256 == hash }) else {
@@ -684,6 +684,9 @@ final class TourAssetTransferService {
     /// When set, chunk requests are spaced so slides average at most this many bytes per second.
     private var requestBytesPerSecond: UInt64?
     private var nextRequestAt: ContinuousClock.Instant?
+
+    /// A rate-limited (Bluetooth) guest keeps one chunk in flight, so expired requests never queue at the guide.
+    private var maxInFlightRequests: Int { requestBytesPerSecond == nil ? Self.maxInFlightRequests : 1 }
 
     func setRequestRateLimit(_ bytesPerSecond: UInt64?) {
         precondition(bytesPerSecond != 0, "Asset request rate must be positive")

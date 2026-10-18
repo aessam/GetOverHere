@@ -924,3 +924,9 @@ each request returns one 60 KiB chunk, with at most 2 in flight.
 - A 5 MB deck takes about 4–5 minutes to fully reach a Bluetooth guest, versus about 1.5 minutes unpaced.
 - The current slide still arrives first, within a few seconds.
 - The rate is a constant from the measured links (0.25–0.53 Mbps); adaptive pacing is not implemented.
+
+## ADR-079 — One slide chunk in flight on Bluetooth routes (2026-10-17)
+- Context: real-UI run Ui-d88a98f1 (iPhone guide, Pixel guest, Bluetooth, ADR-078 pacing). The guest logged 9 "no chunk received within 15 s" failures; each expired chunk still arrived 2–8 s later and was discarded. Slide bytes ran at 15–22 kB/s, so with 2 requests in flight plus re-requests after expiry, 3+ chunks of 61,440 B queued at the guide and every later chunk arrived later.
+- Options: (1) one in flight when a request rate limit is set; (2) longer deadline only (hides the queue); (3) smaller Bluetooth chunks (protocol change in both cores; also addresses FND-P5-6).
+- Decision: (1) in both apps. The 15 s deadline stays (~4× a 3.4 s chunk at the measured rate). LAN keeps 2 in flight. (3) remains open with FND-P5-6.
+- Consequences: no request queue at the guide on Bluetooth; per-chunk round-trip idle is small against ~3 s transfer time. Physical confirmation pending.

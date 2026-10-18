@@ -37,14 +37,17 @@ import java.util.concurrent.atomic.AtomicReference
 
 class TourAssetTransferServiceTest {
     @Test fun bluetoothRateLimitSpacesChunkRequests() {
-        // ADR-078: at CHUNK_SIZE bytes/s each request (one chunk) must wait about one second.
+        // ADR-078: at CHUNK_SIZE bytes/s each request (one chunk) must wait about one second, and
+        // only one chunk is in flight so an expired request never queues behind another at the guide.
         val paced = GuestFixture(mapOf("a" to 1_000, "b" to 1_000))
         try {
             paced.service.setRequestRateLimit(TourAssetTransferService.CHUNK_SIZE.toLong())
             val started = System.nanoTime()
             paced.deliverManifest(); paced.awaitRequestCount(1)
             val first = (System.nanoTime() - started) / 1_000_000
-            paced.awaitRequestCount(2)
+            Thread.sleep(1_500)
+            assertEquals("one chunk in flight on Bluetooth", 1, paced.requests().size)
+            paced.deliverChunk("a", 0); paced.awaitRequestCount(2)
             val second = (System.nanoTime() - started) / 1_000_000
             assertTrue("first request is immediate: ${first} ms", first < 500)
             assertTrue("second request waits for the rate: ${second - first} ms", second - first >= 900)
