@@ -5,6 +5,16 @@ import java.util.UUID
 /** LAN addresses are never accepted from Bluetooth observations. */
 internal class RoomDiscoveryIndex {
     enum class Source { LAN, BLUETOOTH, AWARE }
+
+    companion object {
+        /**
+         * Rooms this device neither guides nor bridges. A bridge never lists its own island: discovery would
+         * otherwise offer it as a route and a reconnect would connect the bridge to itself (ADR-081).
+         */
+        fun isRemoteRoom(record: com.aessam.toursession.BluetoothRoomRecord, localPeerID: UUID): Boolean =
+            record.guideID != localPeerID && record.relayHost?.hostID != localPeerID
+    }
+
     private val lan = mutableMapOf<String, Pair<BLECommand.ChannelAnnounce, PeerInfo>>()
     private val bluetooth = mutableMapOf<String, Pair<BLECommand.ChannelAnnounce, PeerInfo>>()
     private val aware = mutableMapOf<String, Pair<BLECommand.ChannelAnnounce, PeerInfo>>()

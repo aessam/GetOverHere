@@ -68,6 +68,16 @@ struct PresentationServiceTests {
         #expect(service.audioReadyGuestCount == 0)
         try await carry(by: bridge, farFrame(.audioStatus, AudioReadinessPayload(status: .playing, revision: 2).encode()))
         #expect(service.audioReadyGuestCount == 1)
+        // A bridge cannot grow the guide's report table past one island's star cap.
+        for index in 0..<20 {
+            let id = UUID()
+            let frame = try SessionFrameSealer(credential: credential).seal(SessionEnvelope(lane: .control, kind: .audioStatus,
+                sequence: 1, sessionID: sessionID, senderID: id, payload: playing), streamID: UUID()).encode()
+            let record = try RelayUpstreamRecord(farParticipantID: id, lane: .control, frame: frame)
+            await transport.emit(.envelopeReceived(try SessionEnvelope(lane: .control, kind: .relayUpstream,
+                sequence: 100 + UInt64(index), sessionID: sessionID, senderID: bridge, payload: record.encode())))
+        }
+        #expect(service.audioReadyGuestCount == TourControlService.maximumIslandReports)
         await transport.emit(.guestDisconnected(participantID: bridge))
         #expect(service.audioReadyGuestCount == 0, "island reports end with their bridge")
         #expect(service.lastError == nil)

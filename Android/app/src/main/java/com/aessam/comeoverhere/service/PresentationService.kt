@@ -39,6 +39,9 @@ sealed class TourControlConnectionEvent {
 
 class PresentationServiceException(message: String) : IllegalStateException(message)
 
+/** One island holds at most the star cap of guests (CrossIslandDesign); bounds W5 advisory reports. */
+private const val MAXIMUM_ISLAND_REPORTS = 8
+
 class TourControlService(
     private val transport: SessionControlTransport = LocalSessionControlTransport(),
 ) {
@@ -390,6 +393,9 @@ class TourControlService(
                     val incoming = AudioReadinessPayload.decode(inner.payload)
                     val previous = islandAudioReports[inner.senderId]
                     if (previous != null && previous.first == bridge && incoming.revision <= previous.second.revision) return
+                    // Reports from an earlier bridge are dropped; one island holds at most the star cap (CrossIslandDesign).
+                    islandAudioReports.values.removeAll { it.first != bridge }
+                    if (inner.senderId !in islandAudioReports && islandAudioReports.size >= MAXIMUM_ISLAND_REPORTS) return
                     islandAudioReports[inner.senderId] = bridge to incoming
                 }
                 SessionMessageKind.LEAVE -> islandAudioReports.remove(inner.senderId)

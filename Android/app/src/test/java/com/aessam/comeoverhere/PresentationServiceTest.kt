@@ -89,6 +89,16 @@ class PresentationServiceTest {
         carry(bridge, farFrame(SessionMessageKind.AUDIO_STATUS,
             com.aessam.toursession.AudioReadinessPayload(com.aessam.toursession.AudioReadinessStatus.PLAYING, 2u).encode()))
         assertEquals(1, service.audioReadyGuestCount.value)
+        // A bridge cannot grow the guide's report table past one island's star cap.
+        repeat(20) {
+            val sealer = com.aessam.toursession.SessionFrameSealer(credential); val id = UUID.randomUUID()
+            val frame = sealer.seal(SessionEnvelope(lane = SessionLane.CONTROL, kind = SessionMessageKind.AUDIO_STATUS, sequence = 1,
+                sessionId = sessionID, senderId = id, payload = playing), UUID.randomUUID()).encode()
+            transport.emit(SessionControlEvent.EnvelopeReceived(SessionEnvelope(lane = SessionLane.CONTROL,
+                kind = SessionMessageKind.RELAY_UPSTREAM, sequence = 100L + it, sessionId = sessionID, senderId = bridge,
+                payload = com.aessam.toursession.RelayUpstreamRecord(id, SessionLane.CONTROL, frame).encode())))
+        }
+        assertEquals(8, service.audioReadyGuestCount.value)
         transport.emit(SessionControlEvent.GuestDisconnected(bridge))
         assertEquals("island reports end with their bridge", 0, service.audioReadyGuestCount.value)
         service.stop()

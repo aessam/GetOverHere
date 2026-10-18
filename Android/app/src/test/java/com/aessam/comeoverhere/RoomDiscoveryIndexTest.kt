@@ -50,4 +50,15 @@ class RoomDiscoveryIndexTest {
         val result = index.remove(value.channelID, RoomDiscoveryIndex.Source.BLUETOOTH)!!.first as BLECommand.ChannelAnnounce
         assertEquals("192.0.2.1", result.audioHostIP)
     }
+
+    @Test fun bridgeNeverListsItsOwnIsland() {
+        val me = java.util.UUID.randomUUID(); val guide = java.util.UUID.randomUUID(); val room = java.util.UUID.randomUUID()
+        fun record(host: java.util.UUID?) = com.aessam.toursession.BluetoothRoomRecord(room, guide, "Tour", false, false, 2,
+            relayHost = host?.let { com.aessam.toursession.RelayHostAdvert(it, 1) })
+        org.junit.Assert.assertTrue(RoomDiscoveryIndex.isRemoteRoom(record(null), me))
+        org.junit.Assert.assertTrue("another bridge's island is a route", RoomDiscoveryIndex.isRemoteRoom(record(java.util.UUID.randomUUID()), me))
+        org.junit.Assert.assertFalse("this device's own island is not", RoomDiscoveryIndex.isRemoteRoom(record(me), me))
+        org.junit.Assert.assertFalse("nor its own guided room", RoomDiscoveryIndex.isRemoteRoom(
+            com.aessam.toursession.BluetoothRoomRecord(room, me, "Tour", true, false, 2), me))
+    }
 }

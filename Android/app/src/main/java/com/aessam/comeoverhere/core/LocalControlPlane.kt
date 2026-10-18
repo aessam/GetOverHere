@@ -195,7 +195,7 @@ class LocalControlPlane(
 
     init {
         aware?.onRoom = { record ->
-            if (record.guideID != UUID.fromString(localPeer.id)) {
+            if (RoomDiscoveryIndex.isRemoteRoom(record, UUID.fromString(localPeer.id))) {
                 awareRooms.add(record.roomID)
                 val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
                     if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
@@ -216,7 +216,7 @@ class LocalControlPlane(
             emit(discoveryIndex.remove(room.toString(), RoomDiscoveryIndex.Source.AWARE))
         }
         this.bluetooth.onRoom = { record ->
-            if (record.guideID != UUID.fromString(localPeer.id)) {
+            if (RoomDiscoveryIndex.isRemoteRoom(record, UUID.fromString(localPeer.id))) {
                 val peer = PeerInfo(record.guideID.toString(), "Nearby guide",
                     if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
                 emit(discoveryIndex.update(BLECommand.ChannelAnnounce(

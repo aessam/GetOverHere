@@ -184,6 +184,8 @@ final class TourControlService {
         }
     }
 
+    static let maximumIslandReports = 8
+
     private func recountAudioReady() {
         let bridge = bridgeAssignment?.bridgeID
         audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count +
@@ -202,6 +204,9 @@ final class TourControlService {
             let report = try AudioReadinessPayload.decode(inner.payload)
             if let previous = islandAudioReports[inner.senderID], previous.bridge == bridge,
                report.revision <= previous.report.revision { return }
+            // Reports from an earlier bridge are dropped; one island holds at most the star cap (CrossIslandDesign).
+            islandAudioReports = islandAudioReports.filter { $0.value.bridge == bridge }
+            guard islandAudioReports[inner.senderID] != nil || islandAudioReports.count < Self.maximumIslandReports else { return }
             islandAudioReports[inner.senderID] = (bridge, report)
         case .leave:
             islandAudioReports.removeValue(forKey: inner.senderID)

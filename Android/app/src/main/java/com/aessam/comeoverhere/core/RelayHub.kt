@@ -60,6 +60,14 @@ class RelayHub(
     /** Every GOS1 frame the bridge's upstream lanes deliver. */
     @Synchronized
     fun onUpstreamFrame(lane: SessionLane, frame: ByteArray, receivedAtMilliseconds: Long, nowMilliseconds: Long) {
+        if (lane == SessionLane.ASSET) {
+            // Only the manifest is relayed; chunks answer the bridge's own requests and stay out of the dedup window.
+            val kind = try { verifier.verify(frame).kind } catch (error: Exception) {
+                onRouteFault(lane, "guide frame rejected: ${error.message ?: error.javaClass.simpleName}")
+                return
+            }
+            if (kind != SessionMessageKind.TOUR_PACK_MANIFEST) return
+        }
         val decision = try {
             forwarder.admit(frame, receivedAtMilliseconds, nowMilliseconds)
         } catch (error: Exception) {
@@ -80,11 +88,7 @@ class RelayHub(
                     onRouteFault(lane, "guide ${envelope.lane} frame arrived on the $lane lane")
                     return
                 }
-                if (envelope.lane == SessionLane.ASSET) {
-                    // Chunks answer the bridge's own requests; island peers get chunks from the bridge cache instead.
-                    if (envelope.kind != SessionMessageKind.TOUR_PACK_MANIFEST) return
-                    manifestFrame = frame.copyOf()
-                }
+                if (envelope.lane == SessionLane.ASSET) manifestFrame = frame.copyOf()
                 forwarded++
                 if (envelope.kind == SessionMessageKind.BRIDGE_ASSIGNMENT) observeAssignment(envelope, frame)
                 fanOut(envelope.lane, frame)
