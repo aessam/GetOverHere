@@ -356,6 +356,9 @@ final class UDPAudioPlane: AudioPlane {
 
     private(set) var isActive = false
     var hostIP: String?
+    /// Relay bridge tee of opened guide frames (ADR-081 P4); read at each listen start.
+    @ObservationIgnored private var upstreamFrameTap: UpstreamFrameTap?
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { upstreamFrameTap = tap }
 
     /// Test accessors for socket-option and admission assertions (FND-4).
     var connectedClientDescriptors: [Int32] { connectedClients.map(\.writer.socket.fd) }
@@ -604,6 +607,7 @@ final class UDPAudioPlane: AudioPlane {
             Logger.audio.error("TCP: missing or mismatched GOH2 session configuration")
             return
         }
+        let upstreamFrameTap = self.upstreamFrameTap
         let authentication = self.authentication
         do { try authentication.requireGuest() }
         catch {
@@ -745,6 +749,7 @@ final class UDPAudioPlane: AudioPlane {
                     case let .opened(opened): envelope = opened
                     case .duplicate: continue
                     }
+                    upstreamFrameTap?(frame)
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == guideID,
                           envelope.kind == .audioFrame || envelope.kind == .audioBatch,

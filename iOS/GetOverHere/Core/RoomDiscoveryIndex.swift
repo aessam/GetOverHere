@@ -1,8 +1,15 @@
 import Foundation
+import TourSessionCore
 
 /// Merge public observations by room identity. LAN addresses never come from Bluetooth.
 struct RoomDiscoveryIndex {
     enum Source { case lan, bluetooth, aware, applePeer }
+
+    /// Rooms this device neither guides nor bridges. A bridge never lists its own island: discovery would otherwise
+    /// offer it as a route and a reconnect would connect the bridge to itself (ADR-081).
+    static func isRemoteRoom(_ record: BluetoothRoomRecord, localPeerID: UUID?) -> Bool {
+        record.guideID != localPeerID && record.relayHost?.hostID != localPeerID
+    }
     private var lan: [String: (BLECommand.ChannelAnnounce, PeerInfo)] = [:]
     private var bluetooth: [String: (BLECommand.ChannelAnnounce, PeerInfo)] = [:]
     private var aware: [String: (BLECommand.ChannelAnnounce, PeerInfo)] = [:]

@@ -70,7 +70,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         super.init()
         browser.delegate = self
         self.bluetooth.onRoom = { [weak self] record in
-            guard let self, record.guideID != UUID(uuidString: self.localPeer.id) else { return }
+            guard let self, RoomDiscoveryIndex.isRemoteRoom(record, localPeerID: UUID(uuidString: self.localPeer.id)) else { return }
             let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
                                 platform: record.isAndroid ? .android : .ios)
             let value = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
@@ -86,7 +86,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         applePeer.onError = { [weak self] in self?.onNearbyError?($0); self?.onApplePeerError?($0) }
         applePeer.onState = { [weak self] in self?.onApplePeerState?($0) }
         applePeer.onRoom = { [weak self] record in
-            guard let self, record.guideID != UUID(uuidString: localPeer.id) else { return }
+            guard let self, RoomDiscoveryIndex.isRemoteRoom(record, localPeerID: UUID(uuidString: localPeer.id)) else { return }
             applePeerRooms.insert(record.roomID)
             let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
                 platform: record.isAndroid ? .android : .ios)
@@ -143,7 +143,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         if aware == nil, mode != .off, let transport = makeAware() {
             transport.onError = { [weak self] message in self?.onNearbyError?(message) }
             transport.onRoom = { [weak self] record in
-                guard let self, record.guideID != UUID(uuidString: localPeer.id) else { return }
+                guard let self, RoomDiscoveryIndex.isRemoteRoom(record, localPeerID: UUID(uuidString: localPeer.id)) else { return }
                 awareRooms.insert(record.roomID)
                 let peer = PeerInfo(id: record.guideID.uuidString, displayName: "Nearby guide",
                                     platform: record.isAndroid ? .android : .ios)

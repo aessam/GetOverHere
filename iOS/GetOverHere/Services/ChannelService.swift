@@ -241,6 +241,39 @@ final class ChannelService {
 
     /// Experimental (ADR-081): advertise this guest as a relay host; takes effect at the next control-lane hello.
     var relayHostCapable = false { didSet { tourControlService.setRelayHostCapable(relayHostCapable) } }
+    /// Island advertiser for the bridge; tests substitute one without radios.
+    @ObservationIgnored var islandAdvertiserFactory: () -> IslandAdvertiserInterface = { ApplePeerIslandAdvertiser() }
+    @ObservationIgnored private var relayIsland: RelayIslandHost?
+
+    /// Starts feeding guide frames to a relay island host; the island itself waits for the guide's assignment.
+    private func startRelayIsland(channel: Channel, sessionID: UUID, credential: SessionCredential,
+                                  authentication: SessionGuideAuthentication) {
+        stopRelayIsland()
+        guard relayHostCapable, case let .guest(verifier) = authentication, let identity = guestGuidePin.identity,
+              let roomID = UUID(uuidString: channel.id), let bridgeID = UUID(uuidString: coordinator.controlPlane.localPeer.id)
+        else { return }
+        // A bridge always serves the other platform's guide, so the island record names an Android guide.
+        let record = BluetoothRoomRecord(roomID: roomID, guideID: identity.guideID, name: channel.name, isAndroid: true,
+                                         isLocked: channel.isRoomLocked, admissionVersion: channel.roomAdmissionVersion ?? 2,
+                                         pack: channel.tourPack, relayHost: nil)
+        let control = tourControlService
+        let island = RelayIslandHost(bridgeID: bridgeID, sessionID: sessionID, guideID: identity.guideID, credential: credential,
+            verifier: verifier, upstreamRecord: record, advertiser: islandAdvertiserFactory(),
+            assetFile: assetTransferService.relayAssetLookup,
+            forwardUpstream: { upstream in Task { @MainActor in control.sendRelayUpstream(upstream) } })
+        relayIsland = island
+        tourControlService.setUpstreamFrameTap { island.onUpstreamFrame(lane: .control, frame: $0) }
+        assetTransferService.setUpstreamFrameTap { island.onUpstreamFrame(lane: .asset, frame: $0) }
+        coordinator.selectAudioPlane().setUpstreamFrameTap { island.onUpstreamFrame(lane: .realtime, frame: $0) }
+    }
+
+    private func stopRelayIsland() {
+        tourControlService.setUpstreamFrameTap(nil)
+        assetTransferService.setUpstreamFrameTap(nil)
+        coordinator.selectAudioPlane().setUpstreamFrameTap(nil)
+        relayIsland?.close()
+        relayIsland = nil
+    }
 
     /// Generation of the guide's bridge assignment when it names this device (ADR-081), else nil.
     var islandBridgeGeneration: UInt64? {
@@ -970,6 +1003,7 @@ final class ChannelService {
     /// survive it (ADR-048).
     private func stopCurrentActivity(discardingPendingStretch: Bool = true, preservingNearbyRoute: Bool = false,
                                      preservingGuidePin: Bool = false) {
+        stopRelayIsland()
         if guideSigner != nil { onGuideSessionEnding?() }
         guideSigner = nil
         if !preservingGuidePin { guestGuidePin.endSession() }
@@ -1213,6 +1247,7 @@ final class ChannelService {
         )
         tourControlService.configureGuideAuthentication(authentication)
         assetTransferService.configureGuideAuthentication(authentication)
+        startRelayIsland(channel: channel, sessionID: sessionID, credential: credential, authentication: authentication)
         // ADR-078: slides share the Bluetooth link with live audio; pace them below the audio headroom.
         assetTransferService.setRequestRateLimit(guestRoute?.transport == .bluetooth ? Self.nearbyAssetBytesPerSecond : nil)
         tourControlService.startGuest(hostIP: hostIP)

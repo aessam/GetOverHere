@@ -117,4 +117,17 @@ struct RoomDiscoveryIndexTests {
         func stop() {}
         func publish(_ record: BluetoothRoomRecord?) { published = record }
     }
+
+    @Test func bridgeNeverListsItsOwnIsland() {
+        let me = UUID(), guide = UUID(), room = UUID()
+        func record(_ host: UUID?) -> BluetoothRoomRecord {
+            BluetoothRoomRecord(roomID: room, guideID: guide, name: "Tour", isAndroid: true, isLocked: false, admissionVersion: 2,
+                                relayHost: host.map { RelayHostAdvert(hostID: $0, bridgeGeneration: 1) })
+        }
+        #expect(RoomDiscoveryIndex.isRemoteRoom(record(nil), localPeerID: me))
+        #expect(RoomDiscoveryIndex.isRemoteRoom(record(UUID()), localPeerID: me), "another bridge's island is a route")
+        #expect(!RoomDiscoveryIndex.isRemoteRoom(record(me), localPeerID: me), "this device's own island is not")
+        #expect(!RoomDiscoveryIndex.isRemoteRoom(BluetoothRoomRecord(roomID: room, guideID: me, name: "Tour", isAndroid: false,
+                                                                     isLocked: false, admissionVersion: 2), localPeerID: me))
+    }
 }

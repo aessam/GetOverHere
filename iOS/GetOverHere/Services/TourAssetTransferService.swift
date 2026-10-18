@@ -221,6 +221,15 @@ final class TourAssetTransferService {
         try transport.startGuide()
     }
 
+    /// Guest: raw GOS1 bytes of each opened guide asset frame (ADR-081 bridge upstream); read at the next join.
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.setUpstreamFrameTap(tap) }
+
+    /// Bridge (ADR-081): files the island asset lane may serve; complete files are hash-verified at ingest.
+    var relayAssetLookup: @Sendable (String) -> URL? {
+        let cache = cache
+        return { cache.completedURL(sha256: $0) }
+    }
+
     func joinTour(hostIP: String) {
         sessionGeneration &+= 1
         installTransportHandler()

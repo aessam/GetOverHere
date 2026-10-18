@@ -39,6 +39,11 @@ final class HybridAudioPlane: AudioPlane {
     private var authentication: SessionGuideAuthentication = .unconfigured
     private var eventHandler: (@Sendable (AudioSessionEvent) -> Void)?
 
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {
+        local.setUpstreamFrameTap(tap)
+        aware?.setUpstreamFrameTap(tap)
+    }
+
     var isActive: Bool {
         switch role {
         case .guide:
@@ -193,6 +198,11 @@ final class HybridSessionControlTransport: SessionControlTransport {
     private var role: Role?
     private var authentication: SessionGuideAuthentication = .unconfigured
     private var handler: (@Sendable (SessionControlEvent) -> Void)?
+
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {
+        local.setUpstreamFrameTap(tap)
+        aware?.setUpstreamFrameTap(tap)
+    }
 
     var isActive: Bool {
         switch role {
@@ -359,6 +369,11 @@ final class HybridSessionAssetTransport: SessionAssetTransport {
     private var role: Role?
     private var authentication: SessionGuideAuthentication = .unconfigured
     private var handler: (@Sendable (SessionAssetEvent) -> Void)?
+
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {
+        local.setUpstreamFrameTap(tap)
+        aware?.setUpstreamFrameTap(tap)
+    }
 
     var isActive: Bool {
         switch role {

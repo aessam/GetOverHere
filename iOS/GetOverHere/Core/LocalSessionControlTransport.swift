@@ -44,6 +44,8 @@ private final class LocalAuthenticatedSessionTransport {
     var hostIP: String?
     /// SessionCapabilities this guest advertises in its hello (relayHost, ADR-081); read at each guest start.
     var helloCapabilities: UInt32 = 0
+    /// Relay bridge tee of opened guide frames (ADR-081 P4); read at each guest start.
+    var upstreamFrameTap: UpstreamFrameTap?
 
     init(port: UInt16, applicationLane: SessionLane, authentication: SessionGuideAuthentication) {
         self.port = port
@@ -254,6 +256,7 @@ private final class LocalAuthenticatedSessionTransport {
             emit(.failed("Session: session is not configured"))
             return
         }
+        let upstreamFrameTap = self.upstreamFrameTap
         let authentication = self.authentication
         do { try authentication.requireGuest() }
         catch {
@@ -397,6 +400,7 @@ private final class LocalAuthenticatedSessionTransport {
                     guard let envelope = try Self.openGuideFrame(frame, using: inboundOpener, authentication: authentication) else {
                         continue
                     }
+                    upstreamFrameTap?(frame)
                     guard envelope.sessionID == configuration.sessionID,
                           envelope.senderID == guideID,
                           envelope.lane == expectedApplicationLane,
@@ -964,6 +968,8 @@ final class LocalSessionControlTransport: SessionControlTransport {
         )
     }
 
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
+
     func setEventHandler(_ handler: (@Sendable (SessionControlEvent) -> Void)?) {
         transport.setEventHandler(handler)
     }
@@ -1010,6 +1016,8 @@ final class LocalSessionAssetTransport: SessionAssetTransport {
             credential: credential
         )
     }
+
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) { transport.upstreamFrameTap = tap }
 
     func setEventHandler(_ handler: (@Sendable (SessionAssetEvent) -> Void)?) {
         transport.setEventHandler { event in

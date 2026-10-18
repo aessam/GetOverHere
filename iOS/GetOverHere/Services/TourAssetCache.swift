@@ -38,6 +38,12 @@ protocol TourAssetCache: Sendable {
     func resumeOffset(sha256: String, expectedLength: UInt64) async throws -> UInt64
     func ingest(_ chunk: AssetChunkPayload) async throws -> AssetCacheIngestResult
     func discardPartial(sha256: String) async throws
+    /// A complete (SHA-256-verified at ingest) file, synchronously, for the relay bridge's socket threads (ADR-081).
+    func completedURL(sha256: String) -> URL?
+}
+
+extension TourAssetCache {
+    func completedURL(sha256: String) -> URL? { nil }
 }
 
 final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
@@ -90,6 +96,13 @@ final class FileTourAssetCache: TourAssetCache, @unchecked Sendable {
             if fileManager.fileExists(atPath: url.path) {
                 try fileManager.removeItem(at: url)
             }
+        }
+    }
+
+    func completedURL(sha256: String) -> URL? {
+        queue.sync {
+            guard let url = try? completeURL(sha256: sha256), fileManager.fileExists(atPath: url.path) else { return nil }
+            return url
         }
     }
 

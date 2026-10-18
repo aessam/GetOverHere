@@ -266,6 +266,8 @@ enum PeerEvent: Sendable {
 
 /// High-bandwidth audio transport. Either MultipeerConnectivity or WiFi+UDP.
 protocol AudioPlane: AnyObject {
+    /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     var isActive: Bool { get }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
@@ -345,6 +347,8 @@ enum SessionControlEvent: Sendable {
 }
 
 protocol SessionControlTransport: AnyObject {
+    /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     /// SessionCapabilities this guest advertises in its control hello (relayHost, ADR-081).
@@ -390,6 +394,8 @@ enum SessionAssetEvent: Sendable {
 }
 
 protocol SessionAssetTransport: AnyObject {
+    /// Guest: tee each opened guide frame to the relay bridge (ADR-081); read when the lane starts.
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?)
     var isActive: Bool { get }
     var hostIP: String? { get set }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
@@ -409,3 +415,20 @@ protocol SessionAssetTransport: AnyObject {
     func stop()
     func clearSession()
 }
+
+/// Guest side of the relay bridge (ADR-081 P4): each opened guide frame's raw GOS1 bytes, delivered on the lane's
+/// socket thread. Captured when the lane starts; transports without a tap ignore it.
+typealias UpstreamFrameTap = @Sendable (Data) -> Void
+
+extension AudioPlane {
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
+}
+
+extension SessionControlTransport {
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
+}
+
+extension SessionAssetTransport {
+    func setUpstreamFrameTap(_ tap: UpstreamFrameTap?) {}
+}
+
