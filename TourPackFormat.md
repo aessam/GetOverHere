@@ -2,6 +2,10 @@
 
 Status: design, 2026-10-18. Nothing implemented.
 
+Decisions (user, 2026-10-18): DSCN-1 a prepared-tours screen on the guide (create offline, Share as
+`.gohtour`, Go Live from it). DSCN-2 the room record advertises `packID` + version so the join list shows
+"Tour ready" before joining (wire change in both cores, with fixtures).
+
 ## Goal
 
 A guide prepares a tour before going live (slides + offline map), exports one file, and shares it out of band
@@ -87,7 +91,7 @@ Packs never contain room codes, credentials or session keys.
 
 - The protocol does not change: the manifest is sent on join, and slide changes select by asset ID.
 - A guest with the pack reports ready right away; the guide's "N ready" count shows it.
-- Optional (QST-2): put `packID` + version in the room record so the join list can show "Tour ready" before
+- DSCN-2: put `packID` + version in the room record so the join list can show "Tour ready" before
   joining. That is a room-record wire change in both cores.
 
 ## Export (guide)
@@ -107,8 +111,6 @@ Packs never contain room codes, credentials or session keys.
 
 ## Open questions
 
-- QST-1 Tour library: new prepared-tours screen on the guide, or "Save as tour" from a live tour?
-- QST-2 Advertise `packID` in the room record so guests see "Tour ready" before joining (wire change)?
 - QST-3 Should a later version add a long-term publisher key so a guest can tell who made a pack before the
   tour? Not needed for safety.
 - QST-4 Mail size threshold to warn at (20 MB proposed).
