@@ -172,6 +172,14 @@ final class NearbySocketBridge {
     var guideConnector: (any GuideLaneConnector)?
     var audioResidenceMilliseconds: UInt64 = NearbyRealtimeQueue.lifetimeMilliseconds
 
+    /// App-wide count of speech frames the realtime pipes evicted or expired (FND-8 evidence).
+    nonisolated private static let droppedAudio = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+    nonisolated static var droppedAudioFrameCount: UInt64 { droppedAudio.withLock { $0 } }
+    nonisolated static func recordDroppedAudio(_ count: Int) {
+        guard count > 0 else { return }
+        droppedAudio.withLock { $0 &+= UInt64(count) }
+    }
+
     var guestAdaptersReady: Bool {
         listeners.count == 4 && listeners.allSatisfy {
             if case .ready = $0.listener.state { true } else { false }
@@ -480,12 +488,17 @@ private final class NearbyFramePipe {
     private var now: UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
     func offer(_ bytes: Data, audio: Bool) throws {
         guard !ended else { throw NearbyConnectionError.closed }
+        let before = backlog.dropped
         try backlog.offer(bytes, audio: audio, nowMilliseconds: now)
+        NearbySocketBridge.recordDroppedAudio(backlog.dropped - before)
         wake()
     }
     func next() async -> Data? {
         while !Task.isCancelled {
-            if let value = backlog.next(nowMilliseconds: now) { return value }
+            let before = backlog.dropped
+            let value = backlog.next(nowMilliseconds: now)
+            NearbySocketBridge.recordDroppedAudio(backlog.dropped - before)
+            if let value { return value }
             if ended { return nil }
             await withCheckedContinuation { waiter = $0 }
         }

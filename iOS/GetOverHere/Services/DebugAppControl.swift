@@ -224,6 +224,8 @@ final class DebugAppControl: DebugCommandHandler {
                 ?? (service.activeChannelID != nil && !service.isCreator ? "localLAN" : "none"),
             "audioReadyGuests": service.tourControlService.audioReadyGuestCount,
             "acceptedPlaybackBytes": app.audioEngine.acceptedPlaybackByteCount,
+            "droppedCaptureBuffers": app.audioEngine.droppedCaptureBufferCount,
+            "bridgeDroppedAudioFrames": NearbySocketBridge.droppedAudioFrameCount,
             "locked": service.isRoomLocked,
             "bluetooth": service.bluetoothDiscoveryEnabled, "aware": service.awareDiscoveryEnabled,
             "error": service.audioRuntimeError ?? service.tourFeatureError ?? service.roomAccessError ?? "",
