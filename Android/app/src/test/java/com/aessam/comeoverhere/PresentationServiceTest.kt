@@ -27,6 +27,56 @@ import org.junit.Test
 import java.util.UUID
 
 class PresentationServiceTest {
+    /** Mirrors PresentationServiceTests.guideAssignsBridge (ADR-081 P2), with an Android guide. */
+    @Test fun guideAssignsBridgeAndFailsOver() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val sessionID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
+        service.configureSession(sessionID, UUID.randomUUID(), "Guide", ParticipantPlatform.ANDROID, presentationCredential(sessionID))
+        service.startGuide(UUID.randomUUID(), emptyList())
+        fun join(id: UUID, platform: ParticipantPlatform, relay: Boolean) = transport.emit(SessionControlEvent.GuestJoined(
+            com.aessam.toursession.ParticipantSession(id, id.toString(), "G", com.aessam.toursession.SessionRole.GUEST, platform,
+                if (relay) com.aessam.toursession.SessionCapability.RELAY_HOST.bit else 0L)))
+        fun assignments() = transport.sent.filter { it.first == SessionMessageKind.BRIDGE_ASSIGNMENT }
+            .map { com.aessam.toursession.BridgeAssignmentPayload.decode(it.second) }
+        join(UUID.randomUUID(), ParticipantPlatform.ANDROID, relay = true)
+        join(UUID.randomUUID(), ParticipantPlatform.IOS, relay = false)
+        assertTrue("same-platform or non-relay guests are never bridges", assignments().isEmpty())
+        val first = UUID.randomUUID(); val second = UUID.randomUUID()
+        join(first, ParticipantPlatform.IOS, relay = true)
+        assertEquals(first, assignments().last().bridgeID)
+        assertEquals(1L, assignments().last().generation)
+        join(second, ParticipantPlatform.IOS, relay = true)
+        assertEquals(2L, assignments().last().generation)
+        assertEquals(listOf(second), assignments().last().standbyIDs)
+        val before = assignments().size
+        join(UUID.randomUUID(), ParticipantPlatform.ANDROID, relay = false)
+        assertEquals("a late joiner gets the assignment already in force", before + 1, assignments().size)
+        transport.emit(SessionControlEvent.GuestDisconnected(first))
+        assertEquals(second, assignments().last().bridgeID)
+        assertEquals(3L, assignments().last().generation)
+        service.stop()
+    }
+
+    @Test fun guestKeepsNewestBridgeAssignment() {
+        val transport = RecordingControlTransport()
+        val service = TourControlService(transport)
+        val sessionID = UUID.randomUUID(); val guideID = UUID.randomUUID()
+        service.configureGuideAuthentication(com.aessam.comeoverhere.core.SessionGuideAuthentication.LegacyFixture)
+        service.configureSession(sessionID, UUID.randomUUID(), "Guest", ParticipantPlatform.ANDROID, presentationCredential(sessionID))
+        service.startGuest("127.0.0.1")
+        fun deliver(generation: Long) = transport.emit(SessionControlEvent.EnvelopeReceived(SessionEnvelope(lane = SessionLane.CONTROL,
+            kind = SessionMessageKind.BRIDGE_ASSIGNMENT, sequence = generation, sessionId = sessionID, senderId = guideID,
+            payload = com.aessam.toursession.BridgeAssignmentPayload(generation, UUID.randomUUID(), ParticipantPlatform.IOS, 1, emptyList()).encode())))
+        deliver(4); deliver(3)
+        assertEquals(4L, service.bridgeAssignment.value?.generation)
+        assertEquals(null, service.lastError.value)
+        service.setRelayHostCapable(true)
+        assertEquals(com.aessam.toursession.SessionCapability.RELAY_HOST.bit, transport.helloCapabilities)
+        service.stop()
+    }
+
     @Test fun supersededControlCallbackAndWrongRoomLeaveCannotEndReplacementRoom() {
         val transport = RecordingControlTransport()
         val service = TourControlService(transport)
@@ -408,6 +458,7 @@ class PresentationServiceTest {
 }
 
 private class RecordingControlTransport : SessionControlTransport {
+    override var helloCapabilities: Long = 0
     override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) = Unit
     override var isActive = false
         private set

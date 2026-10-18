@@ -30,6 +30,65 @@ struct PresentationServiceTests {
         service.stop()
     }
 
+    @Test("The guide assigns the first relay-capable other-platform guest as bridge and fails over (ADR-081 P2)")
+    @MainActor
+    func guideAssignsBridge() async throws {
+        let transport = RecordingControlTransport()
+        let service = TourControlService(transport: transport)
+        let sessionID = UUID()
+        service.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guide", platform: .iOS,
+                                 credential: try presentationCredential(sessionID))
+        try service.startGuide(deckID: UUID(), slides: [])
+        func join(_ id: UUID, _ platform: ParticipantPlatform, relay: Bool) async {
+            await transport.emit(.guestJoined(ParticipantSession(participantID: id, connectionID: id.uuidString, displayName: "G",
+                role: .guest, platform: platform, capabilities: relay ? SessionCapabilities.relayHost.rawValue : 0)))
+        }
+        func assignments() throws -> [BridgeAssignmentPayload] {
+            try transport.sent.filter { $0.kind == .bridgeAssignment }.map { try BridgeAssignmentPayload.decode($0.payload) }
+        }
+        await join(UUID(), .iOS, relay: true)
+        await join(UUID(), .android, relay: false)
+        #expect(try assignments().isEmpty, "same-platform or non-relay guests are never bridges")
+        let first = UUID(), second = UUID()
+        await join(first, .android, relay: true)
+        #expect(try assignments().last?.bridgeID == first)
+        #expect(try assignments().last?.generation == 1)
+        await join(second, .android, relay: true)
+        #expect(try assignments().last?.generation == 2)
+        #expect(try assignments().last?.standbyIDs == [second])
+        let before = try assignments().count
+        await join(UUID(), .iOS, relay: false)
+        #expect(try assignments().count == before + 1, "a late joiner gets the assignment already in force")
+        #expect(try assignments().last?.generation == 2)
+        await transport.emit(.guestDisconnected(participantID: first))
+        #expect(try assignments().last?.bridgeID == second)
+        #expect(try assignments().last?.generation == 3)
+        #expect(service.lastError == nil)
+        service.stop()
+    }
+
+    @Test("A guest keeps the newest bridge assignment and ignores older ones")
+    @MainActor
+    func guestKeepsNewestAssignment() async throws {
+        let transport = RecordingControlTransport()
+        let service = TourControlService(transport: transport)
+        let sessionID = UUID(), guideID = UUID()
+        service.configureSession(sessionID: sessionID, participantID: UUID(), displayName: "Guest", platform: .iOS,
+                                 credential: try presentationCredential(sessionID))
+        service.startGuest(hostIP: "127.0.0.1")
+        func deliver(_ generation: UInt64) async throws {
+            let payload = try BridgeAssignmentPayload(generation: generation, bridgeID: UUID(), bridgePlatform: .android,
+                                                      leaseExpiresAtMilliseconds: 1, standbyIDs: []).encode()
+            await transport.emit(.envelopeReceived(try SessionEnvelope(lane: .control, kind: .bridgeAssignment, sequence: generation,
+                sessionID: sessionID, senderID: guideID, payload: payload)))
+        }
+        try await deliver(4)
+        try await deliver(3)
+        #expect(service.bridgeAssignment?.generation == 4)
+        #expect(service.lastError == nil, "bridgeAssignment is not an unexpected message")
+        service.stop()
+    }
+
     @Test("Guide late join restores presentation, target pin, and pointer snapshots")
     @MainActor
     func guideNavigationAndLateJoin() async throws {

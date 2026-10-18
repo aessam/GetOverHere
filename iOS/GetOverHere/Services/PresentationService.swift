@@ -60,6 +60,12 @@ final class TourControlService {
     @ObservationIgnored private var connectionEventHandler: (@MainActor @Sendable (TourControlConnectionEvent) -> Void)?
     @ObservationIgnored private var sessionGeneration: UInt64 = 0
     @ObservationIgnored private var currentSlideHandler: (@MainActor (String?) -> Void)?
+    /// ADR-081 P2: guide side chooses the single bridge; guest side keeps the newest guide-signed assignment.
+    private(set) var bridgeAssignment: BridgeAssignmentPayload?
+    @ObservationIgnored private var bridgeAuthority: BridgeAuthority?
+    @ObservationIgnored private var bridgeCandidates: [UUID: BridgeCandidate] = [:]
+    @ObservationIgnored private var joinCounter: UInt64 = 0
+    @ObservationIgnored private var bridgeLeaseTask: Task<Void, Never>?
 
     var currentSlideID: String? { snapshot?.currentSlideID }
     var isVisible: Bool { snapshot?.isVisible == true }
@@ -158,7 +164,34 @@ final class TourControlService {
         )
         visualFocusSnapshot = VisualFocusSnapshotPayload(stateVersion: 0, mode: .slides)
         currentSlideHandler?(currentSlideID)
+        bridgeAuthority = BridgeAuthority(guidePlatform: .iOS)
+        bridgeCandidates = [:]
+        bridgeAssignment = nil
         try transport.startGuide()
+        let generation = sessionGeneration
+        bridgeLeaseTask?.cancel()
+        bridgeLeaseTask = Task { @MainActor [weak self] in
+            // Renews the bridge lease well before it lapses (BridgeAuthority renews at half the lease).
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                guard let self, self.sessionGeneration == generation, self.role == .guide else { return }
+                self.planBridge()
+            }
+        }
+    }
+
+    /// Sends the guide-signed `bridgeAssignment` when the bridge, its standbys or its lease change (ADR-081 D2).
+    private func planBridge() {
+        guard role == .guide, var authority = bridgeAuthority else { return }
+        do {
+            let next = try authority.plan(candidates: Array(bridgeCandidates.values),
+                                          nowMilliseconds: Self.nowMilliseconds())
+            bridgeAuthority = authority
+            bridgeAssignment = authority.current
+            if let next { transport.send(kind: .bridgeAssignment, payload: next.encode()) }
+        } catch {
+            report(error)
+        }
     }
 
     func startGuest(hostIP: String) {
@@ -307,6 +340,11 @@ final class TourControlService {
         lastError = nil
         connectedGuestIDs.removeAll()
         connectedGuestCount = 0
+        bridgeLeaseTask?.cancel()
+        bridgeLeaseTask = nil
+        bridgeAuthority = nil
+        bridgeCandidates = [:]
+        bridgeAssignment = nil
         installTransportHandler()
     }
 
@@ -389,6 +427,13 @@ final class TourControlService {
             } catch {
                 report(error)
             }
+            joinCounter &+= 1
+            bridgeCandidates[participant.participantID] = BridgeCandidate(participantID: participant.participantID,
+                platform: participant.platform, capabilities: participant.capabilities, joinOrder: joinCounter)
+            let before = bridgeAssignment
+            planBridge()
+            // A joiner also needs the assignment that was already in force (planBridge sends only changes).
+            if let current = bridgeAssignment, current == before { transport.send(kind: .bridgeAssignment, payload: current.encode()) }
         case let .envelopeReceived(envelope):
             guard envelope.sessionID == sessionID else { return }
             if role == .guide, envelope.kind == .audioStatus {
@@ -425,6 +470,11 @@ final class TourControlService {
                         return
                     }
                     visualFocusSnapshot = incoming
+                case .bridgeAssignment:
+                    // Kept for relay failover (P3); an older generation never replaces a newer one.
+                    let incoming = try BridgeAssignmentPayload.decode(envelope.payload)
+                    guard bridgeAssignment.map({ incoming.generation >= $0.generation }) ?? true else { return }
+                    bridgeAssignment = incoming
                 default:
                     throw PresentationServiceError.unexpectedMessage(envelope.kind)
                 }
@@ -432,6 +482,7 @@ final class TourControlService {
                 report(error)
             }
         case let .guestDisconnected(participantID):
+            if bridgeCandidates.removeValue(forKey: participantID) != nil { planBridge() }
             connectedGuestIDs.remove(participantID)
             guestAudioReports.removeValue(forKey: participantID)
             audioReadyGuestCount = guestAudioReports.values.filter { $0.status == .playing }.count

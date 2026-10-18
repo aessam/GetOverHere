@@ -62,6 +62,34 @@ class TourControlService(
     private val mutableVisualFocusSnapshot = MutableStateFlow<VisualFocusSnapshotPayload?>(null)
     val visualFocusSnapshot: StateFlow<VisualFocusSnapshotPayload?> = mutableVisualFocusSnapshot.asStateFlow()
 
+    /** ADR-081 P2: guide side chooses the single bridge; guest side keeps the newest guide-signed assignment. */
+    private val mutableBridgeAssignment = MutableStateFlow<com.aessam.toursession.BridgeAssignmentPayload?>(null)
+    val bridgeAssignment: StateFlow<com.aessam.toursession.BridgeAssignmentPayload?> = mutableBridgeAssignment.asStateFlow()
+    private var bridgeAuthority: com.aessam.toursession.BridgeAuthority? = null
+    private val bridgeCandidates = LinkedHashMap<UUID, com.aessam.toursession.BridgeCandidate>()
+    private var joinCounter = 0L
+    private var bridgeLeaseTask: java.util.concurrent.ScheduledFuture<*>? = null
+    private val bridgeScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "bridge-lease").apply { isDaemon = true }
+    }
+
+    /** Advertise RELAY_HOST in this guest's control hello so a guide may assign it as the bridge (experimental). */
+    fun setRelayHostCapable(capable: Boolean) {
+        transport.helloCapabilities = if (capable) com.aessam.toursession.SessionCapability.RELAY_HOST.bit else 0L
+    }
+
+    /** Sends the guide-signed `bridgeAssignment` when the bridge, its standbys or its lease change (ADR-081 D2). */
+    @Synchronized
+    private fun planBridge() {
+        if (role != PresentationServiceRole.GUIDE) return
+        val authority = bridgeAuthority ?: return
+        runCatching {
+            val next = authority.plan(bridgeCandidates.values.toList(), System.currentTimeMillis())
+            mutableBridgeAssignment.value = authority.current
+            if (next != null) transport.send(SessionMessageKind.BRIDGE_ASSIGNMENT, next.encode())
+        }.onFailure(::report)
+    }
+
     /** Guests admitted on the control lane, keyed by participant (FND-13); independent of audio readiness. */
     private val mutableConnectedGuestCount = MutableStateFlow(0)
     val connectedGuestCount: StateFlow<Int> = mutableConnectedGuestCount.asStateFlow()
@@ -132,6 +160,14 @@ class TourControlService(
             effectiveAtMilliseconds = System.currentTimeMillis(),
         )
         mutableVisualFocusSnapshot.value = VisualFocusSnapshotPayload(0, TourVisualMode.SLIDES)
+        synchronized(this) {
+            bridgeAuthority = com.aessam.toursession.BridgeAuthority(com.aessam.toursession.ParticipantPlatform.ANDROID)
+            bridgeCandidates.clear()
+            mutableBridgeAssignment.value = null
+            bridgeLeaseTask?.cancel(false)
+            // Renews the bridge lease well before it lapses (BridgeAuthority renews at half the lease).
+            bridgeLeaseTask = bridgeScheduler.scheduleWithFixedDelay({ planBridge() }, 15, 15, java.util.concurrent.TimeUnit.SECONDS)
+        }
         transport.startGuide()
     }
 
@@ -267,6 +303,11 @@ class TourControlService(
             mutableVisualFocusSnapshot.value = null
             mutableSlides.value = emptyList()
             mutableLastError.value = null
+            bridgeLeaseTask?.cancel(false)
+            bridgeLeaseTask = null
+            bridgeAuthority = null
+            bridgeCandidates.clear()
+            mutableBridgeAssignment.value = null
             synchronized(connectedGuestIDs) {
                 connectedGuestIDs.clear()
                 guestAudioReports.clear()
@@ -366,6 +407,17 @@ class TourControlService(
             is SessionControlEvent.GuestJoined -> {
                 if (role == PresentationServiceRole.GUIDE) {
                     recordGuestJoined(event.participant.participantId)
+                    val bridgeBefore = synchronized(this) {
+                        joinCounter += 1
+                        bridgeCandidates[event.participant.participantId] = com.aessam.toursession.BridgeCandidate(
+                            event.participant.participantId, event.participant.platform, event.participant.capabilities, joinCounter)
+                        mutableBridgeAssignment.value
+                    }
+                    planBridge()
+                    // A joiner also needs the assignment already in force (planBridge sends only changes).
+                    mutableBridgeAssignment.value?.takeIf { it == bridgeBefore }?.let { current ->
+                        runCatching { transport.send(SessionMessageKind.BRIDGE_ASSIGNMENT, current.encode()) }.onFailure(::report)
+                    }
                     mutableSnapshot.value?.let { current ->
                         runCatching {
                             transport.send(SessionMessageKind.PRESENTATION_SNAPSHOT, current.encode())
@@ -428,13 +480,24 @@ class TourControlService(
                                 mutableVisualFocusSnapshot.value = incoming
                             }
                         }
+                        SessionMessageKind.BRIDGE_ASSIGNMENT -> {
+                            // Kept for relay failover (P3); an older generation never replaces a newer one.
+                            val incoming = com.aessam.toursession.BridgeAssignmentPayload.decode(event.envelope.payload)
+                            val current = mutableBridgeAssignment.value
+                            if (current == null || java.lang.Long.compareUnsigned(incoming.generation, current.generation) >= 0) {
+                                mutableBridgeAssignment.value = incoming
+                            }
+                        }
                         else -> throw PresentationServiceException(
                             "Unexpected control-channel message ${event.envelope.kind.wireName}",
                         )
                     }
                 }.onFailure(::report)
             }
-            is SessionControlEvent.GuestDisconnected -> recordGuestDisconnected(event.participantID)
+            is SessionControlEvent.GuestDisconnected -> {
+                recordGuestDisconnected(event.participantID)
+                if (synchronized(this) { bridgeCandidates.remove(event.participantID) } != null) planBridge()
+            }
             is SessionControlEvent.VersionMismatch -> {
                 val message = versionMismatchMessage(event.remoteMajor, event.localMajor)
                 report(message)

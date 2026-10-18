@@ -145,7 +145,7 @@ private final class LocalAuthenticatedSessionTransport {
                 connectionQueue.async { [weak self] in
                     let connectionToken = UUID()
                     defer { participantSlots.release(connectionToken) }
-                    let hello: (participantID: UUID, displayName: String, platform: ParticipantPlatform)
+                    let hello: (participantID: UUID, displayName: String, platform: ParticipantPlatform, capabilities: UInt32)
                     // The slot is held only while the handshake is pending: released on return or throw.
                     let outcome = Result {
                         try Self.authenticateGuest(
@@ -182,7 +182,8 @@ private final class LocalAuthenticatedSessionTransport {
                         connectionID: connectionID,
                         displayName: hello.displayName,
                         role: .guest,
-                        platform: hello.platform
+                        platform: hello.platform,
+                        capabilities: hello.capabilities
                     )
                     let writer = BoundedSocketFrameWriter(
                         socket: socket,
@@ -651,7 +652,7 @@ private final class LocalAuthenticatedSessionTransport {
         authentication: SessionGuideAuthentication,
         participantSlots: SessionParticipantSlots,
         connectionID: UUID
-    ) throws -> (participantID: UUID, displayName: String, platform: ParticipantPlatform) {
+    ) throws -> (participantID: UUID, displayName: String, platform: ParticipantPlatform, capabilities: UInt32) {
         setReceiveTimeout(fd: fd, seconds: 5)
         defer { setReceiveTimeout(fd: fd, seconds: 0) }
 
@@ -732,7 +733,7 @@ private final class LocalAuthenticatedSessionTransport {
         guard writeFrame(fd: fd, data: sealedWelcome) else {
             throw ControlTransportError.handshakeWriteFailed
         }
-        return (envelope.senderID, hello.displayName, hello.platform)
+        return (envelope.senderID, hello.displayName, hello.platform, hello.capabilities)
     }
 
     nonisolated private static func authenticateGuide(

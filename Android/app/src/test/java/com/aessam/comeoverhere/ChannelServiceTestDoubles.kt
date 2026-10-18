@@ -171,6 +171,7 @@ internal class LifecycleAudioPlane : AudioPlane {
 }
 
 internal class LifecycleControlTransport : SessionControlTransport {
+    override var helloCapabilities: Long = 0
     var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
     override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     var configureCalls = 0

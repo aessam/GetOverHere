@@ -83,6 +83,7 @@ private class LocalAuthenticatedSessionTransport(
 
     val isActive: Boolean get() = active.get()
     @Volatile var hostIP: String? = null
+    @Volatile var helloCapabilities: Long = 0
 
     fun configureSession(
         sessionID: UUID,
@@ -382,6 +383,7 @@ private class LocalAuthenticatedSessionTransport(
                 displayName = hello.displayName,
                 role = SessionRole.GUEST,
                 platform = hello.platform,
+                capabilities = hello.capabilities,
             )
             val writer = BoundedSocketFrameWriter(
                 socket = socket,
@@ -612,13 +614,13 @@ private class LocalAuthenticatedSessionTransport(
             clientNonce,
             SessionRole.GUEST,
             configured.platform,
-            0,
+            helloCapabilities,
             configured.displayName,
         )
         val hello = HelloPayload(
             SessionRole.GUEST,
             configured.platform,
-            0,
+            helloCapabilities,
             configured.displayName,
             applicationLane,
             clientNonce,
@@ -739,6 +741,10 @@ class LocalSessionControlTransport(
     override fun configureGuideAuthentication(authentication: SessionGuideAuthentication) = transport.configureGuideAuthentication(authentication)
 
     override val isActive: Boolean get() = transport.isActive
+    override var helloCapabilities: Long
+        get() = transport.helloCapabilities
+        set(value) { transport.helloCapabilities = value }
+
     override var hostIP: String?
         get() = transport.hostIP
         set(value) {

@@ -141,6 +141,8 @@ interface SessionControlTransport {
     val isActive: Boolean
     fun configureGuideAuthentication(authentication: SessionGuideAuthentication)
     var hostIP: String?
+    /** SessionCapability bits this guest advertises in its control hello (e.g. RELAY_HOST, ADR-081). */
+    var helloCapabilities: Long
 
     fun configureSession(
         sessionID: UUID,
