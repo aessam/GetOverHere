@@ -197,6 +197,45 @@ object TourSessionFixtures {
     }
 
     /** Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity. */
+    /** GOHP v1 fixture (ADR-080): four descriptors, three distinct files (two slides share bytes). */
+    fun tourPackFixtureAssets(): List<ByteArray> = listOf(
+        "GOH slide one".toByteArray(Charsets.UTF_8),
+        byteArrayOf(0x00, 0x01, 0x02, 0xFF.toByte(), 0xFE.toByte()),
+        "{\"version\":8}".toByteArray(Charsets.UTF_8),
+    )
+
+    fun tourPackFixture(): ByteArray {
+        val files = tourPackFixtureAssets()
+        val hashes = files.map { java.security.MessageDigest.getInstance("SHA-256").digest(it).lowercaseHex() }
+        val manifest = TourPackManifestPayload(
+            packID = UUID.fromString("6f1c5c6a-0000-4000-8000-0000000000a1"),
+            manifestVersion = 3,
+            displayName = "Fixture Tour",
+            assets = listOf(
+                TourAssetDescriptor("slide-1", TourAssetKind.SLIDE, hashes[0], files[0].size.toLong(), 0, "image/jpeg"),
+                TourAssetDescriptor("slide-2", TourAssetKind.SLIDE, hashes[1], files[1].size.toLong(), 1, "image/png"),
+                TourAssetDescriptor("slide-3", TourAssetKind.SLIDE, hashes[0], files[0].size.toLong(), 2, "image/jpeg"),
+                TourAssetDescriptor("map-style", TourAssetKind.MAP_STYLE, hashes[2], files[2].size.toLong(), 3, "application/json"),
+            ),
+        )
+        return TourPackArchive.write(manifest, hashes.zip(files).toMap())
+    }
+
+    fun describeTourPack(file: ByteArray): String {
+        val (layout, assets) = TourPackArchive.read(file)
+        val manifest = layout.manifest
+        return (listOf(
+            "packID=${manifest.packID}",
+            "manifestVersion=${manifest.manifestVersion}",
+            "displayName=${manifest.displayName}",
+            "descriptors=" + manifest.assets.joinToString(",") { "${it.assetID}:${it.kind.rawValue}:${it.sha256.take(12)}" },
+            "entries=${layout.entries.size}",
+            "dataOffset=${layout.dataOffset}",
+            "totalLength=${layout.totalLength}",
+        ) + layout.entries.map { "${it.sha256Hex}/${it.byteLength}/${it.offset}/${assets.getValue(it.sha256Hex).lowercaseHex()}" })
+            .joinToString("|")
+    }
+
     fun encodedAudioBatchFixture(): EncodedAudioBatchPayload {
         val configuration = SessionAudioCodecConfiguration(
             SessionAudioCodec.OPUS, 16_000, 1, 20, 20_000, byteArrayOf(0x4f, 0x70, 0x75, 0x73),

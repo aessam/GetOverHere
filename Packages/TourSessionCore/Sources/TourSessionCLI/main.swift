@@ -94,6 +94,11 @@ enum TourSessionCLI {
             print(try TourSessionFixtures.describeAudioFrame(Data(hex: arguments[1])))
         case "audio-fixture":
             print(try TourSessionFixtures.encodedAudioFixture().encode().lowercaseHex)
+        case "pack-fixture":
+            print(try TourSessionFixtures.tourPackFixture().lowercaseHex)
+        case "inspect-pack":
+            guard arguments.count == 2 else { fail("inspect-pack requires one hex argument") }
+            print(try TourSessionFixtures.describeTourPack(Data(hex: arguments[1])))
         case "audio-batch-fixture":
             print(try TourSessionFixtures.encodedAudioBatchFixture().encode().lowercaseHex)
         case "decode-audio-batch":

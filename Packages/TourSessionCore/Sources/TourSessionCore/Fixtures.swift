@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum TourSessionFixtures {
@@ -189,6 +190,44 @@ public enum TourSessionFixtures {
     }
 
     /// Three consecutive 20 ms Opus frames with a codec-specific prefix, for batch byte parity.
+    /// GOHP v1 fixture (ADR-080): four descriptors, three distinct files (two slides share bytes).
+    public static func tourPackFixtureAssets() -> [Data] {
+        [Data("GOH slide one".utf8), Data([0x00, 0x01, 0x02, 0xFF, 0xFE]), Data(#"{"version":8}"#.utf8)]
+    }
+
+    public static func tourPackFixture() throws -> Data {
+        let files = tourPackFixtureAssets()
+        let hashes = files.map { Data(CryptoKit.SHA256.hash(data: $0)).lowercaseHex }
+        let manifest = try TourPackManifestPayload(
+            packID: UUID(uuidString: "6F1C5C6A-0000-4000-8000-0000000000A1")!,
+            manifestVersion: 3,
+            displayName: "Fixture Tour",
+            assets: [
+                TourAssetDescriptor(assetID: "slide-1", kind: .slide, sha256: hashes[0], byteLength: UInt64(files[0].count), order: 0, mimeType: "image/jpeg"),
+                TourAssetDescriptor(assetID: "slide-2", kind: .slide, sha256: hashes[1], byteLength: UInt64(files[1].count), order: 1, mimeType: "image/png"),
+                TourAssetDescriptor(assetID: "slide-3", kind: .slide, sha256: hashes[0], byteLength: UInt64(files[0].count), order: 2, mimeType: "image/jpeg"),
+                TourAssetDescriptor(assetID: "map-style", kind: .mapStyle, sha256: hashes[2], byteLength: UInt64(files[2].count), order: 3, mimeType: "application/json"),
+            ]
+        )
+        return try TourPackArchive.write(manifest: manifest, assets: Dictionary(uniqueKeysWithValues: zip(hashes, files)))
+    }
+
+    public static func describeTourPack(_ file: Data) throws -> String {
+        let (layout, assets) = try TourPackArchive.read(file)
+        let manifest = layout.manifest
+        return ([
+            "packID=\(manifest.packID.uuidString.lowercased())",
+            "manifestVersion=\(manifest.manifestVersion)",
+            "displayName=\(manifest.displayName)",
+            "descriptors=\(manifest.assets.map { "\($0.assetID):\($0.kind.rawValue):\($0.sha256.prefix(12))" }.joined(separator: ","))",
+            "entries=\(layout.entries.count)",
+            "dataOffset=\(layout.dataOffset)",
+            "totalLength=\(layout.totalLength)",
+        ] + layout.entries.map { entry in
+            "\(entry.sha256Hex)/\(entry.byteLength)/\(entry.offset)/\(assets[entry.sha256Hex]!.lowercaseHex)"
+        }).joined(separator: "|")
+    }
+
     public static func encodedAudioBatchFixture() throws -> EncodedAudioBatchPayload {
         let configuration = try SessionAudioCodecConfiguration(
             codec: .opus,

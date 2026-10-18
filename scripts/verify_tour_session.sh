@@ -105,6 +105,20 @@ if [[ "$SWIFT_AUDIO_HEX" != "$KOTLIN_AUDIO_HEX" ]]; then
     exit 1
 fi
 
+# Tour pack container GOHP v1 (ADR-080): identical bytes, and each core reads the other's pack.
+SWIFT_PACK_HEX="$($SWIFT_BIN pack-fixture)"
+KOTLIN_PACK_HEX="$(run_kotlin pack-fixture)"
+[[ -n "$SWIFT_PACK_HEX" && "$SWIFT_PACK_HEX" == "$KOTLIN_PACK_HEX" ]] || {
+    echo "error: Swift and Kotlin wrote different tour pack bytes" >&2
+    exit 1
+}
+SWIFT_PACK_DESC="$($SWIFT_BIN inspect-pack "$KOTLIN_PACK_HEX")"
+KOTLIN_PACK_DESC="$(run_kotlin inspect-pack "$SWIFT_PACK_HEX")"
+[[ -n "$SWIFT_PACK_DESC" && "$SWIFT_PACK_DESC" == "$KOTLIN_PACK_DESC" ]] || {
+    echo "error: Swift and Kotlin read the tour pack differently" >&2
+    exit 1
+}
+
 # Batched Opus (ADR-075): pinned bytes, identical on both platforms.
 SWIFT_AUDIO_BATCH_HEX="$($SWIFT_BIN audio-batch-fixture)"
 KOTLIN_AUDIO_BATCH_HEX="$(run_kotlin audio-batch-fixture)"
