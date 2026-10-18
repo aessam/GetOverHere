@@ -50,6 +50,25 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelServiceLifecycleTest {
+    @Test fun relayHostBitIsOnlySentByDevicesThatCanHostAnIsland() {
+        val unsupported = Harness()
+        try {
+            unsupported.service.setRelayHostCapable(true)
+            assertFalse(unsupported.service.relayHostCapable.value)
+            assertEquals(0L, unsupported.control.helloCapabilities)
+        } finally { unsupported.close() }
+        val advertiser = object : com.aessam.comeoverhere.core.IslandAdvertiserInterface {
+            override fun start(record: com.aessam.toursession.BluetoothRoomRecord, connector: com.aessam.comeoverhere.core.GuideLaneConnector) {}
+            override fun stop() {}
+        }
+        val supported = Harness(islandAdvertiserFactory = { advertiser })
+        try {
+            supported.service.setRelayHostCapable(true)
+            assertTrue(supported.service.relayHostCapable.value)
+            assertEquals(com.aessam.toursession.SessionCapability.RELAY_HOST.bit, supported.control.helloCapabilities)
+        } finally { supported.close() }
+    }
+
     @Test fun canceledQueuedJoinCannotRestoreConnectingStateOrStartAdmission() {
         val admission = RouteAdmission()
         val h = Harness(admissionOverride = admission, queuedDispatch = true)
@@ -629,7 +648,8 @@ class ChannelServiceLifecycleTest {
         admissionOverride: com.aessam.comeoverhere.core.RoomAdmissionInterface? = null,
         val controlPlane: LifecycleControlPlane = LifecycleControlPlane(),
         coordinatorControlPlane: com.aessam.comeoverhere.core.ControlPlane = controlPlane,
-        queuedDispatch: Boolean = false) {
+        queuedDispatch: Boolean = false,
+        islandAdvertiserFactory: (() -> com.aessam.comeoverhere.core.IslandAdvertiserInterface)? = null) {
         val uncaught = CopyOnWriteArrayList<Throwable>()
         val scheduler = TestCoroutineScheduler()
         val scope = CoroutineScope(
@@ -654,6 +674,7 @@ class ChannelServiceLifecycleTest {
             guidance,
             reconnectBaseDelayMillis,
             admissionOverride ?: admission,
+            islandAdvertiserFactory,
         )
 
         fun resetClearSessionBaselines() {

@@ -2254,3 +2254,8 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - First rejoin 10 s after leaving failed: "No reachable nearby route could be prepared" (`Nearby BLUETOOTH preparation failed (EOFException)`); the immediate retry joined. Not investigated further; recorded as a rejoin-after-leave flake.
 - Result: Pixel UI shows "Connection: Bluetooth" and "Island bridge · generation 1" (accessibility tree), i.e. the iPhone guide's BridgeAuthority picked the relay-capable Android guest and the signed assignment reached it. Screenshot /tmp/GetOverHerePhase5/p2-island-bridge.png.
 - Not covered: island peers (no second Android/iPhone), lease renewal over minutes, failover. Those wait for P1 step 3/P3 and the device matrix.
+
+### 2026-10-18 12:40–12:44 — Relay P1 step 3: Android bridge island on device (PARTIAL)
+- Build: guest upstream tap (realtime/control raw GOS1 frames after open) → `RelayIslandHost` → `RelayHub`; island = three loopback `RelayLaneServer`s + a separate `AwareIslandAdvertiser`; relay bit refused where no island can be hosted (no Wi-Fi Aware or API < 34). Android unit tests 236/236 (`./gradlew :app:testDebugUnitTest`), incl. `RelayIslandHostTest` 4/4.
+- Pixel 7 joined iPhone 13 Pro tour "Bridge-1228" over Bluetooth through the real UI with "Relay host" on. Log: `Relay island up: generation 2, ports {REALTIME=34795, CONTROL=37399, ASSET=41809}`, then `Aware attached; hosting=true`, `Aware publish ready`, while the guest's own Aware subscribe stayed up. 20 s later: LISTENING, "Island bridge · generation 2", no errors, no island teardown.
+- Not covered: no far Android guest exists yet (needs Pixel 11 and P3 relay client), so no island bytes were exchanged.

@@ -727,6 +727,9 @@ class UDPAudioPlane(
 
     // MARK: - Guest
 
+    @Volatile private var upstreamFrameTap: ((ByteArray) -> Unit)? = null
+    override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { upstreamFrameTap = tap }
+
     override fun startListening(channelID: String, onAudio: (ByteArray) -> Unit) {
         val configured = configuration
         if (configured == null || !configured.sessionID.toString().equals(channelID, ignoreCase = true)) {
@@ -782,12 +785,12 @@ class UDPAudioPlane(
                 val input = connected.getInputStream()
                 val opener = SessionFrameOpener(configured.credential)
                 while (isRunActive(epoch)) {
-                    val envelope = when (
-                        val opened = opener.open(configured.authentication.decodeGuide(readFrame(input, maximumFrameSize)))
-                    ) {
+                    val raw = readFrame(input, maximumFrameSize)
+                    val envelope = when (val opened = opener.open(configured.authentication.decodeGuide(raw))) {
                         is SessionFrameOpenResult.Opened -> opened.envelope
                         is SessionFrameOpenResult.Duplicate -> continue
                     }
+                    upstreamFrameTap?.invoke(raw)
                     if (!isRunActive(epoch)) return@Thread
                     if (
                         envelope.sessionId != configured.sessionID ||

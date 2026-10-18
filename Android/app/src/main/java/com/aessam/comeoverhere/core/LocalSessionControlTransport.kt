@@ -150,6 +150,8 @@ private class LocalAuthenticatedSessionTransport(
         }
     }
 
+    @Volatile var upstreamFrameTap: ((ByteArray) -> Unit)? = null
+
     fun startGuest() {
         val configured = configuration
         if (configured == null) {
@@ -208,7 +210,9 @@ private class LocalAuthenticatedSessionTransport(
 
                 val input = socket.getInputStream()
                 while (isRunActive(epoch)) {
-                    val envelope = openFrame(readFrame(input, MAXIMUM_FRAME_SIZE), inboundOpener, configured.authentication) ?: continue
+                    val raw = readFrame(input, MAXIMUM_FRAME_SIZE)
+                    val envelope = openFrame(raw, inboundOpener, configured.authentication) ?: continue
+                    upstreamFrameTap?.invoke(raw)
                     if (
                         envelope.sessionId != configured.sessionID ||
                         envelope.senderId != guideID ||
@@ -769,6 +773,7 @@ class LocalSessionControlTransport(
     override suspend fun sendLeave() = transport.sendLeave()
     override fun setGuestSocketFactory(factory: SocketFactory?) =
         transport.setGuestSocketFactory(factory)
+    override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { transport.upstreamFrameTap = tap }
     override fun stop() = transport.stop()
     override fun clearSession() = transport.clearSession()
 }

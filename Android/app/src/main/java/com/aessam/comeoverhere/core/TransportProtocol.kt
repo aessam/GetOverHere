@@ -112,6 +112,8 @@ interface AudioPlane {
     ) {}
     fun setSessionEventHandler(handler: ((AudioSessionEvent) -> Unit)?) {}
     fun setGuestSocketFactory(factory: SocketFactory?) {}
+    /** Guest: receives each guide frame's raw GOS1 bytes after it opened (ADR-081 bridge upstream). */
+    fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
 }
 
 sealed class AudioSessionEvent {
@@ -162,6 +164,8 @@ interface SessionControlTransport {
      */
     suspend fun sendLeave()
     fun setGuestSocketFactory(factory: SocketFactory?) {}
+    /** Guest: receives each guide frame's raw GOS1 bytes after it opened (ADR-081 bridge upstream). */
+    fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) {}
     fun stop()
     fun clearSession()
 }

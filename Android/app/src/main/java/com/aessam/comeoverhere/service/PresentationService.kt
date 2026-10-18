@@ -78,6 +78,9 @@ class TourControlService(
         transport.helloCapabilities = if (capable) com.aessam.toursession.SessionCapability.RELAY_HOST.bit else 0L
     }
 
+    /** Guest: raw GOS1 bytes of each opened guide control frame (ADR-081 bridge upstream). */
+    fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) = transport.setUpstreamFrameTap(tap)
+
     /** Sends the guide-signed `bridgeAssignment` when the bridge, its standbys or its lease change (ADR-081 D2). */
     @Synchronized
     private fun planBridge() {

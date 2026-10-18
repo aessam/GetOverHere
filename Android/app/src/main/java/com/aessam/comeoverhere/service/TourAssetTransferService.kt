@@ -244,6 +244,12 @@ class TourAssetTransferService(
         transport.startGuest()
     }
 
+    /** A complete cached file for a hash in the current manifest, or null (ADR-081 bridge asset lane). */
+    fun readyFile(sha256: String): File? {
+        val descriptor = manifest?.assets?.firstOrNull { it.sha256 == sha256 } ?: return null
+        return cache.readyFile(sha256, descriptor.byteLength)
+    }
+
     fun setGuestSocketFactory(factory: SocketFactory?) {
         transport.setGuestSocketFactory(factory)
     }

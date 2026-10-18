@@ -10,6 +10,7 @@ import com.aessam.toursession.SessionCredential
 import com.aessam.toursession.RoomAccessPolicy
 import com.aessam.toursession.GuideFrameSigner
 import com.aessam.toursession.GuideFrameVerifier
+import com.aessam.toursession.SessionLane
 import com.aessam.toursession.AdmittedGuideIdentity
 import com.aessam.toursession.SessionGuidePin
 import com.aessam.toursession.AudioReadinessStatus
@@ -60,6 +61,8 @@ interface ChannelServiceProtocol {
     fun setBluetoothDiscoveryEnabled(enabled: Boolean)
     /** Experimental (ADR-081): advertise this guest as able to bridge its platform island. */
     val relayHostCapable: StateFlow<Boolean>
+    /** False where the device cannot host an island (no Wi-Fi Aware / API < 34); the switch is then refused. */
+    val relayHostSupported: Boolean get() = false
     fun setRelayHostCapable(enabled: Boolean)
     /** The guide's newest bridge assignment for the current tour (both roles). */
     val bridgeAssignment: StateFlow<com.aessam.toursession.BridgeAssignmentPayload?>
@@ -141,6 +144,8 @@ class ChannelService(
     /** Base of the ADR-034 exponential reconnect backoff; tests shorten it (DSCN-23). */
     private val reconnectBaseDelayMillis: Long = 1_000L,
     private val roomAdmission: RoomAdmissionInterface = RoomAdmissionTransport(),
+    /** Island advertiser for the relay bridge (ADR-081); null where this device cannot host an island. */
+    private val islandAdvertiserFactory: (() -> com.aessam.comeoverhere.core.IslandAdvertiserInterface)? = null,
 ) : ChannelServiceProtocol {
     /** Set by the application gateway owner; companion mode never creates another tour. */
     var companionModeActive: () -> Boolean = { false }
@@ -199,9 +204,36 @@ class ChannelService(
     override fun setBluetoothDiscoveryEnabled(enabled: Boolean) { _bluetoothDiscoveryEnabled.value = enabled }
     private val _relayHostCapable = MutableStateFlow(false)
     override val relayHostCapable = _relayHostCapable.asStateFlow()
+    override val relayHostSupported: Boolean get() = islandAdvertiserFactory != null
     override fun setRelayHostCapable(enabled: Boolean) {
-        _relayHostCapable.value = enabled
-        tourControlService.setRelayHostCapable(enabled) // takes effect at the next control-lane hello
+        // The guide assigns on this bit alone, so a device that cannot host never advertises it.
+        if (enabled && !relayHostSupported) Log.e(TAG, "Relay host refused: this device cannot host a Wi-Fi Aware island")
+        val capable = enabled && relayHostSupported
+        _relayHostCapable.value = capable
+        tourControlService.setRelayHostCapable(capable) // takes effect at the next control-lane hello
+    }
+    private var relayIsland: com.aessam.comeoverhere.core.RelayIslandHost? = null
+
+    /** Starts feeding guide frames to a relay island host; the island itself waits for the guide's assignment. */
+    private fun startRelayIsland(channel: Channel, sessionID: UUID, guideID: UUID, credential: SessionCredential,
+                                 verifier: GuideFrameVerifier) {
+        stopRelayIsland()
+        val factory = islandAdvertiserFactory ?: return
+        if (!_relayHostCapable.value) return
+        val record = com.aessam.toursession.BluetoothRoomRecord(UUID.fromString(channel.id), guideID, channel.name,
+            isAndroid = false, isLocked = channel.isRoomLocked, admissionVersion = channel.roomAdmissionVersion ?: 2)
+        val island = com.aessam.comeoverhere.core.RelayIslandHost(UUID.fromString(localPeerID), sessionID, guideID, credential,
+            verifier, record, factory(), assetFile = assetTransferService::readyFile)
+        relayIsland = island
+        tourControlService.setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.CONTROL, frame) }
+        coordinator.selectAudioPlane().setUpstreamFrameTap { frame -> island.onUpstreamFrame(SessionLane.REALTIME, frame) }
+    }
+
+    private fun stopRelayIsland() {
+        tourControlService.setUpstreamFrameTap(null)
+        coordinator.activeAudioPlane?.setUpstreamFrameTap(null)
+        relayIsland?.close()
+        relayIsland = null
     }
     override val bridgeAssignment get() = tourControlService.bridgeAssignment
     fun setDiscoveryForeground(foreground: Boolean) { discoveryForeground.value = foreground }
@@ -1015,6 +1047,7 @@ class ChannelService(
     }
 
     private fun stopCurrentActivity(discardingPendingStretch: Boolean = true, preservingNearbyRoute: Boolean = false) {
+        stopRelayIsland()
         if (!preservingNearbyRoute) (coordinator.controlPlane as? com.aessam.comeoverhere.core.NearbyRouteControl)?.stopNearbyGuest()
         resolvedGuestRoute = null
         guestUsesNearbyTransport = false
@@ -1293,6 +1326,8 @@ class ChannelService(
     ) {
         val identity = requireNotNull(guidePin.identity) { "Admitted guide identity is missing" }
         val authentication = SessionGuideAuthentication.Guest(GuideFrameVerifier(identity.publicKey, identity.sessionId, identity.guideId))
+        startRelayIsland(channel, sessionID, identity.guideId, credential,
+            GuideFrameVerifier(identity.publicKey, identity.sessionId, identity.guideId))
         tourControlService.configureGuideAuthentication(authentication)
         tourControlService.configureSession(
             sessionID,

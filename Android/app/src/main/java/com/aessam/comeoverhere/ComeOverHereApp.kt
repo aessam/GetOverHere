@@ -68,6 +68,10 @@ class ComeOverHereApp : Application() {
             ),
             TourContentStore(File(filesDir, "tour-packs")),
             LocalGuidanceService(this),
+            islandAdvertiserFactory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI_AWARE)) {
+                { com.aessam.comeoverhere.core.AwareIslandAdvertiser(this) }
+            } else null,
         )
         coordinator.start()
         channelService.start()

@@ -88,8 +88,14 @@ margin to audio, so they ship before or with the relay.
 
 ## Code gaps found
 
-- Android discovery is advertise-or-browse; a bridge must do BLE guest + Aware host at once.
-- Guest adapters and guide lanes bind the same local ports (50000–50003): one process cannot be both.
+- Android discovery is advertise-or-browse; a bridge must do BLE guest + Aware host at once. Resolved (P1 step 3):
+  the island uses its own `WiFiAwareRoomTransport` (`AwareIslandAdvertiser`), independent of `LocalControlPlane`'s
+  Aware mode; on the Pixel 7 the island published while the guest's Aware subscribe stayed up.
+- Guest adapters and guide lanes bind the same local ports (50000–50003): one process cannot be both. Resolved:
+  island lanes are loopback `RelayLaneServer`s on ephemeral ports reached through a `GuideLaneConnector`;
+  island admission goes to the guest's own 127.0.0.1:50003 nearby bridge, which tunnels to the guide.
+- Open: a bridge asset-cache miss closes that island peer's asset lane (`RelayLaneServer.serveAssets` throws);
+  P3 must retry on the far guest.
 - No frame forwarder exists; `BoundedSessionTopology` is unused by the apps.
 - `ChannelService` (both platforms) assumes one role per process.
 - Server send path always seals (`sealedOutboundFrame`); forwarding needs an `enqueueForwarded(bytes)` path.

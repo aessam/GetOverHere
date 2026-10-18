@@ -419,7 +419,7 @@ fun ChannelScreen(
                 val relayCapable by vm.relayHostCapable.collectAsState()
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Relay host (experimental)", modifier = Modifier.weight(1f))
-                    Switch(checked = relayCapable, onCheckedChange = vm::setRelayHostCapable, modifier = Modifier.testTag("relayHostCapable"))
+                    Switch(checked = relayCapable, onCheckedChange = vm::setRelayHostCapable, enabled = vm.relayHostSupported, modifier = Modifier.testTag("relayHostCapable"))
                 }
             }
             bluetoothError?.let {
