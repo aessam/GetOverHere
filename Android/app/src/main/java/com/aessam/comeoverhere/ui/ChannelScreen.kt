@@ -69,7 +69,12 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenGateway: () -> Unit = {}) {
+fun ChannelScreen(
+    vm: AppViewModel,
+    onOpenWiFiAwareLab: () -> Unit = {},
+    onOpenGateway: () -> Unit = {},
+    onOpenPreparedTours: () -> Unit = {},
+) {
     val strictAware by vm.strictAwareOnly.collectAsState()
     val channels by vm.channels.collectAsState()
     val bluetoothEnabled by vm.bluetoothDiscoveryEnabled.collectAsState()
@@ -377,6 +382,7 @@ fun ChannelScreen(vm: AppViewModel, onOpenWiFiAwareLab: () -> Unit = {}, onOpenG
             TopAppBar(
                 title = { Text("Megaphone") },
                 actions = {
+                    TextButton(onClick = onOpenPreparedTours) { Text("Tours") }
                     TextButton(onClick = onOpenGateway) { Text("Companion") }
                     IconButton(onClick = { showNearbySettings = !showNearbySettings }) {
                         Icon(Icons.Default.Settings, "Connection diagnostics")

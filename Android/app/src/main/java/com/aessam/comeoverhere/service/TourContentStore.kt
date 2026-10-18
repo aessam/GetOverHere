@@ -42,6 +42,17 @@ class TourContentStore(
         nextSlideOrder = 0
     }
 
+    /** Loads a prepared tour (ADR-080) as the live pack; its files stay where the prepared-tour store keeps them. */
+    @Synchronized
+    fun loadPrepared(manifest: TourPackManifestPayload, sources: Map<String, File>) {
+        packID = manifest.packID
+        displayName = manifest.displayName
+        manifestVersion = manifest.manifestVersion
+        assets = manifest.assets
+        sourcesByAssetID = sources
+        nextSlideOrder = if (manifest.assets.isEmpty()) 0 else manifest.assets.maxOf { it.order } + 1
+    }
+
     @Synchronized
     fun importSlide(bytes: ByteArray, mimeType: String): TourAssetDescriptor {
         val activePackID = packID ?: throw TourContentStoreException("No tour pack is active")

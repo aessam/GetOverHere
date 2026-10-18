@@ -41,6 +41,8 @@ class ComeOverHereApp : Application() {
         private set
     lateinit var packLibrary: TourPackLibrary
         private set
+    lateinit var preparedTours: com.aessam.comeoverhere.service.PreparedTourStore
+        private set
     private lateinit var packImporter: TourPackImporter
     /** Result of the last `.gohtour` import, shown once to the user (ADR-080). */
     val packImportMessage = MutableStateFlow<String?>(null)
@@ -54,6 +56,7 @@ class ComeOverHereApp : Application() {
         val assetCache = FileTourAssetCache(File(filesDir, "asset-cache"))
         packImporter = TourPackImporter(assetCache)
         packLibrary = TourPackLibrary(File(filesDir, "imported-tour-packs.tsv"))
+        preparedTours = com.aessam.comeoverhere.service.PreparedTourStore(File(filesDir, "prepared-tours"))
         channelService = ChannelService(
             coordinator,
             audioEngine,

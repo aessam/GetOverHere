@@ -1,5 +1,6 @@
 package com.aessam.comeoverhere.service
 
+import com.aessam.toursession.TourPackAdvert
 import android.util.Log
 import com.aessam.comeoverhere.core.*
 import com.aessam.toursession.ParticipantPlatform
@@ -102,7 +103,7 @@ interface ChannelServiceProtocol {
 
     fun start()
     fun stop()
-    fun createChannel(name: String, quality: AudioQuality = AudioQuality.STANDARD)
+    fun createChannel(name: String, quality: AudioQuality = AudioQuality.STANDARD, prepared: PreparedTourLaunch? = null)
     fun joinChannel(channel: Channel, tourCode: String)
     fun setListenerOutput(output: ListenerOutput)
     fun leaveChannel()
@@ -428,7 +429,7 @@ class ChannelService(
 
     // MARK: - Channel Management
 
-    override fun createChannel(name: String, quality: AudioQuality) {
+    override fun createChannel(name: String, quality: AudioQuality, prepared: PreparedTourLaunch?) {
         check(!companionModeActive()) { "Stop companion mode before creating a tour" }
         sessionAttempt += 1
         audioQuality = quality
@@ -439,6 +440,7 @@ class ChannelService(
             createdBy = coordinator.controlPlane.localPeer.id,
             roomAdmissionVersion = 2,
             isRoomLocked = false,
+            tourPack = prepared?.let { TourPackAdvert(it.manifest.packID, it.manifest.manifestVersion) },
         )
         val sessionID = UUID.fromString(channel.id)
         val participantID = runCatching { UUID.fromString(coordinator.controlPlane.localPeer.id) }
@@ -454,7 +456,7 @@ class ChannelService(
                 Log.i(TAG, "Discarding a stale guide credential; the session was replaced during the stretch")
                 return@launch
             }
-            startGuideSession(channel, sessionID, participantID, code, credential)
+            startGuideSession(channel, sessionID, participantID, code, credential, prepared)
         }
     }
 
@@ -464,6 +466,7 @@ class ChannelService(
         participantID: UUID,
         code: String,
         credential: SessionCredential,
+        prepared: PreparedTourLaunch? = null,
     ) {
         try {
             guidePin.endSession()
@@ -529,6 +532,7 @@ class ChannelService(
             guestCredential = null
 
             broadcastChannelAnnounce(channel)
+            if (prepared != null) publishPreparedTour(prepared)
         } catch (error: Exception) {
             rollbackFailedGuideSession(channel.id)
             _tourCode.value = null
@@ -1084,6 +1088,20 @@ class ChannelService(
                     error.message ?: error.javaClass.simpleName,
                 )
                 _tourFeatureError.value = error.message
+            }
+        }
+    }
+
+    /** Presents a prepared tour: the same descriptors (hashes) guests may already hold from its `.gohtour`. */
+    private fun publishPreparedTour(prepared: PreparedTourLaunch) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                contentStore.loadPrepared(prepared.manifest, prepared.sourcesByAssetID)
+                publishCurrentTourPack()
+                _tourFeatureError.value = null
+            } catch (error: Exception) {
+                _tourFeatureError.value = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "Prepared tour publish failed (${error.javaClass.simpleName})")
             }
         }
     }

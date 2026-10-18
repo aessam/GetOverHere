@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
                 val vm: AppViewModel = viewModel(factory = AppViewModelFactory(channelService))
                 var showWiFiAwareLab by remember { mutableStateOf(false) }
                 var showGateway by remember { mutableStateOf(false) }
+                var showPreparedTours by remember { mutableStateOf(false) }
                 val gateway = (application as ComeOverHereApp).gateway
                 val gatewayState by gateway.status.collectAsState()
                 val app = application as ComeOverHereApp
@@ -69,12 +70,15 @@ class MainActivity : ComponentActivity() {
                         text = { Text(message) },
                     )
                 }
-                if (showGateway || gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.COMPANION) {
+                if (showPreparedTours) {
+                    com.aessam.comeoverhere.ui.PreparedToursScreen(app.preparedTours, channelService, onBack = { showPreparedTours = false })
+                } else if (showGateway || gatewayState.role == com.aessam.comeoverhere.service.GatewayRole.COMPANION) {
                     com.aessam.comeoverhere.ui.GatewayScreen(gateway, onBack = { showGateway = false })
                 } else if (showWiFiAwareLab && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     WiFiAwareLabScreen(onBack = { showWiFiAwareLab = false })
                 } else {
-                    ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true }, onOpenGateway = { showGateway = true })
+                    ChannelScreen(vm, onOpenWiFiAwareLab = { showWiFiAwareLab = true }, onOpenGateway = { showGateway = true },
+                        onOpenPreparedTours = { showPreparedTours = true })
                 }
             }
         }
