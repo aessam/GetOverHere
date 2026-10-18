@@ -152,3 +152,16 @@ class RelayForwarder(private val verifier: GuideFrameVerifier) {
         )
     }
 }
+
+/**
+ * W6: a far guest accepts an asset chunk sealed by the bridge (not guide-signed) only for a file the guide's
+ * authenticated manifest names, and only within that file's length. The whole-file SHA-256 check at completion
+ * stays the final gate, the same trust rule as an imported tour pack (ADR-080).
+ */
+object PeerAssetAcceptance {
+    fun accepts(chunk: AssetChunkPayload, manifest: TourPackManifestPayload): Boolean {
+        val descriptor = manifest.assets.firstOrNull { it.sha256 == chunk.sha256 } ?: return false
+        return chunk.totalLength == descriptor.byteLength && chunk.bytes.isNotEmpty() &&
+            chunk.offset < descriptor.byteLength && chunk.bytes.size.toLong() <= descriptor.byteLength - chunk.offset
+    }
+}

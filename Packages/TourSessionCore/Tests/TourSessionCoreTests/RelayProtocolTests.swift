@@ -84,4 +84,20 @@ struct RelayProtocolTests {
         var tampered = [UInt8](real); tampered[tampered.count - 70] ^= 1
         #expect(throws: (any Error).self) { try forwarder.admit(Data(tampered), receivedAtMilliseconds: 0, nowMilliseconds: 0) }
     }
+
+    @Test("Peer-served chunks are accepted only for manifest files and within their length (W6)")
+    func peerAssetAcceptance() throws {
+        let manifest = try TourPackArchive.read(try TourSessionFixtures.tourPackFixture()).layout.manifest
+        let file = manifest.assets[0]
+        func chunk(_ hash: String, _ offset: UInt64, _ count: Int, total: UInt64? = nil) throws -> AssetChunkPayload {
+            try AssetChunkPayload(sha256: hash, offset: offset, totalLength: total ?? file.byteLength, bytes: Data(count: count))
+        }
+        #expect(PeerAssetAcceptance.accepts(try chunk(file.sha256, 0, Int(file.byteLength)), manifest: manifest))
+        #expect(PeerAssetAcceptance.accepts(try chunk(file.sha256, 4, 3), manifest: manifest))
+        #expect(!PeerAssetAcceptance.accepts(try chunk(String(repeating: "a", count: 64), 0, 1, total: 1), manifest: manifest),
+                "a hash the manifest does not name")
+        #expect(!PeerAssetAcceptance.accepts(try chunk(file.sha256, 0, 1, total: file.byteLength + 1), manifest: manifest),
+                "a total length that disagrees with the manifest")
+        #expect(!PeerAssetAcceptance.accepts(try chunk(file.sha256, 0, 0), manifest: manifest), "an empty chunk")
+    }
 }

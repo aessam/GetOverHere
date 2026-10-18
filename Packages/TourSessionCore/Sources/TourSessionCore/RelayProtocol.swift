@@ -177,3 +177,15 @@ public struct RelayForwarder: Sendable {
         .presentationSnapshot, .bearingSnapshot, .targetSnapshot, .visualFocusSnapshot, .bridgeAssignment,
     ]
 }
+
+/// W6: a far guest accepts an asset chunk sealed by the bridge (not guide-signed) only for a file the
+/// guide's authenticated manifest names, and only within that file's length. The whole-file SHA-256 check
+/// at completion stays the final gate, the same trust rule as an imported tour pack (ADR-080).
+public enum PeerAssetAcceptance {
+    public static func accepts(_ chunk: AssetChunkPayload, manifest: TourPackManifestPayload) -> Bool {
+        guard let descriptor = manifest.assets.first(where: { $0.sha256 == chunk.sha256 }) else { return false }
+        return chunk.totalLength == descriptor.byteLength && !chunk.bytes.isEmpty
+            && chunk.offset < descriptor.byteLength
+            && UInt64(chunk.bytes.count) <= descriptor.byteLength - chunk.offset
+    }
+}

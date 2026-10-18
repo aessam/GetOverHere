@@ -70,4 +70,17 @@ class RelayProtocolTest {
         val tampered = real.copyOf().also { it[it.size - 70] = (it[it.size - 70].toInt() xor 1).toByte() }
         assertThrows(Exception::class.java) { forwarder.admit(tampered, 0, 0) }
     }
+
+    /** Mirrors RelayProtocolTests.peerAssetAcceptance (W6). */
+    @Test fun peerAssetAcceptance() {
+        val manifest = TourPackArchive.read(TourSessionFixtures.tourPackFixture()).first.manifest
+        val file = manifest.assets[0]
+        fun chunk(hash: String, offset: Long, count: Int, total: Long = file.byteLength) =
+            AssetChunkPayload(hash, offset, total, ByteArray(count))
+        assertTrue(PeerAssetAcceptance.accepts(chunk(file.sha256, 0, file.byteLength.toInt()), manifest))
+        assertTrue(PeerAssetAcceptance.accepts(chunk(file.sha256, 4, 3), manifest))
+        assertTrue(!PeerAssetAcceptance.accepts(chunk("a".repeat(64), 0, 1, total = 1), manifest))
+        assertTrue(!PeerAssetAcceptance.accepts(chunk(file.sha256, 0, 1, total = file.byteLength + 1), manifest))
+        assertTrue(!PeerAssetAcceptance.accepts(chunk(file.sha256, 0, 0), manifest))
+    }
 }
