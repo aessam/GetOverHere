@@ -1,5 +1,7 @@
 import Foundation
+import OSLog
 import SwiftUI
+import TourSessionCore
 
 @Observable
 final class AppCoordinator {
@@ -7,6 +9,10 @@ final class AppCoordinator {
     let channelService: ChannelService
     let audioEngine: AudioEngine
     let gateway: GatewaySessionCoordinator
+    let packImporter: TourPackImporter
+    let packLibrary: TourPackLibrary
+    /// Result of the last `.gohtour` import, shown once to the user.
+    var packImportMessage: String?
 
     var showCreateChannel = false
     var showGateway = false
@@ -35,6 +41,10 @@ final class AppCoordinator {
             let contentStore = try TourContentStore(
                 rootDirectory: applicationSupport.appending(path: "TourPacks", directoryHint: .isDirectory)
             )
+            self.packImporter = TourPackImporter(cache: cache)
+            self.packLibrary = try TourPackLibrary(
+                fileURL: applicationSupport.appending(path: "ImportedTourPacks.json")
+            )
             let tourControlService = TourControlService()
             let localGuidanceService = LocalGuidanceService()
             let assetTransferService = TourAssetTransferService(
@@ -58,6 +68,22 @@ final class AppCoordinator {
             self.gateway = GatewaySessionCoordinator(service: channelService, control: localControl)
         } catch {
             fatalError("Tour feature storage setup failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Opens a shared `.gohtour` pack (ADR-080): verifies it and stores each file under its hash so a
+    /// later tour that names those hashes is ready without transferring them.
+    func importTourPack(at url: URL) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let outcome = try await packImporter.importPack(at: url)
+            try packLibrary.record(outcome.manifest)
+            let files = outcome.imported + outcome.alreadyCached
+            packImportMessage = "Tour ready: \(outcome.manifest.displayName) (\(files) files)"
+        } catch {
+            Logger.channel.error("Tour pack import failed (\(String(describing: error)))")
+            packImportMessage = "This tour file could not be opened: \(error.localizedDescription)"
         }
     }
 

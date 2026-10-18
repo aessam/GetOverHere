@@ -24,12 +24,25 @@ struct ChannelRootView: View {
         .sheet(isPresented: $coord.showDebugControl) {
             DebugControlPanel()
         }
+        #endif
         .onOpenURL { url in
+            if url.isFileURL, url.pathExtension.lowercased() == "gohtour" {
+                Task { await coordinator.importTourPack(at: url) }
+                return
+            }
+            #if DEBUG
             guard url.scheme == "goh-debug", url.host == "panel", url.path.isEmpty,
                   url.query == nil, url.fragment == nil else { return }
             coordinator.showDebugControl = true
+            #endif
         }
-        #endif
+        .alert(
+            coordinator.packImportMessage ?? "",
+            isPresented: Binding(get: { coordinator.packImportMessage != nil },
+                                 set: { if !$0 { coordinator.packImportMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        }
         .sheet(isPresented: $showWiFiAwareLab) {
             if #available(iOS 26.4, *) {
                 WiFiAwareLabView()
