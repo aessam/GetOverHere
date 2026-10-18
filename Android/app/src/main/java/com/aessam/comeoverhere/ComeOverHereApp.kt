@@ -1,6 +1,10 @@
 package com.aessam.comeoverhere
 
 import android.app.Application
+import com.aessam.toursession.TourPackException
+import com.aessam.toursession.TourPackArchive
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.aessam.comeoverhere.service.TourPackLibrary
 import com.aessam.comeoverhere.service.TourPackImporter
@@ -40,6 +44,8 @@ class ComeOverHereApp : Application() {
     private lateinit var packImporter: TourPackImporter
     /** Result of the last `.gohtour` import, shown once to the user (ADR-080). */
     val packImportMessage = MutableStateFlow<String?>(null)
+    /** One import at a time: concurrent imports would race on the same cache partials. */
+    private val packImportLock = Mutex()
 
     override fun onCreate() {
         super.onCreate()
@@ -87,11 +93,23 @@ class ComeOverHereApp : Application() {
      * it, and stores each file under its hash so a later tour naming those hashes is ready without a transfer.
      */
     fun importTourPack(uri: Uri) {
+        // Only shared content (Files, Mail, Nearby Share grant a read on a content URI). A file:// or one of this
+        // app's own authorities could make the app read its private files on another app's behalf.
+        if (uri.scheme != "content" || uri.authority?.startsWith(packageName) != false) {
+            Log.e("ComeOverHereApp", "Rejected tour pack URI with scheme ${uri.scheme}")
+            packImportMessage.value = "This tour file could not be opened: unsupported source"
+            return
+        }
         applicationScope.launch(Dispatchers.IO) {
+            packImportLock.withLock { importTourPackLocked(uri) }
+        }
+    }
+
+    private fun importTourPackLocked(uri: Uri) {
             val copy = File(cacheDir, "import-${java.util.UUID.randomUUID()}.gohtour")
             try {
                 val input = contentResolver.openInputStream(uri) ?: error("The shared tour file could not be read")
-                input.use { source -> copy.outputStream().use { source.copyTo(it) } }
+                input.use { source -> copy.outputStream().use { copyBounded(source, it) } }
                 val outcome = packImporter.importPack(copy)
                 packLibrary.record(outcome.manifest)
                 packImportMessage.value = "Tour ready: ${outcome.manifest.displayName} (${outcome.imported + outcome.alreadyCached} files)"
@@ -101,6 +119,18 @@ class ComeOverHereApp : Application() {
             } finally {
                 if (copy.exists() && !copy.delete()) Log.e("ComeOverHereApp", "Could not delete $copy")
             }
+    }
+
+    /** Copies at most the format's maximum pack size, so an endless or oversized stream cannot fill storage. */
+    private fun copyBounded(source: java.io.InputStream, target: java.io.OutputStream) {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val count = source.read(buffer)
+            if (count < 0) return
+            total += count
+            if (total > TourPackArchive.MAXIMUM_TOTAL_LENGTH) throw TourPackException("packTooLarge", "$total")
+            target.write(buffer, 0, count)
         }
     }
 }
