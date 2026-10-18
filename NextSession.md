@@ -1,5 +1,14 @@
 # GetOverHere — Next Session
 
+## October 18 — Phase 5 accepted; tour packs done (Phase 6 step 1)
+
+- Phase 5 accepted (tag `phase5-accepted`): locked iPhone guest 10 min PCM 1.0; 30-min endurance 0 stalls.
+- Tour packs done both directions (tag `p6-packs-both-directions`); design in `TourPackFormat.md`.
+- Next: cross-island relay (`CrossIslandDesign.md`, ADR-081) once the second iPhone and Pixel 11 are connected.
+- Device notes: Pixel stays awake permanently (`svc power stayon true`); WDA via `scripts/wda.sh start`;
+  Android Bluetooth discovery is not persisted, so a fresh app needs "Find Nearby Tours" (or Go Live) to enable it.
+- Many commits are local only; push with `! git push origin main --follow-tags` from the Mac prompt.
+
 ## October 17, 20:05 — paused (user break)
 
 Pushed: `main` at `0f82106`, tags `p5-realui-bt-slides`, `phase5-closed`. Since the gate: FND-P5-5 fixed

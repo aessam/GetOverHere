@@ -211,3 +211,11 @@ Phase 6 (devices: iPhone 13 Pro, second iPhone, Pixel 7, Pixel 11):
    signed frames verified per hop, assets served by hash from any holder. Gate: guide → relay → far-island
    guest receives audio, slide changes and missing assets; duplicate suppression proven.
 3. Carried items above.
+
+### Phase 6 status (2026-10-18)
+
+1. Tour packs (ADR-080/082): DONE, tag `p6-packs-both-directions`. GOHP v1 in both cores (parity gate),
+   prepared tours + share + Go Live on iOS and Android, open shared packs on both, Tour ready badge on both.
+   Device: guest ready 2 s (iPhone guide) / 3 s (Pixel guide) after joining vs 315 s cold.
+   Scripts: `ios_drive.py prepare-tour|share-tour|golive-tour`, `android_prepare_tour.sh`.
+2. Cross-island relay (ADR-081, `CrossIslandDesign.md`): NOT STARTED; needs the second iPhone and the Pixel 11.
