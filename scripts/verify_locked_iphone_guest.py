@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Phase 5 locked-guest run: Android guide (instrumentation), iPhone guest (debug bridge) over Bluetooth.
 
-The iPhone joins with route policy `bluetooth`, then its idle timer is restored and Auto-Lock set to
-30 seconds through a UI test so the phone locks by itself. Status is polled over the USB tunnel every
-10 s. A window with no new renderer bytes is a stall. Auto-Lock is restored to its previous value.
+The iPhone joins with route policy `bluetooth`, then is locked through WebDriverAgent (scripts/wda.sh must
+be running). Status is polled over the USB tunnel every 10 s. A window with no new renderer bytes is a
+stall. The phone is unlocked through WDA at the end.
 Evidence: <artifacts>/status.jsonl, summary.json, android.log, autolock-*.log, lock-*.jpg.
 """
 import argparse
@@ -121,9 +121,11 @@ def main():
                          and s.get("acceptedPlaybackBytes", 0) > 0, 120)
         summary["routePolicy"] = state.get("routePolicy")
         control(args, "debug-keep-awake", "enabled=false")
-        previous_autolock = set_autolock(args, artifacts, "30 seconds", "set")
-        summary["autoLockPrevious"] = previous_autolock
-        snapshot(args, artifacts / "lock-start.jpg")
+        lock = subprocess.run([str(ROOT / "tools/.venv/bin/python"), str(ROOT / "scripts/ios_drive.py"), "lock"],
+                              capture_output=True, text=True, timeout=60)
+        summary["lock"] = (lock.stdout + lock.stderr).strip()[-200:]
+        if lock.returncode:
+            raise RuntimeError(f"WDA lock failed: {summary['lock']}")
         last = control(args, "status")["acceptedPlaybackBytes"]
         with (artifacts / "status.jsonl").open("w") as log:
             for window in range(1, args.listen_seconds // 10 + 1):
@@ -141,13 +143,11 @@ def main():
                 if window == 9:
                     snapshot(args, artifacts / "lock-90s.jpg")
     finally:
-        try:
-            if previous_autolock:
-                set_autolock(args, artifacts, previous_autolock, "restore")
-                summary["autoLockRestored"] = previous_autolock
-        except Exception as error:  # Restoration failure must be reported, never hidden.
-            summary["autoLockRestoreError"] = str(error)
-            print(f"ERROR: Auto-Lock not restored to {previous_autolock!r}: {error}", file=sys.stderr)
+        unlock = subprocess.run([str(ROOT / "tools/.venv/bin/python"), str(ROOT / "scripts/ios_drive.py"), "unlock"],
+                                capture_output=True, text=True, timeout=60)
+        if unlock.returncode:
+            summary["unlockError"] = (unlock.stdout + unlock.stderr).strip()[-200:]
+            print(f"ERROR: iPhone not unlocked: {summary['unlockError']}", file=sys.stderr)
         subprocess.run(["xcrun", "devicectl", "device", "process", "launch", "--device", args.ios, "--activate",
                         "com.aens.GetOverHere"], capture_output=True, timeout=30)
         control(args, "leave", check=False)
@@ -160,7 +160,7 @@ def main():
     summary["androidOK"] = "OK (1 test)" in (artifacts / "android.log").read_text()
     (artifacts / "summary.json").write_text(json.dumps(summary, indent=2))
     passed = (summary["androidOK"] and measured and not summary["stalledAt"] and not summary["nonBluetoothAt"]
-              and "autoLockRestoreError" not in summary)
+              and "unlockError" not in summary)
     print(json.dumps({k: v for k, v in summary.items() if k != "windows"}), flush=True)
     print(("PASS" if passed else "FAIL") + f": locked iPhone guest; {artifacts}", flush=True)
     return 0 if passed else 1
