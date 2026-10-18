@@ -2,7 +2,8 @@
 """Drive GetOverHere on a physical iPhone through WebDriverAgent (scripts/wda.sh start first).
 
 Run with tools/.venv/bin/python. Visible text is matched by `label`; accessibility identifiers by `name`. Every miss fails loudly.
-Commands: create NAME | end | join NAME | leave | pointer | import-pdf NAME | tap LABEL | autolock VALUE | lock | unlock | home | shot PATH | source
+Commands: create NAME | end | join NAME | leave | pointer | import-pdf NAME | tap LABEL |
+prepare-tour NAME|PDF | share-tour | golive-tour | autolock VALUE | lock | unlock | home | shot PATH | source
 """
 import argparse
 import subprocess
@@ -27,14 +28,27 @@ def need(element, description, timeout=20.0):
     return element
 
 
+def pick_pdf(session, name):
+    """In an open document picker, choose `<name>.pdf` from On My iPhone > GetOverHere."""
+    need(session(label="Browse"), "Files Browse tab").tap()
+    target = session(labelContains=f"{name}, pdf")  # the file cell, not its title text
+    if not target.wait(timeout=3, raise_error=False):  # Browse resets to the Locations root
+        need(session(label="On My iPhone"), "On My iPhone").tap()
+        need(session(labelContains="GetOverHere,"), "GetOverHere folder").tap()
+    need(target, f"file {name}").tap()
+    # The presenting screen stays visible behind the sheet; success is the picker closing.
+    if not session(label="Browse").wait_gone(timeout=30):
+        raise SystemExit("error: the document picker did not close after choosing the file")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "import-pdf", "autolock", "lock", "unlock", "home", "shot", "source", "tap"])
+    parser.add_argument("command", choices=["create", "end", "join", "leave", "pointer", "import-pdf", "autolock", "lock", "unlock", "home", "shot", "source", "tap", "prepare-tour", "share-tour", "golive-tour"])
     parser.add_argument("argument", nargs="?")
     args = parser.parse_args()
     c = client()
     started = time.monotonic()
-    if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf", "tap"):
+    if args.command in ("create", "join", "end", "leave", "pointer", "import-pdf", "tap", "prepare-tour", "share-tour", "golive-tour"):
         # Never relaunch: that ends a live tour and detaches a `devicectl --console` log capture.
         c.app_activate(BUNDLE)
         session = c.session()
@@ -62,15 +76,27 @@ def main():
         need(session(label="Slides", className="XCUIElementTypeButton"), "Slides segment").tap()
         if not session(label="Browse").exists:  # the picker may already be open from an earlier attempt
             need(session(label="Import PDF"), "Import PDF").tap()
-        need(session(label="Browse"), "Files Browse tab").tap()
-        target = session(labelContains=f"{args.argument}, pdf")  # the file cell, not its title text
-        if not target.wait(timeout=3, raise_error=False):  # Browse resets to the Locations root
-            need(session(label="On My iPhone"), "On My iPhone").tap()
-            need(session(labelContains="GetOverHere,"), "GetOverHere folder").tap()
-        need(target, f"file {args.argument}").tap()
-        # "End Tour" stays visible behind the sheet; success is the picker closing.
-        if not session(label="Browse").wait_gone(timeout=30):
-            raise SystemExit("error: the document picker did not close after choosing the file")
+        pick_pdf(session, args.argument)
+    elif args.command == "prepare-tour":
+        # ADR-080: Prepared Tours > New Tour NAME > Add PDF. Argument "NAME|PDF". Expects no other prepared tour.
+        name, pdf = args.argument.split("|", 1)
+        need(session(label="Prepared Tours"), "Prepared Tours button").tap()
+        if not session(label=name).wait(timeout=3, raise_error=False):
+            need(session(label="New Tour"), "New Tour").tap()
+            field = need(session(className="XCUIElementTypeTextField"), "tour name field")
+            field.set_text(name)
+            need(session(label="Create", className="XCUIElementTypeButton"), "Create").tap()
+            need(session(label=name), f"prepared tour {name}")
+        need(session(label="Add PDF"), "Add PDF").tap()
+        pick_pdf(session, pdf)
+        need(session(labelContains="20 slides"), "slides added", timeout=90)
+    elif args.command == "share-tour":
+        need(session(label="Share", className="XCUIElementTypeButton"), "Share").tap()
+        close = session(label="Close")
+        need(close, "share sheet", timeout=30).tap()  # the export is written before the sheet appears
+    elif args.command == "golive-tour":
+        need(session(label="Go Live"), "Go Live").tap()
+        need(session(label="End Tour"), "End Tour (tour live)", timeout=30)
     elif args.command == "end":
         need(session(label="End Tour"), "End Tour").tap()
     elif args.command == "leave":

@@ -10,7 +10,10 @@ struct PreparedToursView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newTourName = ""
     @State private var showNewTour = false
+    /// Kept separately from the presentation flag: dismissing the picker must not clear it before the
+    /// completion handler reads it.
     @State private var pdfTarget: UUID?
+    @State private var showPDFPicker = false
     @State private var shareURL: URL?
     @State private var busy = false
     @State private var errorMessage: String?
@@ -48,9 +51,8 @@ struct PreparedToursView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { create() }.disabled(newTourName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .fileImporter(isPresented: Binding(get: { pdfTarget != nil }, set: { if !$0 { pdfTarget = nil } }),
-                          allowedContentTypes: [.pdf]) { result in
-                guard let packID = pdfTarget else { return }
+            .fileImporter(isPresented: $showPDFPicker, allowedContentTypes: [.pdf]) { result in
+                guard let packID = pdfTarget else { errorMessage = "Choose a tour before adding a PDF"; return }
                 Task { await addPDF(result, to: packID) }
             }
             .sheet(isPresented: Binding(get: { shareURL != nil }, set: { if !$0 { shareURL = nil } })) {
@@ -66,7 +68,7 @@ struct PreparedToursView: View {
             Text("\(tour.assets.filter { $0.kind == .slide }.count) slides · version \(tour.manifestVersion)")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Add PDF", systemImage: "doc.badge.plus") { pdfTarget = tour.packID }
+                Button("Add PDF", systemImage: "doc.badge.plus") { pdfTarget = tour.packID; showPDFPicker = true }
                 Button("Share", systemImage: "square.and.arrow.up") { share(tour.packID) }
                     .disabled(tour.assets.isEmpty)
                 Spacer()
