@@ -73,6 +73,15 @@ final class PreparedTourStore {
         return tour
     }
 
+    /// Everything `ChannelService.createChannel(name:prepared:)` needs to present this tour.
+    func launch(_ packID: UUID) throws -> ChannelService.PreparedTourLaunch {
+        let manifest = try tour(packID)
+        guard !manifest.assets.isEmpty else { throw PreparedTourError.emptyTour }
+        return .init(manifest: manifest, sourcesByAssetID: Dictionary(uniqueKeysWithValues: manifest.assets.map {
+            ($0.assetID, assetURL($0.sha256, in: packID))
+        }))
+    }
+
     /// Where the bytes for `sha256` live, for going live and for export.
     func assetURL(_ sha256: String, in packID: UUID) -> URL { assetDirectory(packID).appending(path: sha256) }
 

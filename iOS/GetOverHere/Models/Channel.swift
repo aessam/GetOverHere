@@ -1,4 +1,5 @@
 import Foundation
+import TourSessionCore
 
 struct Channel: Identifiable, Hashable, Sendable {
     let id: String
@@ -9,6 +10,8 @@ struct Channel: Identifiable, Hashable, Sendable {
     var audioHostIP: String?
     var roomAdmissionVersion: Int? = nil
     var isRoomLocked: Bool = true
+    /// Prepared tour pack the guide advertises (ADR-082); drives the guest's "Tour ready" badge.
+    var tourPack: TourPackAdvert? = nil
     /// Local endpoint capability, never accepted from a discovery payload.
     var nearbyAvailable: Bool = false
 

@@ -75,7 +75,8 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
                                 platform: record.isAndroid ? .android : .ios)
             let value = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
                 channelName: record.name, createdBy: peer.id, audioQuality: .standard,
-                wifiSSID: nil, audioHostIP: nil, roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked)
+                wifiSSID: nil, audioHostIP: nil, roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked,
+                tourPackID: record.pack?.packID.uuidString, tourPackVersion: record.pack?.manifestVersion)
             self.emit(self.discoveryIndex.update(value, peer: peer, source: .bluetooth))
         }
         self.bluetooth.onLost = { [weak self] id in
@@ -91,7 +92,8 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
                 platform: record.isAndroid ? .android : .ios)
             let announce = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
                 channelName: record.name, createdBy: peer.id, audioQuality: .standard,
-                roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked)
+                roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked,
+                tourPackID: record.pack?.packID.uuidString, tourPackVersion: record.pack?.manifestVersion)
             emit(discoveryIndex.update(announce, peer: peer, source: .applePeer))
         }
         applePeer.onLost = { [weak self] room in
@@ -147,7 +149,8 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
                                     platform: record.isAndroid ? .android : .ios)
                 let announce = BLECommand.ChannelAnnounce(channelID: record.roomID.uuidString,
                     channelName: record.name, createdBy: peer.id, audioQuality: .standard,
-                    roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked)
+                    roomAdmissionVersion: record.admissionVersion, isRoomLocked: record.isLocked,
+                    tourPackID: record.pack?.packID.uuidString, tourPackVersion: record.pack?.manifestVersion)
                 emit(discoveryIndex.update(announce, peer: peer, source: .aware))
             }
             transport.onLost = { [weak self] room in
@@ -284,7 +287,7 @@ final class LocalControlPlane: NSObject, ControlPlane, NearbyRouteControl {
         if let roomID = UUID(uuidString: announce.channelID), let guideID = UUID(uuidString: announce.createdBy) {
             let record = BluetoothRoomRecord(roomID: roomID, guideID: guideID, name: announce.channelName,
                 isAndroid: false, isLocked: announce.isRoomLocked ?? true,
-                admissionVersion: announce.roomAdmissionVersion ?? 1)
+                admissionVersion: announce.roomAdmissionVersion ?? 1, pack: announce.tourPack)
             hostedRecord = record
             bluetooth.publish(record)
             aware?.publish(record)

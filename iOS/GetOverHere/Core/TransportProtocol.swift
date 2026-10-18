@@ -148,6 +148,14 @@ enum BLECommand: Sendable {
         var audioHostIP: String?
         var roomAdmissionVersion: Int? = nil
         var isRoomLocked: Bool? = nil
+        /// Prepared tour the guide presents (ADR-080/082); optional JSON fields, absent for live-built tours.
+        var tourPackID: String? = nil
+        var tourPackVersion: UInt64? = nil
+
+        var tourPack: TourPackAdvert? {
+            guard let tourPackID, let packID = UUID(uuidString: tourPackID), let tourPackVersion else { return nil }
+            return TourPackAdvert(packID: packID, manifestVersion: tourPackVersion)
+        }
     }
 }
 

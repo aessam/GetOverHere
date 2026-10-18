@@ -2,7 +2,7 @@ import Foundation
 
 /// A prepared tour the guide will present (ADR-080 DSCN-2). Guests holding a pack with this ID show
 /// "Tour ready" before joining; readiness itself is still decided by the session manifest's hashes.
-public struct TourPackAdvert: Equatable, Sendable {
+public struct TourPackAdvert: Hashable, Sendable {
     public let packID: UUID
     public let manifestVersion: UInt64
     public init(packID: UUID, manifestVersion: UInt64) {

@@ -51,6 +51,16 @@ final class TourContentStore {
         nextSlideOrder = 0
     }
 
+    /// Loads a prepared tour (ADR-080) as the live pack; its files stay where the prepared-tour store keeps them.
+    func loadPrepared(_ manifest: TourPackManifestPayload, sourcesByAssetID: [String: URL]) {
+        packID = manifest.packID
+        displayName = manifest.displayName
+        manifestVersion = manifest.manifestVersion
+        assets = manifest.assets
+        self.sourcesByAssetID = sourcesByAssetID
+        nextSlideOrder = manifest.assets.map(\.order).max().map { $0 &+ 1 } ?? 0
+    }
+
     func importSlide(data: Data, mimeType: String) async throws -> TourAssetDescriptor {
         guard let packID else { throw TourContentStoreError.packNotStarted }
         let assetID = UUID().uuidString.lowercased()

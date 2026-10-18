@@ -184,6 +184,8 @@ final class ChannelService {
         let mimeType: String
     }
 
+    @ObservationIgnored private var pendingPreparedTour: PreparedTourLaunch?
+
     // MARK: - Dependencies
 
     private let coordinator: NetworkCoordinator
@@ -318,10 +320,17 @@ final class ChannelService {
 
     // MARK: - Channel Management
 
-    func createChannel(name: String) {
+    /// A prepared tour to present when the guide goes live (ADR-080 DSCN-1).
+    struct PreparedTourLaunch: Sendable {
+        let manifest: TourPackManifestPayload
+        let sourcesByAssetID: [String: URL]
+    }
+
+    func createChannel(name: String, prepared: PreparedTourLaunch? = nil) {
         guard !companionModeActive else { tourFeatureError = "Stop companion mode before creating a tour."; return }
         sessionAttempt &+= 1
-        let channel = Channel(
+        pendingPreparedTour = prepared
+        var channel = Channel(
             id: UUID().uuidString,
             name: name,
             createdAt: Date(),
@@ -329,6 +338,9 @@ final class ChannelService {
             roomAdmissionVersion: 2,
             isRoomLocked: false
         )
+        channel.tourPack = prepared.map {
+            TourPackAdvert(packID: $0.manifest.packID, manifestVersion: $0.manifest.manifestVersion)
+        }
         guard let sessionID = UUID(uuidString: channel.id),
               let participantID = UUID(uuidString: coordinator.controlPlane.localPeer.id) else {
             Logger.channel.error("Cannot create session with non-UUID channel or participant identity")
@@ -438,7 +450,12 @@ final class ChannelService {
 
             broadcastChannelAnnounce(channel)
             findNearbyTours()
+            if let prepared = pendingPreparedTour {
+                pendingPreparedTour = nil
+                Task { await publishPreparedTour(prepared) }
+            }
         } catch {
+            pendingPreparedTour = nil
             rollbackFailedGuideSession(channelID: channel.id)
             tourCode = nil
             tourFeatureError = error.localizedDescription
@@ -595,6 +612,21 @@ final class ChannelService {
         )
 
         Logger.channel.info("Joined megaphone")
+    }
+
+    /// Presents a prepared tour: the same descriptors (hashes) guests may already hold from its `.gohtour`.
+    private func publishPreparedTour(_ prepared: PreparedTourLaunch) async {
+        guard listenState == .broadcasting else { return }
+        do {
+            contentStore.loadPrepared(prepared.manifest, sourcesByAssetID: prepared.sourcesByAssetID)
+            let manifest = try contentStore.manifestPayload()
+            try await assetTransferService.hostTourPack(manifest, sourcesByAssetID: contentStore.sourcesByAssetID)
+            try tourControlService.updateDeck(deckID: manifest.packID, slides: manifest.assets)
+            tourFeatureError = nil
+        } catch {
+            tourFeatureError = error.localizedDescription
+            Logger.channel.error("Prepared tour publish failed")
+        }
     }
 
     func importSlides(_ imports: [SlideImport]) async {
@@ -1025,7 +1057,9 @@ final class ChannelService {
             wifiSSID: nil,
             audioHostIP: channel.audioHostIP,
             roomAdmissionVersion: channel.roomAdmissionVersion,
-            isRoomLocked: channel.isRoomLocked
+            isRoomLocked: channel.isRoomLocked,
+            tourPackID: channel.tourPack?.packID.uuidString,
+            tourPackVersion: channel.tourPack?.manifestVersion
         )
         coordinator.controlPlane.broadcast(.channelAnnounce(announce: announce))
     }
@@ -1065,6 +1099,7 @@ final class ChannelService {
                         self.channels[idx].audioHostIP = announce.audioHostIP
                         self.channels[idx].roomAdmissionVersion = announce.roomAdmissionVersion
                         self.channels[idx].isRoomLocked = announce.isRoomLocked ?? true
+                        self.channels[idx].tourPack = announce.tourPack
                         self.channels[idx].nearbyAvailable = nearbyAvailable
                         Logger.channel.info("Updated discovered megaphone")
 
@@ -1086,6 +1121,7 @@ final class ChannelService {
                             audioHostIP: announce.audioHostIP,
                             roomAdmissionVersion: announce.roomAdmissionVersion,
                             isRoomLocked: announce.isRoomLocked ?? true,
+                            tourPack: announce.tourPack,
                             nearbyAvailable: nearbyAvailable
                         )
                         self.channels.append(channel)
