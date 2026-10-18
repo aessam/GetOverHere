@@ -9,9 +9,12 @@
   island (Pixel: Aware publish ready; iPhone: `_goh-peer._tcp` instance appears/disappears with the tour).
 - Not yet proven: any far guest on device (needs the second iPhone and the Pixel 11) — run T1–T8 from
   `CrossIslandDesign.md`; `scripts/android_ui_join.sh`, `scripts/ios_drive.py join`, relay toggles in Diagnostics.
-- Open decisions/work: QST-1 (T5: should the guide refuse more direct other-platform guests than bridge + 2
-  standbys?) — not implemented until answered; generation-step failover (today: island revoked → far guests
-  reconnect and rediscover); `SignedNativeSessionTest` free-port flake.
+- QST-1 answered and implemented (tag `p6-relay-t5`): bridge + 2 standbys direct, further other-platform guests
+  refused at the lane handshake; earlier admissions always readmitted.
+- Failover (ADR-083) is the guest reconnect path: credential and guide pin retained, route re-prepared from the new
+  island record, lanes re-handshake with generation + 1, no readmission. Lifecycle tests on both platforms; the
+  physical gap (T3 ≤ 15 s) is unmeasured until the device matrix.
+- Remaining: device matrix T1–T8 only. Known: `SignedNativeSessionTest` free-port race flake.
 
 ## October 18 (later) — relay core done; app wiring waits for the new phones
 

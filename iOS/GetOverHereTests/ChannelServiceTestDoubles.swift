@@ -17,14 +17,19 @@ enum LifecycleLaneError: LocalizedError {
     }
 }
 
-nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, Sendable {
+nonisolated final class LifecycleRoomAdmission: RoomAdmissionInterface, @unchecked Sendable {
     private let allowNearby: Bool
+    private let lock = NSLock()
+    private var joins = 0
+    /// Admissions performed (a relay failover must not add one, ADR-083).
+    var joinCount: Int { lock.withLock { joins } }
     init(allowNearby: Bool = false) { self.allowNearby = allowNearby }
     func start(sessionID: UUID, sessionCode: String, signer: GuideFrameSigner) throws {}
     func update(policy: RoomAccessPolicy) throws {}
     func stop() {}
     func join(host: String, sessionID: UUID, expectedGuideID: UUID, code: String?) throws -> AdmittedRoomCredentials {
         if host == "127.0.0.1", !allowNearby { throw RoomAdmissionError.invalidMessage }
+        lock.withLock { joins += 1 }
         let policy = try RoomAccessPolicy(sessionID: sessionID, code: nil)
         let guide = try RoomAdmissionV2.Guide(sessionID: sessionID, policy: policy,
             signer: GuideFrameSigner(sessionID: sessionID, guideID: expectedGuideID))
@@ -43,6 +48,10 @@ final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
     var nearbyPrepareCalls = 0
     var nearbyPrepareError: (any Error)?
     private var guestRoute: NearbyGuestRoute?
+    /// The relay host the next prepared route reads from its room record (ADR-081).
+    var nearbyRelayHost: RelayHostAdvert?
+    /// The old island closed: the next preparation builds a new route.
+    func forgetNearbyRoute() { guestRoute = nil }
     func setAwareDiscoveryMode(_ mode: BluetoothDiscoveryMode) {}
     func canConnectNearby(roomID: UUID) -> Bool { nearbyAvailable }
     func prepareNearbyGuest(roomID: UUID, expectedGuideID: UUID) async throws -> NearbyGuestRoute {
@@ -52,7 +61,7 @@ final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
         usesBluetoothGuestRoute = true
         if let guestRoute, guestRoute.roomID == roomID { return guestRoute }
         let route = NearbyGuestRoute(adapterHost: "127.0.0.1", transport: .bluetooth,
-            roomID: roomID, routeID: UUID())
+            roomID: roomID, routeID: UUID(), relayHost: nearbyRelayHost)
         guestRoute = route
         return route
     }
@@ -101,6 +110,8 @@ final class LifecycleControlPlane: ControlPlane, NearbyRouteControl {
 
 @MainActor
 final class LifecycleAudioPlane: AudioPlane {
+    private(set) var joinedRelayRoute: RelayRoute?
+    func setRelayRoute(_ route: RelayRoute?) { joinedRelayRoute = route }
     private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var isActive = false
@@ -162,6 +173,8 @@ final class LifecycleAudioPlane: AudioPlane {
 
 @MainActor
 final class LifecycleControlTransport: SessionControlTransport {
+    private(set) var joinedRelayRoute: RelayRoute?
+    func setRelayRoute(_ route: RelayRoute?) { joinedRelayRoute = route }
     private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var configureCalls = 0
@@ -249,6 +262,8 @@ final class LifecycleControlTransport: SessionControlTransport {
 
 @MainActor
 final class LifecycleAssetTransport: SessionAssetTransport {
+    private(set) var joinedRelayRoute: RelayRoute?
+    func setRelayRoute(_ route: RelayRoute?) { joinedRelayRoute = route }
     private(set) var guideAuthentication: SessionGuideAuthentication = .unconfigured
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication) { guideAuthentication = authentication }
     var configureCalls = 0

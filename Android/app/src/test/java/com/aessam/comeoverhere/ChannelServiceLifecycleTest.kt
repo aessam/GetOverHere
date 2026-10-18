@@ -281,6 +281,32 @@ class ChannelServiceLifecycleTest {
         } finally { h.close() }
     }
 
+    @Test fun farGuestFailsOverToTheNextBridgeWithoutReadmission() {
+        val admission = RouteAdmission()
+        val h = Harness(admissionOverride = admission)
+        try {
+            val first = com.aessam.toursession.RelayHostAdvert(UUID.randomUUID(), 1)
+            val next = com.aessam.toursession.RelayHostAdvert(UUID.randomUUID(), 2)
+            h.controlPlane.nearbyAvailable = true
+            h.controlPlane.nearbyTransport = com.aessam.toursession.SessionTransportRoute.WIFI_AWARE
+            h.controlPlane.nearbyRelayHost = first
+            h.discoverAndJoin(null)
+            h.connectGuest()
+            assertEquals(first, h.control.joinedRelayRoute?.host)
+            val starts = h.control.startGuestCalls
+            // The guide assigned the standby (generation + 1); the old island closed and the standby publishes.
+            h.controlPlane.activeNearbyGuestRoute = null
+            h.controlPlane.nearbyRelayHost = next
+            h.control.emit(SessionControlEvent.Disconnected)
+            h.scheduler.advanceTimeBy(2); h.scheduler.runCurrent()
+            awaitCondition("reconnect through the next bridge") { h.scheduler.runCurrent(); h.control.startGuestCalls > starts }
+            for (route in listOf(h.control.joinedRelayRoute, h.asset.joinedRelayRoute, h.audioPlane.joinedRelayRoute)) {
+                assertEquals(next, requireNotNull(route).host)
+            }
+            assertEquals("ADR-083: failover repeats only the relay lane handshake", 1, admission.calls.size)
+        } finally { h.close() }
+    }
+
     @Test fun islandRouteAuthenticatesEveryLaneToTheBridgeAndNeverHosts() {
         val advertiser = object : com.aessam.comeoverhere.core.IslandAdvertiserInterface {
             var starts = 0

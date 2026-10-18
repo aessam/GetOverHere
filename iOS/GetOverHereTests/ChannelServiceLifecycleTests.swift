@@ -346,6 +346,30 @@ struct ChannelServiceLifecycleTests {
         #expect(h.controlPlane.nearbyStopCalls == stops)
     }
 
+    @Test("A far guest fails over to the next bridge without readmission (ADR-083)")
+    @MainActor
+    func farGuestFailsOverToTheNextBridgeWithoutReadmission() async throws {
+        let admission = LifecycleRoomAdmission(allowNearby: true)
+        let h = try Harness(reconnectBaseDelay: .milliseconds(10), allowNearbyAdmission: true, admission: admission)
+        defer { h.service.terminate(); h.close() }
+        let first = RelayHostAdvert(hostID: UUID(), bridgeGeneration: 1)
+        let next = RelayHostAdvert(hostID: UUID(), bridgeGeneration: 2)
+        h.controlPlane.nearbyAvailable = true
+        h.controlPlane.nearbyRelayHost = first
+        _ = try await discoverAndJoin(h, hostIP: nil)
+        try await connectGuest(h)
+        #expect(h.control.joinedRelayRoute?.host == first)
+        // The guide assigned the standby (generation + 1); the old island closed and the standby publishes.
+        h.controlPlane.forgetNearbyRoute()
+        h.controlPlane.nearbyRelayHost = next
+        h.control.emit(.disconnected)
+        try await waitUntil("reconnected through the next bridge") { h.control.startGuestCalls == 2 }
+        #expect(h.control.joinedRelayRoute?.host == next)
+        #expect(h.asset.joinedRelayRoute?.host == next)
+        #expect(h.audioPlane.joinedRelayRoute?.host == next)
+        #expect(admission.joinCount == 1, "failover repeats only the relay lane handshake")
+    }
+
     @Test("Retry Audio cannot reopen an old adapter while native recovery is suspended")
     @MainActor
     func retryAudioWaitsForSuspendedNearbyRecovery() async throws {
