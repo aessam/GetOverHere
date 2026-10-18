@@ -2229,3 +2229,8 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Build `01909e3` on iPhone 13 Pro guest in Android guide tour Lock-be67f0 (Wi-Fi off, Bluetooth). User confirmed by ear that the megaphone plays through the iPhone Speaker after the fix. Device log: 5 live Earpiece/Speaker switches, playback ~32 kB/s with no gap (03:02:50–03:03:50 UTC).
 - Software gate after the fix: `scripts/verify_tour_session.sh` passed; iOS 217 tests, 213 passed, 0 failed, 4 skipped.
 - Phase 5 acceptance runs (10-min locked iPhone guest, 30-min endurance with page turns) deferred by the user.
+
+### 2026-10-18 07:49–08:43 — Phase 5 acceptance through both real UIs (build 01909e3 + 13362f6)
+- Step 5, locked iPhone guest (`scripts/verify_locked_iphone_guest_ui.sh 600`, /tmp/GetOverHereLockedUI-7zrFfK): Pixel 7 guide created through its accessibility tree, iPhone 13 Pro guest joined via WDA and was locked 651 s. iPhone playback log while locked: 65 lines, max gap 10.0 s, 31,996 B/s (PCM ratio 1.0), covered 640 s; LISTENING over Bluetooth after unlock. PASS.
+- Step 6, 30-min endurance with page turns (`PAGE_TURN_EVERY=60 scripts/verify_real_ui_pdf.sh stress-20c 30 400 1800`, /tmp/GetOverHereRealUI-xhTYgb): iPhone guide, Pixel guest, cold cache. 20-page deck "1 ready" after 316 s; 1,800 s tail with 30 page turns, 0 stalled 30 s windows; guest audio frames 6,700 → 43,900 (~20.7/s, the full rate); reconnects 0, asset failures 0. PASS.
+- The Pixel charges from the Mac as AC (`mPlugType=1`), so `svc power stayon usb` did not keep it awake early in step 5; set to `stayon true` (15), kept permanently by user choice.

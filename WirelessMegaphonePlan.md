@@ -198,7 +198,10 @@ Phase 5 result through both real UIs (no instrumentation), iPhone 13 Pro guide +
   seen once in an instrumented run) and FND-10 ("No reachable nearby route could be prepared" after
   several tours in one guide process). The guide now records lane removals and accept rejections in
   `Documents/lane-events.log`; the real-UI script pulls it every run.
-- Not run: locked iPhone guest, Android-guide endurance, audibility/latency.
+- 2026-10-18 PASS: locked iPhone guest 10 min with an Android guide (PCM ratio 1.0, max gap 10 s), and
+  30-min endurance with 30 page turns (0 stalls, 0 reconnects). Tag `phase5-accepted`.
+- Fixed after closure: FND-P5-5 (`13362f6`), iPhone guest Speaker switch OSStatus -50 (`01909e3`, user heard it).
+- Not run: audibility/latency measurement (no Mac audio allowed).
 
 Phase 6 (devices: iPhone 13 Pro, second iPhone, Pixel 7, Pixel 11):
 1. Tour packs (ADR-080): container format in both cores with fixtures; guide "Share Tour Pack";
