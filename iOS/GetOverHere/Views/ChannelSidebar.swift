@@ -99,6 +99,9 @@ struct ChannelSidebar: View {
                         .accessibilityIdentifier("bluetoothRoomDiscovery")
                     Toggle("Wi-Fi Aware discovery", isOn: Binding(
                         get: { service.awareDiscoveryEnabled }, set: { service.awareDiscoveryEnabled = $0 }))
+                    Toggle("Relay host (experimental)", isOn: Binding(
+                        get: { service.relayHostCapable }, set: { service.relayHostCapable = $0 }))
+                        .accessibilityIdentifier("relayHostCapable")
                     Button("Wi-Fi Aware Lab", action: onOpenWiFiAwareLab)
                 }
             }

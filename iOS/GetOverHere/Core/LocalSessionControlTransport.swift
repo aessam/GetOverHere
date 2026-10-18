@@ -42,6 +42,8 @@ private final class LocalAuthenticatedSessionTransport {
 
     private(set) var isActive = false
     var hostIP: String?
+    /// SessionCapabilities this guest advertises in its hello (relayHost, ADR-081); read at each guest start.
+    var helloCapabilities: UInt32 = 0
 
     init(port: UInt16, applicationLane: SessionLane, authentication: SessionGuideAuthentication) {
         self.port = port
@@ -272,6 +274,7 @@ private final class LocalAuthenticatedSessionTransport {
         let controlPort = port
         let maximumFrameSize = maximumFrameSize
         let expectedApplicationLane = applicationLane
+        let capabilities = helloCapabilities
         runGeneration &+= 1
         let generation = runGeneration
 
@@ -331,7 +334,8 @@ private final class LocalAuthenticatedSessionTransport {
                     configuration: configuration,
                     requestedLane: expectedApplicationLane,
                     maximumFrameSize: maximumFrameSize,
-                    authentication: authentication
+                    authentication: authentication,
+                    capabilities: capabilities
                 )
             } catch SessionProtocolError.unsupportedMajorVersion(let remoteMajor, let localMajor) {
                 socket.close()
@@ -741,7 +745,8 @@ private final class LocalAuthenticatedSessionTransport {
         configuration: Configuration,
         requestedLane: SessionLane,
         maximumFrameSize: Int,
-        authentication: SessionGuideAuthentication
+        authentication: SessionGuideAuthentication,
+        capabilities: UInt32
     ) throws -> UUID {
         guard let challengeFrame = readFrame(fd: fd, maximumSize: maximumFrameSize) else {
             throw ControlTransportError.invalidWelcome
@@ -769,13 +774,13 @@ private final class LocalAuthenticatedSessionTransport {
             clientNonce: clientNonce,
             role: .guest,
             platform: configuration.platform,
-            capabilities: 0,
+            capabilities: capabilities,
             displayName: configuration.displayName
         )
         let hello = try HelloPayload(
             role: .guest,
             platform: configuration.platform,
-            capabilities: 0,
+            capabilities: capabilities,
             displayName: configuration.displayName,
             requestedLane: requestedLane,
             clientNonce: clientNonce,
@@ -937,6 +942,10 @@ final class LocalSessionControlTransport: SessionControlTransport {
     var hostIP: String? {
         get { transport.hostIP }
         set { transport.hostIP = newValue }
+    }
+    var helloCapabilities: UInt32 {
+        get { transport.helloCapabilities }
+        set { transport.helloCapabilities = newValue }
     }
 
     func configureSession(

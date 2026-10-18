@@ -209,6 +209,13 @@ final class HybridSessionControlTransport: SessionControlTransport {
         get { local.hostIP }
         set { local.hostIP = newValue }
     }
+    var helloCapabilities: UInt32 {
+        get { local.helloCapabilities }
+        set {
+            local.helloCapabilities = newValue
+            aware?.helloCapabilities = newValue
+        }
+    }
 
     init(
         local: SessionControlTransport,

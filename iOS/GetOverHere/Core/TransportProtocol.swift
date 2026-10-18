@@ -347,6 +347,8 @@ enum SessionControlEvent: Sendable {
 protocol SessionControlTransport: AnyObject {
     var isActive: Bool { get }
     var hostIP: String? { get set }
+    /// SessionCapabilities this guest advertises in its control hello (relayHost, ADR-081).
+    var helloCapabilities: UInt32 { get set }
     func configureGuideAuthentication(_ authentication: SessionGuideAuthentication)
 
     func configureSession(
@@ -366,6 +368,14 @@ protocol SessionControlTransport: AnyObject {
     func sendLeave() async
     func stop()
     func clearSession()
+}
+
+extension SessionControlTransport {
+    /// Transports without a relay-capable hello (Wi-Fi Aware lanes, test doubles) advertise nothing.
+    var helloCapabilities: UInt32 {
+        get { 0 }
+        set {}
+    }
 }
 
 enum SessionAssetEvent: Sendable {

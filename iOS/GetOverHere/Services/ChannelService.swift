@@ -239,6 +239,17 @@ final class ChannelService {
         tourControlService.connectedGuestCount
     }
 
+    /// Experimental (ADR-081): advertise this guest as a relay host; takes effect at the next control-lane hello.
+    var relayHostCapable = false { didSet { tourControlService.setRelayHostCapable(relayHostCapable) } }
+
+    /// Generation of the guide's bridge assignment when it names this device (ADR-081), else nil.
+    var islandBridgeGeneration: UInt64? {
+        guard let assignment = tourControlService.bridgeAssignment,
+              assignment.bridgeID.uuidString.caseInsensitiveCompare(coordinator.controlPlane.localPeer.id) == .orderedSame
+        else { return nil }
+        return assignment.generation
+    }
+
     /// A comparison aid, never a claim that first-contact nearby identity was independently verified.
     var guideKeyFingerprint: String? {
         guard let key = guideSigner?.publicKey ?? guestGuidePin.identity?.publicKey else { return nil }

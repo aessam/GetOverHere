@@ -2267,3 +2267,9 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 ### 2026-10-18 13:03 — W5 relayUpstream (both cores, both guides, Android bridge)
 - New kind `relayUpstream` 0x26 (control). The Android bridge wraps island guests' sealed audioStatus/leave in `RelayUpstreamRecord`; the guide (iOS and Android) opens the inner frame with the session credential and counts it as advisory readiness only while its sender is the current bridge.
 - `GOH_IOS_DESTINATION='platform=iOS Simulator,id=5D72BABA-9416-4B7A-ABAA-B0F2628E84EE' scripts/verify_tour_session.sh`: "Tour session verification passed", exit 0 (Swift/Kotlin parity, Android unit 241, core 106, iOS simulator tests).
+
+### 2026-10-18 13:25 — Relay P2 reverse on devices: Android guide assigns the iPhone bridge (PARTIAL)
+- iOS gains the relay-capable hello (`helloCapabilities`), a DEBUG "Relay host (experimental)" toggle and an "Island bridge · generation N" label. Build installed on iPhone 13 Pro (00008110-000528410CF8801E).
+- Pixel 7 created "PixelGuide" through its UI (LIVE). iPhone via WDA: Diagnostics → Relay host on (value=1), Bluetooth room discovery on, room listed "PixelGuide, Nearby connection available", `ios_drive.py join PixelGuide` ok in 3.9 s.
+- After 15 s: iPhone "LISTENING" and "Island bridge · generation 1"; Pixel "1 connected · 1 audio ready". Screenshot /tmp/GetOverHerePhase5/p4-iphone-bridge.png.
+- Not covered: the iPhone island itself (P4 step 2–3), far iPhone guests (needs the second iPhone).

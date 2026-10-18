@@ -474,6 +474,11 @@ struct ChannelDetailView: View {
 
     @ViewBuilder
     private var guideIdentityDetails: some View {
+        if let generation = service.islandBridgeGeneration {
+            Text("Island bridge · generation \(generation)")
+                .font(.caption)
+                .accessibilityIdentifier("islandBridge")
+        }
         if let fingerprint = service.guideKeyFingerprint {
             DisclosureGroup("Guide identity") {
                 Text(fingerprint).font(.caption.monospaced())

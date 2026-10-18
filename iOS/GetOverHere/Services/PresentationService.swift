@@ -231,6 +231,11 @@ final class TourControlService {
         }
     }
 
+    /// Experimental (ADR-081): advertise this guest as able to bridge its platform island; read at the next hello.
+    func setRelayHostCapable(_ capable: Bool) {
+        transport.helloCapabilities = capable ? SessionCapabilities.relayHost.rawValue : 0
+    }
+
     func startGuest(hostIP: String) {
         sessionGeneration &+= 1
         installTransportHandler()
