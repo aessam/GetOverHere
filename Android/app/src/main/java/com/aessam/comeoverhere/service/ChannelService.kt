@@ -1106,6 +1106,7 @@ class ChannelService(
             audioHostIP = channel.audioHostIP,
             roomAdmissionVersion = channel.roomAdmissionVersion,
             isRoomLocked = channel.isRoomLocked,
+            tourPack = channel.tourPack,
         )
         coordinator.controlPlane.broadcast(announce)
     }
@@ -1147,6 +1148,7 @@ class ChannelService(
                                 roomAdmissionVersion = command.roomAdmissionVersion,
                                 isRoomLocked = command.isRoomLocked ?: true,
                                 nearbyAvailable = nearbyAvailable,
+                                tourPack = command.tourPack,
                             )
                             _channels.value = _channels.value.map {
                                 if (it.id == command.channelID) updated else it
@@ -1171,6 +1173,7 @@ class ChannelService(
                                 roomAdmissionVersion = command.roomAdmissionVersion,
                                 isRoomLocked = command.isRoomLocked ?: true,
                                 nearbyAvailable = nearbyAvailable,
+                                tourPack = command.tourPack,
                             )
                             _channels.value = _channels.value + channel
                             Log.i(TAG, "Discovered megaphone")

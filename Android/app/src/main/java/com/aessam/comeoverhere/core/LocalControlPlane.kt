@@ -198,7 +198,8 @@ class LocalControlPlane(
                     if (record.isAndroid) PeerInfo.Platform.ANDROID else PeerInfo.Platform.IOS)
                 emit(discoveryIndex.update(BLECommand.ChannelAnnounce(channelID = record.roomID.toString(),
                     channelName = record.name, createdBy = peer.id, audioQuality = AudioQuality.STANDARD,
-                    wifiSSID = null, audioHostIP = null, roomAdmissionVersion = record.admissionVersion, isRoomLocked = record.isLocked),
+                    wifiSSID = null, audioHostIP = null, roomAdmissionVersion = record.admissionVersion, isRoomLocked = record.isLocked,
+                    tourPack = record.pack),
                     peer, RoomDiscoveryIndex.Source.AWARE))
             }
         }
@@ -219,6 +220,7 @@ class LocalControlPlane(
                     channelID = record.roomID.toString(), channelName = record.name, createdBy = peer.id,
                     audioQuality = AudioQuality.STANDARD, wifiSSID = null, audioHostIP = null,
                     roomAdmissionVersion = record.admissionVersion, isRoomLocked = record.isLocked,
+                    tourPack = record.pack,
                 ), peer, RoomDiscoveryIndex.Source.BLUETOOTH))
             }
         }
@@ -350,7 +352,8 @@ class LocalControlPlane(
 
     private fun publishChannel(announce: BLECommand.ChannelAnnounce) {
         val record = BluetoothRoomRecord(UUID.fromString(announce.channelID), UUID.fromString(announce.createdBy),
-            announce.channelName, true, announce.isRoomLocked ?: true, admissionVersion = announce.roomAdmissionVersion ?: 1)
+            announce.channelName, true, announce.isRoomLocked ?: true, admissionVersion = announce.roomAdmissionVersion ?: 1,
+            pack = announce.tourPack)
         hostedRecord = record
         bluetooth.publish(record)
         updateAwareMode()

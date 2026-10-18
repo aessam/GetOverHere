@@ -1,5 +1,6 @@
 package com.aessam.comeoverhere.core
 
+import com.aessam.toursession.TourPackAdvert
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.*
@@ -52,6 +53,8 @@ sealed class BLECommand {
         val audioHostIP: String? = null,
         val roomAdmissionVersion: Int? = null,
         val isRoomLocked: Boolean? = null,
+        /** Prepared tour the guide presents (ADR-080/082); optional JSON keys, same as iOS. */
+        val tourPack: TourPackAdvert? = null,
     ) : BLECommand()
 
     data class ChannelUnavailable(val channelID: String) : BLECommand()
@@ -210,6 +213,10 @@ fun BLECommand.toJson(): ByteArray {
                 if (audioHostIP != null) put("audioHostIP", audioHostIP) else put("audioHostIP", JsonNull)
                 roomAdmissionVersion?.let { put("roomAdmissionVersion", it) }
                 isRoomLocked?.let { put("isRoomLocked", it) }
+                tourPack?.let {
+                    put("tourPackID", it.packID.toString().uppercase())
+                    put("tourPackVersion", JsonUnquotedLiteral(java.lang.Long.toUnsignedString(it.manifestVersion)))
+                }
             }
         }
         is BLECommand.ChannelEnded -> buildJsonObject {
@@ -266,6 +273,11 @@ fun parseBLECommand(data: ByteArray): BLECommand? {
                     audioHostIP = inner["audioHostIP"]?.let { if (it is JsonNull) null else it.jsonPrimitive.content },
                     roomAdmissionVersion = inner["roomAdmissionVersion"]?.jsonPrimitive?.content?.toIntOrNull(),
                     isRoomLocked = inner["isRoomLocked"]?.jsonPrimitive?.content?.toBooleanStrictOrNull(),
+                    tourPack = run {
+                        val id = inner["tourPackID"]?.jsonPrimitive?.contentOrNull?.let { runCatching { java.util.UUID.fromString(it) }.getOrNull() }
+                        val version = inner["tourPackVersion"]?.jsonPrimitive?.contentOrNull?.toULongOrNull()
+                        if (id != null && version != null) TourPackAdvert(id, version.toLong()) else null
+                    },
                 )
             }
             "channelEnded" in obj -> {

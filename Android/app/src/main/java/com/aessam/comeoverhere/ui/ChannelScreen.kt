@@ -680,12 +680,19 @@ internal fun ChannelListView(
                     )
                 },
                 trailingContent = {
-                    Icon(
-                        Icons.Default.Circle,
-                        contentDescription = if (channel.audioHostIP == null && channel.createdBy != localPeerID) "Discovery only" else "Live",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(8.dp)
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val packLibrary = (LocalContext.current.applicationContext as? com.aessam.comeoverhere.ComeOverHereApp)?.packLibrary
+                        if (channel.tourPack != null && packLibrary?.holds(channel.tourPack) == true) {
+                            Text("Tour ready", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(end = 8.dp))
+                        }
+                        Icon(
+                            Icons.Default.Circle,
+                            contentDescription = if (channel.audioHostIP == null && channel.createdBy != localPeerID) "Discovery only" else "Live",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(8.dp)
+                        )
+                    }
                 },
                 modifier = Modifier.clickable { if (canJoin(channel)) onJoin(channel) else onUnavailable(channel) }
             )

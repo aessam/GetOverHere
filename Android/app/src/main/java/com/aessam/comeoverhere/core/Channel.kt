@@ -11,6 +11,8 @@ data class Channel(
     val isRoomLocked: Boolean = true,
     /** Locally resolved endpoint capability, not a remote advertisement flag. */
     val nearbyAvailable: Boolean = false,
+    /** Prepared tour pack the guide advertises (ADR-082); drives the guest's "Tour ready" badge. */
+    val tourPack: com.aessam.toursession.TourPackAdvert? = null,
 ) {
     companion object {
         val TOWNSQUARE = Channel(
