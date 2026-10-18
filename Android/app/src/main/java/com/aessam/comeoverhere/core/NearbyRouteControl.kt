@@ -29,6 +29,8 @@ data class NearbyGuestRoute(
     val transport: SessionTransportRoute,
     val roomID: UUID,
     val routeID: UUID,
+    /** Set when this room is an island hosted by a bridge (ADR-081): lanes authenticate to that bridge. */
+    val relayHost: com.aessam.toursession.RelayHostAdvert? = null,
 ) {
     init {
         require(adapterHost == "127.0.0.1") { "A nearby adapter must use its owned IPv4 loopback endpoint" }

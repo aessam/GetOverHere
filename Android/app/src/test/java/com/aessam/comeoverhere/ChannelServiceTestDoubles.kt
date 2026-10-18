@@ -65,6 +65,7 @@ internal class LifecycleControlPlane(
     var nearbyPrepareCalls = 0
     var nearbyPrepareError: Exception? = null
     var nearbyTransport = com.aessam.toursession.SessionTransportRoute.BLUETOOTH
+    var nearbyRelayHost: com.aessam.toursession.RelayHostAdvert? = null
     override var activeNearbyGuestRoute: com.aessam.comeoverhere.core.NearbyGuestRoute? = null
     // Mirrors LocalControlPlane: the policy filters which nearby carrier may be offered.
     override var allowedTransportPolicy = com.aessam.toursession.AllowedTransportPolicy.AUTOMATIC
@@ -74,7 +75,7 @@ internal class LifecycleControlPlane(
         nearbyPrepareError?.let { throw it }
         nearbyPrepareCalls++; usesBluetoothGuestRoute = nearbyTransport == com.aessam.toursession.SessionTransportRoute.BLUETOOTH
         return activeNearbyGuestRoute ?: com.aessam.comeoverhere.core.NearbyGuestRoute(
-            "127.0.0.1", nearbyTransport, roomID, UUID.randomUUID(),
+            "127.0.0.1", nearbyTransport, roomID, UUID.randomUUID(), nearbyRelayHost,
         ).also { activeNearbyGuestRoute = it }
     }
     override fun stopNearbyGuest() { nearbyStopCalls++; usesBluetoothGuestRoute = false; activeNearbyGuestRoute = null }
@@ -111,6 +112,8 @@ internal class LifecycleControlPlane(
 }
 
 internal class LifecycleAudioPlane : AudioPlane {
+    var joinedRelayRoute: com.aessam.comeoverhere.core.RelayRoute? = null
+    override fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) { joinedRelayRoute = route }
     var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
     override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     override var isActive = false
@@ -171,6 +174,10 @@ internal class LifecycleAudioPlane : AudioPlane {
 }
 
 internal class LifecycleControlTransport : SessionControlTransport {
+    var upstreamTap: ((ByteArray) -> Unit)? = null
+    override fun setUpstreamFrameTap(tap: ((ByteArray) -> Unit)?) { upstreamTap = tap }
+    var joinedRelayRoute: com.aessam.comeoverhere.core.RelayRoute? = null
+    override fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) { joinedRelayRoute = route }
     override var helloCapabilities: Long = 0
     var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
     override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
@@ -242,6 +249,8 @@ internal class LifecycleControlTransport : SessionControlTransport {
 }
 
 internal class LifecycleAssetTransport : SessionAssetTransport {
+    var joinedRelayRoute: com.aessam.comeoverhere.core.RelayRoute? = null
+    override fun setRelayRoute(route: com.aessam.comeoverhere.core.RelayRoute?) { joinedRelayRoute = route }
     var configuredAuthentication: com.aessam.comeoverhere.core.SessionGuideAuthentication? = null
     override fun configureGuideAuthentication(authentication: com.aessam.comeoverhere.core.SessionGuideAuthentication) { configuredAuthentication = authentication }
     var configureCalls = 0

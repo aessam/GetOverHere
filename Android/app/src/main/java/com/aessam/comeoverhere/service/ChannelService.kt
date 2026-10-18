@@ -220,6 +220,7 @@ class ChannelService(
         stopRelayIsland()
         val factory = islandAdvertiserFactory ?: return
         if (!_relayHostCapable.value) return
+        if (resolvedGuestRoute?.relayHost != null) return // a far guest never hosts (depth 2 maximum)
         val record = com.aessam.toursession.BluetoothRoomRecord(UUID.fromString(channel.id), guideID, channel.name,
             isAndroid = false, isLocked = channel.isRoomLocked, admissionVersion = channel.roomAdmissionVersion ?: 2)
         val island = com.aessam.comeoverhere.core.RelayIslandHost(UUID.fromString(localPeerID), sessionID, guideID, credential,
@@ -1330,6 +1331,12 @@ class ChannelService(
         val authentication = SessionGuideAuthentication.Guest(GuideFrameVerifier(identity.publicKey, identity.sessionId, identity.guideId))
         startRelayIsland(channel, sessionID, identity.guideId, credential,
             GuideFrameVerifier(identity.publicKey, identity.sessionId, identity.guideId))
+        // A far guest joined an island: every lane authenticates to the bridge and verifies guide frames as usual.
+        val relayRoute = resolvedGuestRoute?.relayHost?.let { com.aessam.comeoverhere.core.RelayRoute(it, identity.guideId) }
+        if (relayRoute != null) Log.i(TAG, "Joining through island bridge ${relayRoute.host.hostID} generation ${relayRoute.host.bridgeGeneration}")
+        tourControlService.setRelayRoute(relayRoute)
+        assetTransferService.setRelayRoute(relayRoute)
+        coordinator.selectAudioPlane().setRelayRoute(relayRoute)
         tourControlService.configureGuideAuthentication(authentication)
         tourControlService.configureSession(
             sessionID,

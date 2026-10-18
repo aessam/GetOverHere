@@ -1,5 +1,17 @@
 # GetOverHere — Next Session
 
+## October 18 (13:00) — relay wiring: Android bridge and far guest in code, iPhone bridge next
+
+- P2 on device (tag `p6-relay-p2-device`): iPhone guide assigned the relay-capable Pixel 7 as bridge.
+- P1 step 3 on device (tag `p6-relay-p1-island`): the BLE-joined Pixel hosts an Aware island (own
+  `WiFiAwareRoomTransport`, loopback `RelayLaneServer`s on ephemeral ports, admission tunneled to the guide).
+- P3 steps 1–3 (JVM only, no second Android): far-guest relay handshake on all three lanes, relayed manifest +
+  bridge-served chunks, island route → `RelayRoute` on every lane; far guests never host. Android unit 240/240.
+- Open, in order: W5 advisory upstream counts to the guide; guide rejects a second cross-platform lane set (T5);
+  generation-step failover (today: island revoked → reconnect rediscovers); P4 iPhone bridge (AWDL island) and
+  iOS far guest; device matrix T1–T8 when the second iPhone and Pixel 11 arrive.
+- Known: `SignedNativeSessionTest` free-port race flakes under load; bridge island restarts on every guest reconnect.
+
 ## October 18 (later) — relay core done; app wiring waits for the new phones
 
 - Relay P0 core in both cores (tag `p6-relay-core`): W1–W6, verified RelayForwarder, ADR-083 handshake.

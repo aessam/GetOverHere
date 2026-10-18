@@ -121,10 +121,12 @@ class LocalControlPlane(
                 check(cached.first.roomID == roomID) { "Leave the current nearby room before joining another" }
                 try {
                     val connect = requireNotNull(cached.second) { "Nearby adapter owner disappeared" }
-                    NearbyRoomMetadataPolicy.validate(nearbyBridge.readRecord(connect), roomID, expectedGuideID)
+                    val record = nearbyBridge.readRecord(connect)
+                    NearbyRoomMetadataPolicy.validate(record, roomID, expectedGuideID)
                     synchronized(nearbyOwnerLock) {
                         check(activeNearbyGuestRoute?.routeID == cached.first.routeID) { "Nearby join was canceled" }
-                        return@withContext cached.first
+                        // A bridge renews its generation; the lanes must present the current one (ADR-083).
+                        return@withContext cached.first.copy(relayHost = record.relayHost).also { activeNearbyGuestRoute = it }
                     }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
@@ -156,12 +158,13 @@ class LocalControlPlane(
                     }
                     // Prove reachability before advertising a loopback adapter as connected. A stale
                     // preferred Aware endpoint may fail here and leave Bluetooth available to try.
-                    NearbyRoomMetadataPolicy.validate(nearbyBridge.readRecord(connect), roomID, expectedGuideID)
+                    val record = nearbyBridge.readRecord(connect)
+                    NearbyRoomMetadataPolicy.validate(record, roomID, expectedGuideID)
                     return@withContext synchronized(nearbyOwnerLock) {
                         check(nearbyGeneration == attempt) { "Nearby join was canceled" }
                         if (route == SessionTransportRoute.BLUETOOTH) bluetoothSession?.setJoinedRoom(roomID)
                         val host = nearbyBridge.startGuest(roomID, connect)
-                        NearbyGuestRoute(host, route, roomID, UUID.randomUUID()).also {
+                        NearbyGuestRoute(host, route, roomID, UUID.randomUUID(), record.relayHost).also {
                             nearbyGuestConnector = connect
                             activeNearbyGuestRoute = it
                         }

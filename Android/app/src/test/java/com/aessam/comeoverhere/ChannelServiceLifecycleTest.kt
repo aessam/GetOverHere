@@ -281,6 +281,29 @@ class ChannelServiceLifecycleTest {
         } finally { h.close() }
     }
 
+    @Test fun islandRouteAuthenticatesEveryLaneToTheBridgeAndNeverHosts() {
+        val advertiser = object : com.aessam.comeoverhere.core.IslandAdvertiserInterface {
+            var starts = 0
+            override fun start(record: com.aessam.toursession.BluetoothRoomRecord, connector: com.aessam.comeoverhere.core.GuideLaneConnector) { starts++ }
+            override fun stop() {}
+        }
+        val h = Harness(admissionOverride = RouteAdmission(), islandAdvertiserFactory = { advertiser })
+        try {
+            val bridge = com.aessam.toursession.RelayHostAdvert(UUID.randomUUID(), 3)
+            h.controlPlane.nearbyAvailable = true
+            h.controlPlane.nearbyTransport = com.aessam.toursession.SessionTransportRoute.WIFI_AWARE
+            h.controlPlane.nearbyRelayHost = bridge
+            h.service.setRelayHostCapable(true)
+            h.discoverAndJoin(null)
+            h.connectGuest()
+            for (route in listOf(h.control.joinedRelayRoute, h.asset.joinedRelayRoute, h.audioPlane.joinedRelayRoute)) {
+                assertEquals(bridge, requireNotNull(route).host)
+            }
+            assertEquals(0, advertiser.starts)
+            assertNull("a far guest never feeds an island hub", h.control.upstreamTap)
+        } finally { h.close() }
+    }
+
     @Test fun canceledLANAdmissionCannotPrepareNearbyOrMutateReplacementSession() {
         val admission = RouteAdmission()
         val entered = java.util.concurrent.CountDownLatch(1)
