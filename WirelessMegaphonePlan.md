@@ -183,3 +183,28 @@ loopback test (2 phones prove per-hop mechanics only).
 Oct 17 Phase 5 status (pair iPhone 13 Pro + Pixel 7, build with ADR-075): steps 2-3 smoke PASS in
 both guide directions over Bluetooth (create/join, live audio at full PCM rate, screen following).
 Remaining: speech audibility/latency, PDF during speech (4b), locked guest (5), 30/90 min endurance (6).
+
+
+## Phase 5 closure (2026-10-17) and Phase 6 plan
+
+Phase 5 result through both real UIs (no instrumentation), iPhone 13 Pro guide + Pixel 7 guest, Bluetooth only:
+- PASS ×2 cold cache (`scripts/verify_real_ui_pdf.sh`): 20-page deck "1 ready" after 315 s, 0 reconnects,
+  0 asset failures, audio frames kept arriving through and after the transfer (~95% of the idle rate).
+- PASS demo: live audio, Show/Next page turns reached the Pixel within ~2 s (tag `p5-realui-bt-slides`).
+- Carried over, root cause known: FND-P5-5 (Android guest reports the guide's clean lane close as
+  `Failed` before `Disconnected`; pinned by `LocalSessionTransportTest`, needs a transport-loss
+  semantics decision).
+- Carried over, not reproduced through the real UI in 7 runs: FND-P5-3 (lanes dropped mid-transfer,
+  seen once in an instrumented run) and FND-10 ("No reachable nearby route could be prepared" after
+  several tours in one guide process). The guide now records lane removals and accept rejections in
+  `Documents/lane-events.log`; the real-UI script pulls it every run.
+- Not run: locked iPhone guest, Android-guide endurance, audibility/latency.
+
+Phase 6 (devices: iPhone 13 Pro, second iPhone, Pixel 7, Pixel 11):
+1. Tour packs (ADR-080): container format in both cores with fixtures; guide "Share Tour Pack";
+   guest "Open Tour Pack" storing verified hashes. Gate: a guest with the pack reports ready in < 5 s
+   with 0 asset bytes over Bluetooth; a guest without it still transfers.
+2. Cross-island relay (ADR-081): iOS peer-to-peer island ⇄ Bluetooth ⇄ Android peer-to-peer island,
+   signed frames verified per hop, assets served by hash from any holder. Gate: guide → relay → far-island
+   guest receives audio, slide changes and missing assets; duplicate suppression proven.
+3. Carried items above.

@@ -2215,3 +2215,12 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Slides: guide showed "1 connected · 1 audio ready · 1 ready" by 18:49 (< 3 min for the deck); 0 "Tour asset transfer failed", 0 late chunks, 0 reconnects in guest pid 26699. Show and Next on the guide displayed the same page on the Pixel within ~2 s.
 - Instrumented run Ui-efaf3163 (same build, /tmp/GetOverHereRealUI-YJMUK3): guide closed ASSET then CONTROL at t≈85 s (guest EOF after 32,940 B), two reconnects, slides never resumed (39.8 kB, 4 failures); audio back to 100% after t=110 s. FND-P5-3 reproduced; guide-side cause unknown.
 - `devicectl process launch --console` with OS_ACTIVITY_DT_MODE=1 made VPIO log `render err: -1` ~50/s from capture start and the next Pixel join failed ("No reachable nearby route could be prepared"). Not usable for audio runs.
+
+### 2026-10-17 18:55–19:34 — Instrumented vs real-UI slide runs (ADR-079 build, guide lane log)
+- Instrumented guest (`NearbyLiveSessionTest nearbyUI=true`) after ADR-079: K0jZdl 300 s, 0 drops, but only 2,505 B on reliable lanes (no slide transfer); RrKX4e join failed "No reachable nearby route could be prepared" (guest BLUETOOTH preparation EOFException); rbcYxH "Timed out: authoritative pointer state". Guide lane log showed no rejection or writer failure in these runs.
+- Real-UI join (`scripts/android_ui_join.sh`) l9m2bF: "No reachable nearby route could be prepared" (FND-10) after several tours in one guide process; cleared by relaunching the guide app.
+- Real UI, warm guest cache (dtOy1V, niuzTt, 0hA9wu): PASS, "1 ready" after 1/13/1 s — cache hits, no transfer tested.
+- Real UI, cold guest cache (`run-as … rm -rf files/asset-cache files/tour-packs`), `scripts/verify_real_ui_pdf.sh stress-20c 30 400 45`:
+  - F4xJVe: PASS, ready after 315 s; audio frames import=700 transferEnd=6700 end=7600; reconnects=0 assetFailures=0.
+  - rhmc6s: PASS, ready after 315 s; audio frames import=700 transferEnd=6600 end=7600; reconnects=0 assetFailures=0.
+- FND-P5-5 root cause: Android guest `LocalSessionControlTransport` maps the guide's clean close (EOFException) to `Failed("Session: guide connection failed")` before `Disconnected`; `LocalSessionTransportTest` pins this order.

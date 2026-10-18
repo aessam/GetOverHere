@@ -930,3 +930,15 @@ each request returns one 60 KiB chunk, with at most 2 in flight.
 - Options: (1) one in flight when a request rate limit is set; (2) longer deadline only (hides the queue); (3) smaller Bluetooth chunks (protocol change in both cores; also addresses FND-P5-6).
 - Decision: (1) in both apps. The 15 s deadline stays (~4× a 3.4 s chunk at the measured rate). LAN keeps 2 in flight. (3) remains open with FND-P5-6.
 - Consequences: no request queue at the guide on Bluetooth; per-chunk round-trip idle is small against ~3 s transfer time. Physical confirmation pending.
+
+## ADR-080 — Tour packs distributed ahead of time; the session carries hashes only (2026-10-17)
+- Context: a cold 20-page deck takes 315 s over paced Bluetooth (ADR-078/079, real-UI runs F4xJVe, rhmc6s). The session manifest already names every asset by SHA-256, and the guest cache is keyed by SHA-256: a warm cache made the guide report "1 ready" after 1 s.
+- Decision (user, 2026-10-17): the guide can export a tour pack (slides + offline map) and share it out of band (AirDrop, Files, Messages, Mail when small enough). Guests open it in the app, which stores each file under its SHA-256. During the tour the protocol is unchanged: the guide's signed manifest lists hashes, and slide changes select by asset ID. Missing hashes still transfer over the air.
+- Safety: a pack is untrusted input. A stored file is used only when its SHA-256 matches an entry in the authenticated session manifest; the pack's own index is advisory. No session secrets or room codes go into the pack.
+- Format: one container defined in both cores with identical bytes, roundtrip tests and CLI fixtures (no third-party zip dependency).
+- Consequences: Bluetooth carries only control, audio and late or missing assets. Mail size limits apply; the app warns when a pack exceeds them.
+
+## ADR-081 — Bounded cross-island relay with content-addressed serving (2026-10-17; amends ADR-029)
+- Context: ADR-029 kept platform Wi-Fi islands unbridged and excluded a guest mesh. The user selected a chain: iOS guests on Apple peer-to-peer ⇄ one iOS node ⇄ Bluetooth ⇄ one Android node ⇄ Android guests on Android peer-to-peer, so every guest gets every frame and asset some node holds.
+- Decision: allow a bounded relay. Current session only; guide frames stay GOS1-signed end to end (ADR-038) and are verified at each hop; relays never re-sign or decrypt more than the sealed GOH2 frame needs; bounded hop count; duplicate suppression by session/stream/sequence identity (ADR-029); assets are served by any node holding a SHA-256 the authenticated manifest names. No store-and-forward beyond the live session, no guest-originated audio.
+- Status: design accepted; implementation and physical gate in the next phase with a second iPhone and a Pixel 11 (three or more phones). Behind an explicit experimental flag until that gate passes.

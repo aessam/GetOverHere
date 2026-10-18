@@ -663,3 +663,9 @@ updated. Equality checks against one enum case compile fine when a case is added
 classifier tests per kind; the Android test fails on the old code.
 **Rule:** When adding an enum case, treat every `== .existingCase` site from the grep as a decision, not
 noise, and add a test that exercises the new case through each classifier.
+
+## 2026-10-17 — Instrumented guests produced harness-only failures
+- What happened: device runs used `NearbyLiveSessionTest` as the Android guest. The Compose test rule froze the screen (the user saw nothing), and runs failed on pointer-state timeouts and stalled slides that never appeared through the real UI.
+- Root cause: the test owns process start, timing and rendering; it is not the product path.
+- Resolution: `scripts/verify_real_ui_pdf.sh` drives the Pixel through its accessibility tree and the iPhone through WDA, clears the guest asset cache (a warm SHA-256 cache made "ready" instant and hid the transfer), and pulls the guide's `lane-events.log` over USB. Two cold runs passed.
+- Decision: physical acceptance uses both real UIs only (user, 2026-10-17).

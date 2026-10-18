@@ -1,5 +1,13 @@
 # GetOverHere — Next Session
 
+## October 17 (evening) — Phase 5 closed; Phase 6 next
+
+Read `WirelessMegaphonePlan.md` "Phase 5 closure and Phase 6 plan". Device runs use both real UIs only:
+iPhone via `scripts/ios_drive.py` (WDA, never relaunches the app), Pixel via `scripts/android_ui_join.sh`;
+the end-to-end gate is `scripts/verify_real_ui_pdf.sh` (clears the guest cache, pulls the guide's
+`lane-events.log`). Decisions: ADR-079 (one chunk in flight on Bluetooth), ADR-080 (tour packs shared
+ahead of time), ADR-081 (bounded cross-island relay). A second iPhone and a Pixel 11 arrive for Phase 6.
+
 ## October 17 — current state (main, see tags `checkpoint/2026-10-17-*`)
 
 Batched Opus (ADR-075) roughly halves on-air audio: measured over Bluetooth at 59 kbps guide → guest,
