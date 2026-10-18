@@ -1,5 +1,15 @@
 # GetOverHere — Next Session
 
+## October 17, 20:05 — paused (user break)
+
+Pushed: `main` at `0f82106`, tags `p5-realui-bt-slides`, `phase5-closed`. Since the gate: FND-P5-5 fixed
+(`13362f6`, Android unit 209 pass); iPhone guest Speaker switch fixed (`01909e3`, OSStatus -50, verified with 5
+live switches at ~32 kB/s). Remaining to accept Phase 5 (both stopped by the user before results):
+1. `scripts/verify_locked_iphone_guest_ui.sh 600` (60 s smoke passed: pcmRatio 1.0 while locked, max gap 10 s).
+2. `PAGE_TURN_EVERY=60 scripts/verify_real_ui_pdf.sh stress-20c 30 400 1800`.
+Then rerun `scripts/verify_tour_session.sh` (iOS AudioEngine changed after the last gate) and tag `phase5-accepted`.
+Before device runs: `scripts/wda.sh start`, `adb shell svc power stayon usb`; restore with `svc power stayon false`.
+
 ## October 17 (evening) — Phase 5 closed; Phase 6 next
 
 Read `WirelessMegaphonePlan.md` "Phase 5 closure and Phase 6 plan". Device runs use both real UIs only:
