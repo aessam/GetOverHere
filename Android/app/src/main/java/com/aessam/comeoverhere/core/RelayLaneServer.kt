@@ -86,7 +86,7 @@ class RelayLaneServer(
             val peer = handshake(socket, sealer, stream, assignmentFrame, generation)
             when (lane) {
                 SessionLane.REALTIME, SessionLane.CONTROL -> {
-                    val writer = SocketChildWriter(socket)
+                    val writer = SocketChildWriter(socket, lane)
                     hub.attach(lane, writer)
                     // Island peers send nothing on these lanes except to leave; any read ends the peer.
                     try { socket.getInputStream().read() } finally { hub.detach(lane, writer); writer.close() }
@@ -149,11 +149,36 @@ class RelayLaneServer(
         lane = kind.requiredLane, kind = kind, sequence = sequence, sessionId = sessionID, senderId = bridgeID, payload = payload,
     )
 
-    /** One island peer's outbound side; a failed write drops only this peer (ADR-039). */
-    private class SocketChildWriter(private val socket: Socket) : RelayChildWriter {
-        private val output: OutputStream = socket.getOutputStream()
-        override fun enqueue(frame: ByteArray): Boolean = try { writeFrame(output, frame); true } catch (error: Exception) { false }
-        override fun close() = closeQuietly(socket)
+    /**
+     * One island peer's outbound side (ADR-039). Frames queue in a bounded writer drained on its own thread with a
+     * send timeout, so a stalled peer never blocks RelayHub (which calls enqueue under its lock) or other peers; on
+     * overflow or timeout the peer is disconnected and the hub drops it at the next frame.
+     */
+    private class SocketChildWriter(private val socket: Socket, lane: SessionLane) : RelayChildWriter {
+        @Volatile private var failed = false
+        private val writer = BoundedSocketFrameWriter(
+            socket = socket,
+            generation = 0,
+            label = "relay-$lane-peer-writer",
+            capacity = if (lane == SessionLane.CONTROL) 64 else 8,
+            overflowPolicy = SocketFrameOverflowPolicy.DISCONNECT,
+            sendTimeoutMillis = 2_000,
+        ) { _, _ ->
+            failed = true
+            closeQuietly(socket)
+        }
+
+        override fun enqueue(frame: ByteArray): Boolean {
+            if (failed) return false
+            writer.enqueue(frame)
+            return !failed
+        }
+
+        override fun close() {
+            failed = true
+            writer.close()
+            closeQuietly(socket)
+        }
     }
 
     companion object {

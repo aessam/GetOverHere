@@ -159,4 +159,27 @@ class RelayLaneServerTest {
         assertEquals("bridge-sealed chunks never enter the hub", forwardedBefore, hub.counters.forwarded)
         socket.close()
     }
+
+    @Test fun stalledPeerDoesNotBlockOtherPeers() {
+        assign()
+        val server = server(SessionLane.REALTIME)
+        val (_, stalled) = join(server, SessionLane.REALTIME)
+        stalled.receiveBufferSize = 4_096 // never reads again
+        val (_, healthy) = join(server, SessionLane.REALTIME)
+        Thread.sleep(200)
+        // Paced 5 ms apart (real speech is ~40 ms): the healthy queue never fills, the stalled peer's does.
+        var slowest = 0L
+        repeat(50) {
+            val started = System.nanoTime()
+            hub.onUpstreamFrame(SessionLane.REALTIME, guideFrame(SessionMessageKind.AUDIO_BATCH, ByteArray(4_000)), 0, 0)
+            slowest = maxOf(slowest, (System.nanoTime() - started) / 1_000_000)
+            Thread.sleep(5)
+        }
+        assertTrue("fan-out never waits on a stalled peer: slowest frame ${slowest} ms", slowest < 100)
+        var received = 0
+        healthy.soTimeout = 5_000
+        while (received < 50) { RelayLaneServer.readFrame(healthy.getInputStream(), 1_048_576); received++ }
+        assertEquals(50, received)
+        stalled.close(); healthy.close()
+    }
 }
