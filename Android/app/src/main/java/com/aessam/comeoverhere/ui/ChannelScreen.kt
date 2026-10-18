@@ -416,6 +416,11 @@ fun ChannelScreen(
                 }
                 Text("Experimental direct Bluetooth joining and audio on Android 10+. Older apps may provide discovery only.",
                     modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                val relayCapable by vm.relayHostCapable.collectAsState()
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Relay host (experimental)", modifier = Modifier.weight(1f))
+                    Switch(checked = relayCapable, onCheckedChange = vm::setRelayHostCapable, modifier = Modifier.testTag("relayHostCapable"))
+                }
             }
             bluetoothError?.let {
                 Text(it, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
@@ -432,6 +437,11 @@ fun ChannelScreen(
                         com.aessam.toursession.SessionTransportRoute.APPLE_PEER -> "Apple peer-to-peer"
                     }
                     Text("Connection: $label", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("sessionTransport"))
+                    val assignment by vm.bridgeAssignment.collectAsState()
+                    assignment?.takeIf { it.bridgeID.toString() == vm.localPeerID }?.let {
+                        Text("Island bridge · generation ${java.lang.Long.toUnsignedString(it.generation)}",
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("islandBridge"))
+                    }
                 }
                 guideKeyFingerprint?.let { fingerprint ->
                     TextButton(onClick = { showGuideIdentity = !showGuideIdentity }) { Text("Guide identity") }

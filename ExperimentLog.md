@@ -2248,3 +2248,9 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Bug: Go Live from the Android Tours screen skipped the nearby-permission step that enables Bluetooth discovery, so the guide never advertised (Android advertising last stopped 08:02; iPhone could not find the room in 90 s). Fixed: Go Live requests Bluetooth + microphone like the create button and enables Bluetooth discovery first. The iPhone then listed the room in 2 s.
 - Bug: iOS RoomDiscoveryIndex rebuilt each announce field by field and dropped tourPackID/tourPackVersion, so no badge. Fixed (test `keepsTourPackAdvert`).
 - Result: the iPhone room row read "Pixel Pack, Nearby connection available, Tour ready"; joined in 4.1 s; the Android guide showed "1 content ready" 3 s after join.
+
+### 2026-10-18 12:25–12:33 — Relay P2 on devices: guide assigns the Android bridge (PARTIAL)
+- iPhone 13 Pro guide (build 5bcf8f3) live in "Bridge-1228" over Bluetooth. Pixel 7 (5bcf8f3 + relay switch/label UI): diagnostics switch "Relay host (experimental)" toggled through the real UI (checked=true), left and rejoined with `scripts/android_ui_join.sh Bridge-1228`.
+- First rejoin 10 s after leaving failed: "No reachable nearby route could be prepared" (`Nearby BLUETOOTH preparation failed (EOFException)`); the immediate retry joined. Not investigated further; recorded as a rejoin-after-leave flake.
+- Result: Pixel UI shows "Connection: Bluetooth" and "Island bridge · generation 1" (accessibility tree), i.e. the iPhone guide's BridgeAuthority picked the relay-capable Android guest and the signed assignment reached it. Screenshot /tmp/GetOverHerePhase5/p2-island-bridge.png.
+- Not covered: island peers (no second Android/iPhone), lease renewal over minutes, failover. Those wait for P1 step 3/P3 and the device matrix.

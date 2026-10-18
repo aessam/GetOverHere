@@ -58,6 +58,11 @@ interface ChannelServiceProtocol {
     fun canJoin(channel: Channel): Boolean = channel.audioHostIP != null || channel.createdBy == localPeerID
     val bluetoothDiscoveryEnabled: StateFlow<Boolean>
     fun setBluetoothDiscoveryEnabled(enabled: Boolean)
+    /** Experimental (ADR-081): advertise this guest as able to bridge its platform island. */
+    val relayHostCapable: StateFlow<Boolean>
+    fun setRelayHostCapable(enabled: Boolean)
+    /** The guide's newest bridge assignment for the current tour (both roles). */
+    val bridgeAssignment: StateFlow<com.aessam.toursession.BridgeAssignmentPayload?>
     val channels: StateFlow<List<Channel>>
     val activeChannelID: StateFlow<String?>
     val listenState: StateFlow<ListenState>
@@ -192,6 +197,13 @@ class ChannelService(
     private val discoveryForeground = MutableStateFlow(true)
     private var discoveryJob: Job? = null
     override fun setBluetoothDiscoveryEnabled(enabled: Boolean) { _bluetoothDiscoveryEnabled.value = enabled }
+    private val _relayHostCapable = MutableStateFlow(false)
+    override val relayHostCapable = _relayHostCapable.asStateFlow()
+    override fun setRelayHostCapable(enabled: Boolean) {
+        _relayHostCapable.value = enabled
+        tourControlService.setRelayHostCapable(enabled) // takes effect at the next control-lane hello
+    }
+    override val bridgeAssignment get() = tourControlService.bridgeAssignment
     fun setDiscoveryForeground(foreground: Boolean) { discoveryForeground.value = foreground }
 
     private val _listenerCount = MutableStateFlow(0)

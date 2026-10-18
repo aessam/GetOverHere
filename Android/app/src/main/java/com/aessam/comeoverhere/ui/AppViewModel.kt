@@ -22,6 +22,9 @@ class AppViewModel(
     fun canJoin(channel: Channel) = channelService.canJoin(channel)
     val bluetoothDiscoveryEnabled = channelService.bluetoothDiscoveryEnabled
     fun setBluetoothDiscoveryEnabled(enabled: Boolean) = channelService.setBluetoothDiscoveryEnabled(enabled)
+    val relayHostCapable = channelService.relayHostCapable
+    fun setRelayHostCapable(enabled: Boolean) = channelService.setRelayHostCapable(enabled)
+    val bridgeAssignment = channelService.bridgeAssignment
     val activeChannelID = channelService.activeChannelID
     val listenState = channelService.listenState
     val listenerCount = channelService.listenerCount
