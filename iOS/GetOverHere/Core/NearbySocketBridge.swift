@@ -206,7 +206,10 @@ final class NearbySocketBridge {
     func accept(_ remote: any NearbyByteConnection, record: @escaping () -> BluetoothRoomRecord?) {
         let id: UUID
         do { id = try budget.acquireBootstrap() }
-        catch { remote.close(); report(error); return }
+        catch {
+            GuideLaneEvents.record("accept rejected: \(error) budget bootstrap=\(budget.bootstrapCount) persistent=\(budget.persistentCount)")
+            remote.close(); report(error); return
+        }
         connections[id] = [remote]
         tasks[id] = Task { [weak self, budget] in
             guard let self else { remote.close(); budget.release(id); return }
@@ -251,6 +254,7 @@ final class NearbySocketBridge {
                     throw error
                 }
             } catch {
+                GuideLaneEvents.record("accept ended: \(error) budget bootstrap=\(budget.bootstrapCount) persistent=\(budget.persistentCount)")
                 if !Task.isCancelled { report(error) }
             }
         }
