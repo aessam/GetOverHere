@@ -48,3 +48,10 @@ Packages/GatewayTLSFixture/.swiftpm/
 # Third-party device automation (WebDriverAgent) and its local venv
 tools/wda/
 tools/.venv/
+
+# fastlane: build output, reports and local API key settings
+/build/
+fastlane/report.xml
+fastlane/README.md
+fastlane/.env
+*.p8

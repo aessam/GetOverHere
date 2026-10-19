@@ -2293,3 +2293,10 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 
 ### 2026-10-18 17:00 — Goal closed; T1–T8 deferred
 - User decision: close the "finish this" goal with the software complete. T1–T8 stays NOT RUN and becomes a new task when the second iPhone and the Pixel 11 arrive.
+
+### 2026-10-18 17:40 — TestFlight delivery setup (fastlane)
+- `brew update` (Homebrew 5.1.3 rejected macOS 27.0.1 as ":dunno"; 7.0.9 accepts it), `brew install fastlane` → fastlane 2.241.1.
+- Local Release archive (`xcodebuild … -configuration Release -destination generic/platform=iOS archive`): ARCHIVE SUCCEEDED, Xcode 27.0 (27A266a), iphoneos27.0 SDK, min iOS 17.0, 27 MB app; `verify_debug_control_release.py` PASS.
+- Findings: only an Apple Development identity is local; the existing Team Store profile lacks `com.apple.developer.wifi-aware` (the dev profile has it); the binary links BoringSSL via swift-certificates → swift-crypto (export compliance answer is "yes, standard algorithms beyond the OS").
+- `fastlane/Fastfile` lane `ios beta`: API-key preflight, clean git, build number = latest TestFlight + 1, archive/export with automatic signing (`-allowProvisioningUpdates` + API key), debug-control check, IPA entitlement check (Wi-Fi Aware present, not debuggable), upload, annotated tag `testflight-<version>-<build>`. Preflight without a key fails with "ASC_KEY_ID is not set". The entitlement check flags the dev archive (aware=true, debuggable=true).
+- NOT RUN: export and upload (need an App Store Connect API key).

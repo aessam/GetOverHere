@@ -1,0 +1,70 @@
+# iOS TestFlight delivery. Run from the repository root:
+#   fastlane ios beta                     archive, export, verify, upload
+#   fastlane ios beta skip_upload:true    stop after the verified IPA
+# Authentication is an App Store Connect API key (Admin role, so automatic signing can create the
+# distribution certificate and regenerate the App Store profile with the Wi-Fi Aware entitlement).
+# Set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_PATH (the .p8, kept outside the repository), in the
+# shell or in fastlane/.env (ignored by git).
+
+require "tmpdir"
+
+default_platform(:ios)
+
+ROOT = File.expand_path("..", __dir__)
+PROJECT = File.join(ROOT, "iOS/GetOverHere.xcodeproj")
+OUTPUT = File.join(ROOT, "build/testflight")
+BUNDLE_ID = "com.aens.GetOverHere"
+TEAM_ID = "VW9YC3A6JM"
+
+platform :ios do
+  desc "Archive, export, verify and upload a TestFlight build"
+  lane :beta do |options|
+    %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_PATH].each do |name|
+      UI.user_error!("#{name} is not set") if ENV[name].to_s.empty?
+    end
+    key_path = File.expand_path(ENV["ASC_KEY_PATH"])
+    UI.user_error!("API key not found: #{key_path}") unless File.file?(key_path)
+    ensure_git_status_clean
+
+    api_key = app_store_connect_api_key(key_id: ENV["ASC_KEY_ID"], issuer_id: ENV["ASC_ISSUER_ID"],
+                                        key_filepath: key_path)
+    build = latest_testflight_build_number(api_key: api_key, app_identifier: BUNDLE_ID,
+                                           initial_build_number: 0) + 1
+    UI.message("Build number #{build}")
+
+    auth = "-allowProvisioningUpdates -authenticationKeyPath '#{key_path}' " \
+           "-authenticationKeyID #{ENV['ASC_KEY_ID']} -authenticationKeyIssuerID #{ENV['ASC_ISSUER_ID']}"
+    ipa = build_app(
+      project: PROJECT, scheme: "GetOverHere", configuration: "Release", clean: true,
+      output_directory: OUTPUT, archive_path: File.join(OUTPUT, "GetOverHere-#{build}.xcarchive"),
+      export_method: "app-store", export_team_id: TEAM_ID,
+      export_options: { signingStyle: "automatic", teamID: TEAM_ID },
+      xcargs: "CURRENT_PROJECT_VERSION=#{build} #{auth}", export_xcargs: auth
+    )
+
+    archived_app = File.join(lane_context[SharedValues::XCODEBUILD_ARCHIVE], "Products/Applications/GetOverHere.app")
+    sh("python3", File.join(ROOT, "scripts/verify_debug_control_release.py"), archived_app)
+    verify_store_entitlements(ipa: ipa)
+
+    if options[:skip_upload]
+      UI.success("Verified IPA (not uploaded): #{ipa}")
+      next
+    end
+    upload_to_testflight(api_key: api_key, ipa: ipa, skip_waiting_for_build_processing: true)
+    version = get_ipa_info_plist_value(ipa: ipa, key: "CFBundleShortVersionString")
+    add_git_tag(tag: "testflight-#{version}-#{build}", message: "TestFlight upload #{version} (#{build})")
+    UI.success("Uploaded #{version} (#{build}); push the tag with --follow-tags")
+  end
+
+  # The App Store build must carry Wi-Fi Aware and must not be debuggable.
+  private_lane :verify_store_entitlements do |options|
+    ipa = options[:ipa]
+    Dir.mktmpdir do |dir|
+      sh("unzip", "-q", ipa, "-d", dir)
+      entitlements = sh("codesign", "-d", "--entitlements", "-", "--xml", File.join(dir, "Payload/GetOverHere.app"), log: false)
+      UI.user_error!("IPA lacks com.apple.developer.wifi-aware") unless entitlements.include?("com.apple.developer.wifi-aware")
+      UI.user_error!("IPA is debuggable (get-task-allow)") if entitlements =~ /get-task-allow<\/key>\s*<true/
+      UI.success("IPA entitlements: Wi-Fi Aware present, not debuggable")
+    end
+  end
+end
