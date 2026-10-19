@@ -2290,3 +2290,6 @@ Pixel `stay_on_while_plugged_in` was 0 before the runs; set with `svc power stay
 - Stopped: End Tour tapped through the Pixel accessibility tree (service count 0); `xcrun devicectl device process terminate --pid 900`; `dns-sd -B _goh-peer._tcp` shows no island.
 - Gate: `scripts/verify_tour_session.sh` → "Tour session verification passed".
 - Residue: Pixel list kept "Bridge-1228 · Connection needed" after refresh. Cause and fix in LessonsLearned (deferred discovery loss). Tests: Android `ChannelServiceLifecycleTest` 46/46 (new test fails without the fix: `reannounced=false expected:<false> but was:<true>`); iOS `ChannelServiceLifecycleTests` 43/43 including both arguments of the new test.
+
+### 2026-10-18 17:00 — Goal closed; T1–T8 deferred
+- User decision: close the "finish this" goal with the software complete. T1–T8 stays NOT RUN and becomes a new task when the second iPhone and the Pixel 11 arrive.
